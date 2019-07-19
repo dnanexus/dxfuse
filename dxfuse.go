@@ -39,7 +39,7 @@ type File struct {
 // used to download file ranges.
 type DXDownloadURL struct {
 	URL     string            `json:"url"`
-	headers map[string]string `json:"headers"`
+	Headers map[string]string `json:"headers"`
 }
 
 type FileHandle struct {
@@ -52,6 +52,7 @@ type FileHandle struct {
 //  - setup the debug log to the FUSE kernel log (I think)
 //  - mount as read-only
 func Mount(mountpoint string, dxEnv dxda.DXEnvironment) error {
+	log.Fprintf("mounting dxfuse\n")
 	c, err := fuse.Mount(mountpoint, fuse.AllowOther(), fuse.ReadOnly())
 	if err != nil {
 		return err
@@ -194,7 +195,7 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 	headers := make(map[string]string)
 
 	// Copy the immutable headers
-	for key, value := range fh.url.headers {
+	for key, value := range fh.url.Headers {
 		headers[key] = value
 	}
 

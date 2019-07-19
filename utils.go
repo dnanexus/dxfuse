@@ -107,14 +107,13 @@ func DXAPI(dxEnv *dxda.DXEnvironment, api string, payload string) (body []byte, 
 
 
 type DXDescribeFileRawJSON struct {
-	projectId        string `json:"project"`
-	fileId           string `json:"id"`
-	class            string `json:"class"`
-	createdMillisec  uint64 `json:"created"`
-	state            string `json:"state"`
-	name             string `json:"name"`
-	folder           string `json:"folder"`
-	size             uint64 `json:"size"`
+	ProjectId        string `json:"project"`
+	FileId           string `json:"id"`
+	CreatedMillisec  uint64 `json:"created"`
+	State            string `json:"state"`
+	Name             string `json:"name"`
+	Folder           string `json:"folder"`
+	Size             uint64 `json:"size"`
 }
 
 type DXDescribeFile struct {
@@ -132,7 +131,7 @@ type DXDescribeFile struct {
 func Describe(dxEnv *dxda.DXEnvironment, projId string, fileId string) (*DXDescribeFile, error) {
 	// make the call
 	payload := fmt.Sprintf("{\"project\": \"%s\"}", projId)
-	apiCall := fmt.Sprint("/%s/describe", fileId)
+	apiCall := fmt.Sprintf("%s/describe", fileId)
 	body, err := DXAPI(dxEnv, apiCall, payload)
 	if err != nil {
 		return nil, err
@@ -142,28 +141,24 @@ func Describe(dxEnv *dxda.DXEnvironment, projId string, fileId string) (*DXDescr
 	var descRaw DXDescribeFileRawJSON
 	json.Unmarshal(body, &descRaw)
 
-	if descRaw.class != "file" {
-		err := errors.New("This is not a file, it is a " + descRaw.class)
-		return nil, err
-	}
-	if descRaw.state != "closed" {
-		err := errors.New("The file is not in the closed state, it is" + descRaw.state)
+	if descRaw.State != "closed" {
+		err := errors.New("The file is not in the closed state, it is [" + descRaw.State + "]")
 		return nil, err
 	}
 
 	// convert time in milliseconds since 1970, in the equivalent
 	// golang structure
-	sec := int64(descRaw.createdMillisec/1000)
-	millisec := int64(descRaw.createdMillisec % 1000)
+	sec := int64(descRaw.CreatedMillisec/1000)
+	millisec := int64(descRaw.CreatedMillisec % 1000)
 	crtTime := time.Unix(sec, millisec)
 
 	desc := &DXDescribeFile{
-		ProjId : descRaw.projectId,
-		FileId : descRaw.fileId,
-		Name : descRaw.name,
-		Folder : descRaw.folder,
+		ProjId : descRaw.ProjectId,
+		FileId : descRaw.FileId,
+		Name : descRaw.Name,
+		Folder : descRaw.Folder,
 		Created : crtTime,
-		Size : descRaw.size,
+		Size : descRaw.Size,
 	}
 	return desc, nil
 }
