@@ -1,62 +1,65 @@
 package dxfuse
 
 import (
-	"flag"
+	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"os"
-	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
+
+	// The dxda package has the get-environment code
 	"github.com/dnanexus/dxda"
+
 	"golang.org/x/net/context"
 )
 
-var progName = filepath.Base(os.Args[0])
-
-func usage() {
-	fmt.Fprintf(os.Stderr, "Usage of %s:\n", progName)
-	fmt.Fprintf(os.Stderr, "  %s MOUNTPOINT\n", progName)
-	flag.PrintDefaults()
+//
+type FS struct {
+	dxEnv dxda.DXEnvironment
 }
 
-func main() {
-	log.SetFlags(0)
-	log.SetPrefix(progName + ": ")
-
-	flag.Usage = usage
-	flag.Parse()
-
-	if flag.NArg() != 1 {
-		usage()
-		os.Exit(2)
-	}
-	mountpoint := flag.Arg(0)
-
-	dxEnv, method, err := dxda.GetDxEnvironment()
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
-	}
-	fmt.Printf(fmt.Sprintf("Obtained token using %s\n", method))
-
-	if err := mount(mountpoint, dxEnv); err != nil {
-		log.Fatal(err)
-	}
+type Dir struct {
+	dxEnv *dxda.DXEnvironment
+	path   string
 }
 
-func mount(mountpoint string, dxEnv dxda.DXEnvironment) error {
-	c, err := fuse.Mount(mountpoint, fuse.AllowOther())
+type File struct {
+	dxEnv    *dxda.DXEnvironment
+	projId    string
+	fileId    string
+	size      uint64
+	ctime     time.Time  // creation time
+}
+
+// A URL generated with the /file-xxxx/download API call, that is
+// used to download file ranges.
+type DXDownloadURL struct {
+	URL     string            `json:"url"`
+	headers map[string]string `json:"headers"`
+}
+
+type FileHandle struct {
+	f *File
+	url DXDownloadURL
+}
+
+
+// Mount the filesystem:
+//  - setup the debug log to the FUSE kernel log (I think)
+//  - mount as read-only
+func Mount(mountpoint string, dxEnv dxda.DXEnvironment) error {
+	c, err := fuse.Mount(mountpoint, fuse.AllowOther(), fuse.ReadOnly())
 	if err != nil {
 		return err
 	}
 	defer c.Close()
 
 	filesys := &FS{
-		dxEnv : dxEnv
+		dxEnv : dxEnv,
 	}
 	if err := fs.Serve(c, filesys); err != nil {
 		return err
@@ -68,25 +71,12 @@ func mount(mountpoint string, dxEnv dxda.DXEnvironment) error {
 		return err
 	}
 
+	// write out to the FUSE log
+	fuse.Debug = func(msg interface{}) {
+		log.Print(msg)
+	}
+
 	return nil
-}
-
-//
-type FS struct {
-	dxEnv dxda.DXEnvironment
-}
-
-type Dir struct {
-	dxEnv *dxda.DXEnvironment,
-	path   string,
-}
-
-type File struct {
-	dxEnv    *dxda.DXEnvironment
-	ProjId    string
-	FileId    string
-	Size      uint64
-	Ctime     time.Time  // creation time
 }
 
 var _ fs.FS = (*FS)(nil)
@@ -94,7 +84,7 @@ var _ fs.FS = (*FS)(nil)
 func (f *FS) Root() (fs.Node, error) {
 	n := &Dir{
 		dxEnv : &f.dxEnv,
-		path : "/"
+		path : "/",
 	}
 	return n, nil
 }
@@ -108,7 +98,7 @@ func (d *Dir) Attr(ctx context.Context, a *fuse.Attr) error {
 }
 
 func (d *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
-	return fuse.ENOSYS
+	return nil, fuse.ENOSYS
 }
 
 var _ = fs.HandleReadDirAller(&Dir{})
@@ -120,26 +110,30 @@ func (d *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.Lo
 	basename := req.Name
 
 	// check that the name is of the form project-xxxx:file-yyyy
-	parts := strings.Split(basename)
-	if parts.length != 2 {
+	parts := strings.Split(basename, ":")
+	if parts == nil || len(parts) != 2 {
 		return nil, fuse.ENOENT
 	}
 	projId := parts[0]
-	if !(projId.HashPrefix("project-")) {
+	if !(strings.HasPrefix(projId, "project-")) {
 		return nil, fuse.ENOENT
 	}
 	fileId := parts[1]
-	if !(fileId.HashPrefix("file-")) {
+	if !(strings.HasPrefix(fileId, "file-")) {
 		return nil, fuse.ENOENT
 	}
 
 	// describe the file
-	desc := utils.Describe(d.dxEnv, projId, fileId)
+	desc,err := Describe(d.dxEnv, projId, fileId)
+	if err != nil {
+		return nil, err
+	}
 	child := &File{
-		ProjId: desc.ProjId,
-		FileId: desc.FileId,
-		Size : desc.Size,
-		Ctime : desc.Created
+		dxEnv: d.dxEnv,
+		projId: desc.ProjId,
+		fileId: desc.FileId,
+		size : desc.Size,
+		ctime : desc.Created,
 	}
 	return child, nil
 }
@@ -147,30 +141,42 @@ func (d *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.Lo
 var _ fs.Node = (*File)(nil)
 
 func (f *File) Attr(ctx context.Context, a *fuse.Attr) error {
-	a.Size = f.Size
+	a.Size = f.size
 	a.Mode = 0400 // read only access
 
 	// because the platform has only immutable files, these
 	// timestamps are all the same
-	a.Mtime = f.Ctime
-	a.Ctime = f.Ctime
-	a.Crtime = f.Ctime
+	a.Mtime = f.ctime
+	a.Ctime = f.ctime
+	a.Crtime = f.ctime
+	return nil
 }
 
 var _ = fs.NodeOpener(&File{})
 
 func (f *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (fs.Handle, error) {
-	r, err := f.file.Open()
+	// these files are read only
+	if !req.Flags.IsReadOnly() {
+		return nil, fuse.Errno(syscall.EACCES)
+	}
+
+	// create a download URL for this file
+	const secondsInYear int = 60 * 60 * 24 * 365
+	payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
+		f.projId, secondsInYear)
+
+	body, err := DXAPI(f.dxEnv, fmt.Sprintf("%s/download", f.fileId), payload)
 	if err != nil {
 		return nil, err
 	}
-	// these files are read only
-	resp.Flags |= fuse.OpenReadOnly
-	return &FileHandle{r: r}, nil
-}
+	var u DXDownloadURL
+	json.Unmarshal(body, &u)
 
-type FileHandle struct {
-	r *File
+	fh := &FileHandle{
+		f : f,
+		url: u,
+	}
+	return fh, nil
 }
 
 var _ fs.Handle = (*FileHandle)(nil)
@@ -179,16 +185,27 @@ var _ fs.HandleReleaser = (*FileHandle)(nil)
 
 func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
 	// nothing to do
+	return nil
 }
 
 var _ = fs.HandleReader(&FileHandle{})
 
 func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
 	headers := make(map[string]string)
-	headers["Range"] = fmt.Sprintf("bytes=%d-%d", req.Offset, req.Offset + req.Size - 1)
 
-	url = fmt.Sprintf("%s/download", fs.r.FileId)
-	_, body := makeRequest("GET", url, headers,  []byte("{}"))
+	// Copy the immutable headers
+	for key, value := range fh.url.headers {
+		headers[key] = value
+	}
+
+	// add an extent in the file that we want to read
+	headers["Range"] = fmt.Sprintf("bytes=%d-%d", req.Offset, req.Offset + int64(req.Size) - 1)
+
+	reqUrl := fh.url.URL + "/" + fh.f.projId
+	body,err := MakeRequest("GET", reqUrl, headers, []byte("{}"))
+	if err != nil {
+		return err
+	}
 
 	resp.Data = body
 	return nil
