@@ -116,13 +116,24 @@ func DXAPI(dxEnv dxda.DXEnvironment, api string, payload string) (status string,
 }
 
 
+type DXDescribeFileRawJSON struct {
+	projectId string `json:"project"`
+	fileId    string `json:"id"`
+	class     string `json:"class"`
+	created   uint64 `json:"created"`
+	state     string `json:"state"`
+	name      string `json:"name"`
+	folder    string `json:"folder"`
+	size      uint64 `json:"size"`
+}
+
 type DXDescribeFile struct {
-	project string `json:"project"`
-	class   string `json:"class"`
-	created uint64 `json:"created"`
-	state   string `json:"state"`
-	name    string `json:"name"`
-	folder  string `json:"folder"`
+	ProjId    string
+	FileId    string
+	Name      string
+	Folder    string
+	Size      uint64
+	Created   timeTime
 }
 
 // make an API call that describes a file
@@ -138,7 +149,24 @@ func Describe(dxEnv dxda.DXEnvironment, projId string, fileId string) (DXDescrib
 	}
 
 	// unmarshal the response
-	var desc DXDescribeFile
-	json.Unmarshal(body, &desc)
+	var descRaw DXDescribeFileRawJSON
+	json.Unmarshal(body, &descRaw)
+
+	if descRaw.class != "file" {
+		err := errors.New("This is not a file, it is a " + descRaw.class)
+		return nil, err
+	}
+	if descRaw.state != "closed" {
+		err := errors.New("The file is not in the closed state, it is" + descRaw.state)
+		return nil, err
+	}
+	desc := &DXDescribeFile{
+		ProjId : descRaw.projectId,
+		fileId : descRaw.fileId,
+		Name : descRaw.name,
+		Folder : descRaw.folder
+		Created : time.Unix(descRaw.created/1000, descRaw.created % 1000),
+		Size : descRaw.size
+	}
 	return desc, nil
 }

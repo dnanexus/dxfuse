@@ -76,19 +76,27 @@ type FS struct {
 	dxEnv dxda.DXEnvironment
 }
 
+type Dir struct {
+	dxEnv *dxda.DXEnvironment,
+	path   string,
+}
+
+type File struct {
+	dxEnv    *dxda.DXEnvironment
+	ProjId    string
+	FileId    string
+	Size      uint64
+	Ctime     time.Time  // creation time
+}
+
 var _ fs.FS = (*FS)(nil)
 
 func (f *FS) Root() (fs.Node, error) {
 	n := &Dir{
+		dxEnv : &f.dxEnv,
 		path : "/"
-		dxEnv : &f.dxEnv
 	}
 	return n, nil
-}
-
-type Dir struct {
-	path string,
-	dxEnv *dxda.DXEnvironment
 }
 
 // Make sure that Dir implements the fs.Node interface
@@ -114,31 +122,26 @@ func (d *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.Lo
 	// check that the name is of the form project-xxxx:file-yyyy
 	parts := strings.Split(basename)
 	if parts.length != 2 {
-		return nil, ENOENT
+		return nil, fuse.ENOENT
 	}
 	projId := parts[0]
 	if !(projId.HashPrefix("project-")) {
-		return nil, ENOENT
+		return nil, fuse.ENOENT
 	}
 	fileId := parts[1]
 	if !(fileId.HashPrefix("file-")) {
-		return nil, ENOENT
+		return nil, fuse.ENOENT
 	}
 
 	// describe the file
-	utils.Describe(d.dxEnv, projId, fileId)
+	desc := utils.Describe(d.dxEnv, projId, fileId)
 	child := &File{
-		projectId: projId,
-		fileId: fileId
+		ProjId: desc.ProjId,
+		FileId: desc.FileId,
+		Size : desc.Size,
+		Ctime : desc.Created
 	}
 	return child, nil
-}
-
-type File struct {
-	fileId    string
-	projectId string
-	Size      uint64
-	Ctime     time.Time  // creation time
 }
 
 var _ fs.Node = (*File)(nil)
@@ -161,13 +164,13 @@ func (f *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenR
 	if err != nil {
 		return nil, err
 	}
-	// individual entries inside a zip file are not seekable
-	resp.Flags |= fuse.OpenNonSeekable
+	// these files are read only
+	resp.Flags |= fuse.OpenReadOnly
 	return &FileHandle{r: r}, nil
 }
 
 type FileHandle struct {
-	r io.ReadCloser
+	r *File
 }
 
 var _ fs.Handle = (*FileHandle)(nil)
@@ -175,25 +178,18 @@ var _ fs.Handle = (*FileHandle)(nil)
 var _ fs.HandleReleaser = (*FileHandle)(nil)
 
 func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
-	return fh.r.Close()
+	// nothing to do
 }
 
 var _ = fs.HandleReader(&FileHandle{})
 
 func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
-	// We don't actually enforce Offset to match where previous read
-	// ended. Maybe we should, but that would mean'd we need to track
-	// it. The kernel *should* do it for us, based on the
-	// fuse.OpenNonSeekable flag.
-	//
-	// One exception to the above is if we fail to fully populate a
-	// page cache page; a read into page cache is always page aligned.
-	// Make sure we never serve a partial read, to avoid that.
-	buf := make([]byte, req.Size)
-	n, err := io.ReadFull(fh.r, buf)
-	if err == io.ErrUnexpectedEOF || err == io.EOF {
-		err = nil
-	}
-	resp.Data = buf[:n]
-	return err
+	headers := make(map[string]string)
+	headers["Range"] = fmt.Sprintf("bytes=%d-%d", req.Offset, req.Offset + req.Size - 1)
+
+	url = fmt.Sprintf("%s/download", fs.r.FileId)
+	_, body := makeRequest("GET", url, headers,  []byte("{}"))
+
+	resp.Data = body
+	return nil
 }
