@@ -2,8 +2,12 @@ package dxfuse
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"os"
+	"os/user"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -19,16 +23,27 @@ import (
 
 //
 type FS struct {
+	// configuration information for accessing dnanexus servers
 	dxEnv dxda.DXEnvironment
+
+	// overall project-id. Convenience variable, we'll git rid of this
+	// limitation shortly
+	projId string
+
+	// Fixed list of file ids that are exposed by this mount point.
+	fileIds []string
+
+	uid uint32
+	gid uint32
 }
 
 type Dir struct {
-	dxEnv *dxda.DXEnvironment
+	fs    *FS
 	path   string
 }
 
 type File struct {
-	dxEnv    *dxda.DXEnvironment
+	fs       *FS
 	projId    string
 	fileId    string
 	size      uint64
@@ -44,6 +59,8 @@ type DXDownloadURL struct {
 
 type FileHandle struct {
 	f *File
+
+	// URL used for downloading file ranges
 	url DXDownloadURL
 }
 
@@ -51,7 +68,7 @@ type FileHandle struct {
 // Mount the filesystem:
 //  - setup the debug log to the FUSE kernel log (I think)
 //  - mount as read-only
-func Mount(mountpoint string, dxEnv dxda.DXEnvironment) error {
+func Mount(mountpoint string, dxEnv dxda.DXEnvironment, projId string, fileIds []string) error {
 	log.Printf("mounting dxfuse\n")
 	c, err := fuse.Mount(mountpoint, fuse.AllowOther(), fuse.ReadOnly())
 	if err != nil {
@@ -59,8 +76,31 @@ func Mount(mountpoint string, dxEnv dxda.DXEnvironment) error {
 	}
 	defer c.Close()
 
+	// get the Unix uid and gid
+	user, err := user.Current()
+	if err != nil {
+		return err
+	}
+	uid, err := strconv.Atoi(user.Uid)
+	if err != nil {
+		return err
+	}
+	gid, err := strconv.Atoi(user.Gid)
+	if err != nil {
+		return err
+	}
+
+	// input sanity checks
+	if !(strings.HasPrefix(projId, "project-")) {
+		return errors.New("This isn't a project " + projId)
+	}
+
 	filesys := &FS{
 		dxEnv : dxEnv,
+		projId : projId,
+		fileIds : fileIds,
+		uid : uint32(uid),
+		gid : uint32(gid),
 	}
 	if err := fs.Serve(c, filesys); err != nil {
 		return err
@@ -85,7 +125,7 @@ var _ fs.FS = (*FS)(nil)
 func (f *FS) Root() (fs.Node, error) {
 	log.Printf("Get root directory\n")
 	n := &Dir{
-		dxEnv : &f.dxEnv,
+		fs : f,
 		path : "/",
 	}
 	return n, nil
@@ -94,23 +134,39 @@ func (f *FS) Root() (fs.Node, error) {
 // Make sure that Dir implements the fs.Node interface
 var _ fs.Node = (*Dir)(nil)
 
-// we don't support directory operations
-func (d *Dir) Attr(ctx context.Context, a *fuse.Attr) error {
-	// We only support the root directory
-	if d.path == "/" {
-		a.Size = 4096
-		a.Mode = 755
-		a.Mtime = time.Now()
-		a.Ctime = time.Now()
-		return nil
-	} else {
-		return fuse.ENOSYS
+
+// We only support the root directory
+func (dir *Dir) Attr(ctx context.Context, a *fuse.Attr) error {
+	if dir.path != "/" {
+		return fuse.ENOSYS;
 	}
+	// this can be retained in cache indefinitely (a year is an approximation)
+	a.Valid = time.Until(time.Unix(1000 * 1000 * 1000, 0))
+	a.Inode = 1
+	a.Size = 4096  // dummy size
+	a.Blocks = 8
+	a.Atime = time.Now()
+	a.Mtime = time.Now()
+	a.Ctime = time.Now()
+	a.Mode = os.ModeDir | 0777
+	a.Nlink = 1
+	a.Uid = dir.fs.uid
+	a.Gid = dir.fs.uid
+	a.BlockSize = 16 * 4096
+	return nil
 }
 
-func (d *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
-	log.Printf("ReadDirAll dir=%s\n", d.path)
-	return nil, fuse.ENOSYS
+func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
+	log.Printf("ReadDirAll dir=%s\n", dir.path)
+
+	// create a directory entry for each of the file ids
+	dEntries := make([]fuse.Dirent, len(dir.fs.fileIds))
+	for index, fid := range dir.fs.fileIds {
+		dEntries[index].Inode = uint64(index + 10)
+		dEntries[index].Type = fuse.DT_File
+		dEntries[index].Name = fid
+	}
+	return dEntries, nil
 }
 
 var _ = fs.HandleReadDirAller(&Dir{})
@@ -118,31 +174,16 @@ var _ = fs.HandleReadDirAller(&Dir{})
 var _ = fs.NodeRequestLookuper(&Dir{})
 
 // We ignore the directory, because it is always the root of the filesystem.
-func (d *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.LookupResponse) (fs.Node, error) {
-	log.Printf("Lookup dir=%s  filename=%s\n", d.path, req.Name)
-	basename := req.Name
-
-	// check that the name is of the form project-xxxx:file-yyyy
-	parts := strings.Split(basename, ":")
-	if parts == nil || len(parts) != 2 {
-		return nil, fuse.ENOENT
-	}
-	projId := parts[0]
-	if !(strings.HasPrefix(projId, "project-")) {
-		return nil, fuse.ENOENT
-	}
-	fileId := parts[1]
-	if !(strings.HasPrefix(fileId, "file-")) {
-		return nil, fuse.ENOENT
-	}
+func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.LookupResponse) (fs.Node, error) {
+	log.Printf("Lookup dir=%s  filename=%s\n", dir.path, req.Name)
 
 	// describe the file
-	desc,err := Describe(d.dxEnv, projId, fileId)
+	desc, err := Describe(&dir.fs.dxEnv, dir.fs.projId, req.Name)
 	if err != nil {
 		return nil, err
 	}
 	child := &File{
-		dxEnv: d.dxEnv,
+		fs: dir.fs,
 		projId: desc.ProjId,
 		fileId: desc.FileId,
 		size : desc.Size,
@@ -178,7 +219,7 @@ func (f *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenR
 	payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
 		f.projId, secondsInYear)
 
-	body, err := DXAPI(f.dxEnv, fmt.Sprintf("%s/download", f.fileId), payload)
+	body, err := DXAPI(&f.fs.dxEnv, fmt.Sprintf("%s/download", f.fileId), payload)
 	if err != nil {
 		return nil, err
 	}

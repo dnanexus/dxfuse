@@ -129,7 +129,6 @@ type DXDescribeFile struct {
 //
 // If the file isn't closed, or closing, return an error.
 func Describe(dxEnv *dxda.DXEnvironment, projId string, fileId string) (*DXDescribeFile, error) {
-	// make the call
 	payload := fmt.Sprintf("{\"project\": \"%s\"}", projId)
 	apiCall := fmt.Sprintf("%s/describe", fileId)
 	body, err := DXAPI(dxEnv, apiCall, payload)
