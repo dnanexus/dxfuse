@@ -52,7 +52,7 @@ type FileHandle struct {
 //  - setup the debug log to the FUSE kernel log (I think)
 //  - mount as read-only
 func Mount(mountpoint string, dxEnv dxda.DXEnvironment) error {
-	log.Fprintf("mounting dxfuse\n")
+	log.Printf("mounting dxfuse\n")
 	c, err := fuse.Mount(mountpoint, fuse.AllowOther(), fuse.ReadOnly())
 	if err != nil {
 		return err
@@ -83,6 +83,7 @@ func Mount(mountpoint string, dxEnv dxda.DXEnvironment) error {
 var _ fs.FS = (*FS)(nil)
 
 func (f *FS) Root() (fs.Node, error) {
+	log.Printf("Get root directory\n")
 	n := &Dir{
 		dxEnv : &f.dxEnv,
 		path : "/",
@@ -95,10 +96,20 @@ var _ fs.Node = (*Dir)(nil)
 
 // we don't support directory operations
 func (d *Dir) Attr(ctx context.Context, a *fuse.Attr) error {
-	return fuse.ENOSYS
+	// We only support the root directory
+	if d.path == "/" {
+		a.Size = 4096
+		a.Mode = 755
+		a.Mtime = time.Now()
+		a.Ctime = time.Now()
+		return nil
+	} else {
+		return fuse.ENOSYS
+	}
 }
 
 func (d *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
+	log.Printf("ReadDirAll dir=%s\n", d.path)
 	return nil, fuse.ENOSYS
 }
 
@@ -108,6 +119,7 @@ var _ = fs.NodeRequestLookuper(&Dir{})
 
 // We ignore the directory, because it is always the root of the filesystem.
 func (d *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.LookupResponse) (fs.Node, error) {
+	log.Printf("Lookup dir=%s  filename=%s\n", d.path, req.Name)
 	basename := req.Name
 
 	// check that the name is of the form project-xxxx:file-yyyy
