@@ -42,12 +42,12 @@ func MakeRequest(requestType string, url string, headers map[string]string, data
 		Backoff:      retryablehttp.DefaultBackoff,
 	}
 
-	var numAttempts int = 0
-	var totalTimeNanoSec int64 = 0
+//	var numAttempts int = 0
+//	var totalTimeNanoSec int64 = 0
 
-	for  ((totalTimeNanoSec / 1000*1000*1000) < maxTotalReqTime) &&
-		(numAttempts < maxNumAttempts) {
-		startNanoSec := time.Now().UnixNano()
+//	for  ((totalTimeNanoSec / 1000*1000*1000) < maxTotalReqTime) &&
+//		(numAttempts < maxNumAttempts) {
+//		startNanoSec := time.Now().UnixNano()
 
 		// Safety procedure to force timeout to prevent hanging
 		ctx, cancel := context.WithCancel(context.TODO())
@@ -80,9 +80,9 @@ func MakeRequest(requestType string, url string, headers map[string]string, data
 			return nil, fmt.Errorf("http error, status %s", status)
 		}
 
-		deltaNanoSec := time.Now().UnixNano() - startNanoSec
-		totalTimeNanoSec += deltaNanoSec
-	}
+//		deltaNanoSec := time.Now().UnixNano() - startNanoSec
+//		totalTimeNanoSec += deltaNanoSec
+//	}
 	return body, nil
 }
 

@@ -70,7 +70,8 @@ type FileHandle struct {
 //  - mount as read-only
 func Mount(mountpoint string, dxEnv dxda.DXEnvironment, projId string, fileIds []string) error {
 	log.Printf("mounting dxfuse\n")
-	c, err := fuse.Mount(mountpoint, fuse.AllowOther(), fuse.ReadOnly())
+	c, err := fuse.Mount(mountpoint, fuse.AllowOther(), fuse.ReadOnly(),
+		fuse.MaxReadahead(128 * 1024 * 1024), fuse.AsyncRead())
 	if err != nil {
 		return err
 	}
@@ -152,7 +153,7 @@ func (dir *Dir) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.Nlink = 1
 	a.Uid = dir.fs.uid
 	a.Gid = dir.fs.uid
-	a.BlockSize = 16 * 4096
+	a.BlockSize = 16 * 1024 * 1024
 	return nil
 }
 
@@ -253,7 +254,9 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 	}
 
 	// add an extent in the file that we want to read
-	headers["Range"] = fmt.Sprintf("bytes=%d-%d", req.Offset, req.Offset + int64(req.Size) - 1)
+	len := req.Offset + int64(req.Size) - 1
+	headers["Range"] = fmt.Sprintf("bytes=%d-%d", req.Offset, len)
+	//log.Printf("Read  ofs=%d  len=%d\n", req.Offset, len)
 
 	reqUrl := fh.url.URL + "/" + fh.f.projId
 	body,err := MakeRequest("GET", reqUrl, headers, []byte("{}"))
