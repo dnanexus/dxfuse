@@ -71,7 +71,7 @@ type FileHandle struct {
 func Mount(mountpoint string, dxEnv dxda.DXEnvironment, projId string, fileIds []string) error {
 	log.Printf("mounting dxfuse\n")
 	c, err := fuse.Mount(mountpoint, fuse.AllowOther(), fuse.ReadOnly(),
-		fuse.MaxReadahead(128 * 1024 * 1024), fuse.AsyncRead())
+		fuse.MaxReadahead(16 * 1024 * 1024), fuse.AsyncRead())
 	if err != nil {
 		return err
 	}
@@ -113,11 +113,6 @@ func Mount(mountpoint string, dxEnv dxda.DXEnvironment, projId string, fileIds [
 		return err
 	}
 
-	// write out to the FUSE log
-	fuse.Debug = func(msg interface{}) {
-		log.Print(msg)
-	}
-
 	return nil
 }
 
@@ -153,7 +148,7 @@ func (dir *Dir) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.Nlink = 1
 	a.Uid = dir.fs.uid
 	a.Gid = dir.fs.uid
-	a.BlockSize = 16 * 1024 * 1024
+	a.BlockSize = 4 * 1024
 	return nil
 }
 
@@ -197,13 +192,17 @@ var _ fs.Node = (*File)(nil)
 
 func (f *File) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.Size = f.size
-	a.Mode = 0400 // read only access
 
 	// because the platform has only immutable files, these
 	// timestamps are all the same
 	a.Mtime = f.ctime
 	a.Ctime = f.ctime
 	a.Crtime = f.ctime
+	a.Mode = 0400 // read only access
+	a.Nlink = 1
+	a.Uid = f.fs.uid
+	a.Gid = f.fs.uid
+	a.BlockSize = 1024 * 1024
 	return nil
 }
 
@@ -254,9 +253,9 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 	}
 
 	// add an extent in the file that we want to read
-	len := req.Offset + int64(req.Size) - 1
-	headers["Range"] = fmt.Sprintf("bytes=%d-%d", req.Offset, len)
-	//log.Printf("Read  ofs=%d  len=%d\n", req.Offset, len)
+	endOfs := req.Offset + int64(req.Size) - 1
+	headers["Range"] = fmt.Sprintf("bytes=%d-%d", req.Offset, endOfs)
+	log.Printf("Read  ofs=%d  len=%d\n", req.Offset, req.Size)
 
 	reqUrl := fh.url.URL + "/" + fh.f.projId
 	body,err := MakeRequest("GET", reqUrl, headers, []byte("{}"))
