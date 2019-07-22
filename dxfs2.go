@@ -1,14 +1,12 @@
-package dxfuse
+package dxfs2
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"os"
 	"os/user"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -21,17 +19,12 @@ import (
 	"golang.org/x/net/context"
 )
 
-//
 type FS struct {
 	// configuration information for accessing dnanexus servers
 	dxEnv dxda.DXEnvironment
 
-	// overall project-id. Convenience variable, we'll git rid of this
-	// limitation shortly
-	projId string
-
-	// Fixed list of file ids that are exposed by this mount point.
-	fileIds []string
+	// File catalog. A fixed list of dx:files that are exposed by this mount point.
+	catalog map[string]DxFileDesc
 
 	uid uint32
 	gid uint32
@@ -44,15 +37,12 @@ type Dir struct {
 
 type File struct {
 	fs       *FS
-	projId    string
-	fileId    string
-	size      uint64
-	ctime     time.Time  // creation time
+	desc     *DxFileDesc
 }
 
 // A URL generated with the /file-xxxx/download API call, that is
 // used to download file ranges.
-type DXDownloadURL struct {
+type DxDownloadURL struct {
 	URL     string            `json:"url"`
 	Headers map[string]string `json:"headers"`
 }
@@ -61,15 +51,14 @@ type FileHandle struct {
 	f *File
 
 	// URL used for downloading file ranges
-	url DXDownloadURL
+	url DxDownloadURL
 }
-
 
 // Mount the filesystem:
 //  - setup the debug log to the FUSE kernel log (I think)
 //  - mount as read-only
-func Mount(mountpoint string, dxEnv dxda.DXEnvironment, projId string, fileIds []string) error {
-	log.Printf("mounting dxfuse\n")
+func Mount(mountpoint string, dxEnv dxda.DXEnvironment, fileDescVec []DxFileDesc) error {
+	log.Printf("mounting dxfs2\n")
 	c, err := fuse.Mount(mountpoint, fuse.AllowOther(), fuse.ReadOnly(),
 		fuse.MaxReadahead(16 * 1024 * 1024), fuse.AsyncRead())
 	if err != nil {
@@ -91,15 +80,15 @@ func Mount(mountpoint string, dxEnv dxda.DXEnvironment, projId string, fileIds [
 		return err
 	}
 
-	// input sanity checks
-	if !(strings.HasPrefix(projId, "project-")) {
-		return errors.New("This isn't a project " + projId)
+	// set a mapping from file-id its description
+	catalog := make(map[string]DxFileDesc)
+	for _, fDesc := range(fileDescVec) {
+		catalog[fDesc.FileId] = fDesc
 	}
 
 	filesys := &FS{
 		dxEnv : dxEnv,
-		projId : projId,
-		fileIds : fileIds,
+		catalog : catalog,
 		uid : uint32(uid),
 		gid : uint32(gid),
 	}
@@ -155,12 +144,14 @@ func (dir *Dir) Attr(ctx context.Context, a *fuse.Attr) error {
 func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	log.Printf("ReadDirAll dir=%s\n", dir.path)
 
-	// create a directory entry for each of the file ids
-	dEntries := make([]fuse.Dirent, len(dir.fs.fileIds))
-	for index, fid := range dir.fs.fileIds {
-		dEntries[index].Inode = uint64(index + 10)
-		dEntries[index].Type = fuse.DT_File
-		dEntries[index].Name = fid
+	// create a directory entry for each of the file descriptions
+	dEntries := make([]fuse.Dirent, len(dir.fs.catalog))
+	var i = 0
+	for key, fDesc := range dir.fs.catalog {
+		dEntries[i].Inode = fDesc.inode
+		dEntries[i].Type = fuse.DT_File
+		dEntries[i].Name = key
+		i++
 	}
 	return dEntries, nil
 }
@@ -173,17 +164,16 @@ var _ = fs.NodeRequestLookuper(&Dir{})
 func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.LookupResponse) (fs.Node, error) {
 	log.Printf("Lookup dir=%s  filename=%s\n", dir.path, req.Name)
 
-	// describe the file
-	desc, err := Describe(&dir.fs.dxEnv, dir.fs.projId, req.Name)
-	if err != nil {
-		return nil, err
+	// lookup in the in-memory catalog
+	desc, ok := dir.fs.catalog[req.Name]
+	if !ok {
+		// file does not exist
+		return nil, fuse.ENOENT
 	}
+
 	child := &File{
 		fs: dir.fs,
-		projId: desc.ProjId,
-		fileId: desc.FileId,
-		size : desc.Size,
-		ctime : desc.Created,
+		desc: &desc,
 	}
 	return child, nil
 }
@@ -191,17 +181,17 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 var _ fs.Node = (*File)(nil)
 
 func (f *File) Attr(ctx context.Context, a *fuse.Attr) error {
-	a.Size = f.size
+	a.Size = f.desc.Size
 
 	// because the platform has only immutable files, these
 	// timestamps are all the same
-	a.Mtime = f.ctime
-	a.Ctime = f.ctime
-	a.Crtime = f.ctime
+	a.Mtime = f.desc.Mtime
+	a.Ctime = f.desc.Ctime
+	a.Crtime = f.desc.Ctime
 	a.Mode = 0400 // read only access
 	a.Nlink = 1
 	a.Uid = f.fs.uid
-	a.Gid = f.fs.uid
+	a.Gid = f.fs.gid
 	a.BlockSize = 1024 * 1024
 	return nil
 }
@@ -217,13 +207,13 @@ func (f *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenR
 	// create a download URL for this file
 	const secondsInYear int = 60 * 60 * 24 * 365
 	payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
-		f.projId, secondsInYear)
+		f.desc.ProjId, secondsInYear)
 
-	body, err := DXAPI(&f.fs.dxEnv, fmt.Sprintf("%s/download", f.fileId), payload)
+	body, err := DxAPI(&f.fs.dxEnv, fmt.Sprintf("%s/download", f.desc.FileId), payload)
 	if err != nil {
 		return nil, err
 	}
-	var u DXDownloadURL
+	var u DxDownloadURL
 	json.Unmarshal(body, &u)
 
 	fh := &FileHandle{
@@ -257,8 +247,8 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 	headers["Range"] = fmt.Sprintf("bytes=%d-%d", req.Offset, endOfs)
 	log.Printf("Read  ofs=%d  len=%d\n", req.Offset, req.Size)
 
-	reqUrl := fh.url.URL + "/" + fh.f.projId
-	body,err := MakeRequest("GET", reqUrl, headers, []byte("{}"))
+	reqUrl := fh.url.URL + "/" + fh.f.desc.ProjId
+	body,err := DxHttpRequest("GET", reqUrl, headers, []byte("{}"))
 	if err != nil {
 		return err
 	}

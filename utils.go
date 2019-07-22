@@ -1,4 +1,4 @@
-package dxfuse
+package dxfs2
 
 import (
 	"bytes"
@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -22,15 +23,11 @@ import (
 const minRetryTime = 1   // seconds
 const maxRetryTime = 120 // seconds
 const maxRetryCount = 10
-const userAgent = "DNAnexus FUSE filesystem"
+const userAgent = "dxfs2: DNAnexus FUSE filesystem"
 const reqTimeout = 15  // seconds
 const maxNumAttempts = 3
 
-// the total time to service a request cannot go above this number of seconds
-const maxTotalReqTime = 120 // seconds
-
-
-func MakeRequest(requestType string, url string, headers map[string]string, data []byte) (body []byte, err error) {
+func DxHttpRequest(requestType string, url string, headers map[string]string, data []byte) (body []byte, err error) {
 	var client *retryablehttp.Client
 	client = &retryablehttp.Client{
 		HTTPClient:   cleanhttp.DefaultClient(),
@@ -42,52 +39,41 @@ func MakeRequest(requestType string, url string, headers map[string]string, data
 		Backoff:      retryablehttp.DefaultBackoff,
 	}
 
-//	var numAttempts int = 0
-//	var totalTimeNanoSec int64 = 0
+	// Safety procedure to force timeout to prevent hanging
+	ctx, cancel := context.WithCancel(context.TODO())
+	timer := time.AfterFunc(reqTimeout * time.Second, func() {
+		cancel()
+	})
+	req, err := retryablehttp.NewRequest(requestType, url, bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	for header, value := range headers {
+		req.Header.Set(header, value)
+	}
+	resp, err := client.Do(req)
+	timer.Stop()
+	if err != nil {
+		return nil, err
+	}
+	status := resp.Status
 
-//	for  ((totalTimeNanoSec / 1000*1000*1000) < maxTotalReqTime) &&
-//		(numAttempts < maxNumAttempts) {
-//		startNanoSec := time.Now().UnixNano()
+	body, _ = ioutil.ReadAll(resp.Body)
+	resp.Body.Close()
 
-		// Safety procedure to force timeout to prevent hanging
-		ctx, cancel := context.WithCancel(context.TODO())
-		timer := time.AfterFunc(reqTimeout * time.Second, func() {
-			cancel()
-		})
-		req, err := retryablehttp.NewRequest(requestType, url, bytes.NewReader(data))
-		if err != nil {
-			return nil, err
-		}
-		req = req.WithContext(ctx)
-		for header, value := range headers {
-			req.Header.Set(header, value)
-		}
-		resp, err := client.Do(req)
-		timer.Stop()
-		if err != nil {
-			return nil, err
-		}
-		status := resp.Status
-
-		body, _ = ioutil.ReadAll(resp.Body)
-		resp.Body.Close()
-
-		// TODO: Investigate more sophsticated handling of these error codes ala
-		// https://github.com/dnanexus/dx-toolkit/blob/3f34b723170e698a594ccbea16a82419eb06c28b/src/python/dxpy/__init__.py#L655
-		if !strings.HasPrefix(status, "2") {
-			log.Fatalln(fmt.Errorf("%s request to '%s' failed with status %s",
-				requestType, url, status))
-			return nil, fmt.Errorf("http error, status %s", status)
-		}
-
-//		deltaNanoSec := time.Now().UnixNano() - startNanoSec
-//		totalTimeNanoSec += deltaNanoSec
-//	}
+	// TODO: Investigate more sophsticated handling of these error codes ala
+	// https://github.com/dnanexus/dx-toolkit/blob/3f34b723170e698a594ccbea16a82419eb06c28b/src/python/dxpy/__init__.py#L655
+	if !strings.HasPrefix(status, "2") {
+		log.Fatalln(fmt.Errorf("%s request to '%s' failed with status %s",
+			requestType, url, status))
+		return nil, fmt.Errorf("http error, status %s", status)
+	}
 	return body, nil
 }
 
-// DXAPI - Function to wrap a generic API call to DNAnexus
-func DXAPI(dxEnv *dxda.DXEnvironment, api string, payload string) (body []byte, err error) {
+// DxAPI - Function to wrap a generic API call to DNAnexus
+func DxAPI(dxEnv *dxda.DXEnvironment, api string, payload string) (body []byte, err error) {
 	if (dxEnv.Token == "") {
 		err := errors.New("The token is not set. This may be because the environment isn't set.")
 		return nil, err
@@ -102,21 +88,21 @@ func DXAPI(dxEnv *dxda.DXEnvironment, api string, payload string) (body []byte, 
 		dxEnv.ApiServerHost,
 		dxEnv.ApiServerPort,
 		api)
-	return MakeRequest("POST", url, headers, []byte(payload))
+	return DxHttpRequest("POST", url, headers, []byte(payload))
 }
 
 
-type DXDescribeFileRawJSON struct {
+type DxDescribeFileRawJSON struct {
 	ProjectId        string `json:"project"`
 	FileId           string `json:"id"`
-	CreatedMillisec  uint64 `json:"created"`
+	CreatedMillisec  int64 `json:"created"`
 	State            string `json:"state"`
 	Name             string `json:"name"`
 	Folder           string `json:"folder"`
 	Size             uint64 `json:"size"`
 }
 
-type DXDescribeFile struct {
+type DxDescribeFile struct {
 	ProjId    string
 	FileId    string
 	Name      string
@@ -125,19 +111,28 @@ type DXDescribeFile struct {
 	Created   time.Time
 }
 
+
+// convert time in milliseconds since 1970, in the equivalent
+// golang structure
+func dxTimeToUnixTime(dxTime int64) time.Time {
+	sec := int64(dxTime/1000)
+	millisec := int64(dxTime % 1000)
+	return time.Unix(sec, millisec)
+}
+
 // make an API call that describes a file
 //
 // If the file isn't closed, or closing, return an error.
-func Describe(dxEnv *dxda.DXEnvironment, projId string, fileId string) (*DXDescribeFile, error) {
+func Describe(dxEnv *dxda.DXEnvironment, projId string, fileId string) (*DxDescribeFile, error) {
 	payload := fmt.Sprintf("{\"project\": \"%s\"}", projId)
 	apiCall := fmt.Sprintf("%s/describe", fileId)
-	body, err := DXAPI(dxEnv, apiCall, payload)
+	body, err := DxAPI(dxEnv, apiCall, payload)
 	if err != nil {
 		return nil, err
 	}
 
 	// unmarshal the response
-	var descRaw DXDescribeFileRawJSON
+	var descRaw DxDescribeFileRawJSON
 	json.Unmarshal(body, &descRaw)
 
 	if descRaw.State != "closed" {
@@ -145,19 +140,76 @@ func Describe(dxEnv *dxda.DXEnvironment, projId string, fileId string) (*DXDescr
 		return nil, err
 	}
 
-	// convert time in milliseconds since 1970, in the equivalent
-	// golang structure
-	sec := int64(descRaw.CreatedMillisec/1000)
-	millisec := int64(descRaw.CreatedMillisec % 1000)
-	crtTime := time.Unix(sec, millisec)
-
-	desc := &DXDescribeFile{
+	desc := &DxDescribeFile{
 		ProjId : descRaw.ProjectId,
 		FileId : descRaw.FileId,
 		Name : descRaw.Name,
 		Folder : descRaw.Folder,
-		Created : crtTime,
+		Created : dxTimeToUnixTime(descRaw.CreatedMillisec),
 		Size : descRaw.Size,
 	}
 	return desc, nil
+}
+
+
+// Describe a large number of file-ids in one API call.
+//func DescribeBulk(dxEnv *dxda.DXEnvironment, fileIds []string) (map[String]DxDescribeFile, error) {
+//	DxAPI()
+//}
+
+type DxFileDescRaw struct {
+	FileId string `json:"id"`
+	ProjId string `json:"proj"`
+	Ctime  int64 `json:ctime"`
+	Mtime  int64 `json:mtime"`
+	Size   uint64 `json:size"`
+}
+
+type DxFileDesc struct {
+	FileId string
+	ProjId string
+	Ctime  time.Time
+	Mtime  time.Time
+	Size   uint64
+	inode  uint64
+}
+
+// Read a manifest file of the form:
+// {
+//  [
+//    { "id": "file-0001",
+//      "proj" : "project-1001",
+//      "ctime" :   911191911,
+//      "mtime": 911191911,
+//      "size" : 8102
+//    },
+//    ...
+//  ]
+//}
+func ReadManifest(path string) ([]DxFileDesc, error) {
+	jsonFile, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer jsonFile.Close()
+
+	bytes, err := ioutil.ReadAll(jsonFile)
+	if err != nil {
+		return nil, err
+	}
+	var descsRaw []DxFileDescRaw
+	json.Unmarshal(bytes, &descsRaw)
+
+	var inodeCnt uint64 = 10
+	var files = make([]DxFileDesc, len(descsRaw))
+	for i, descRaw := range(descsRaw) {
+		files[i].FileId = descRaw.FileId
+		files[i].ProjId = descRaw.ProjId
+		files[i].Ctime = dxTimeToUnixTime(descRaw.Ctime)
+		files[i].Mtime = dxTimeToUnixTime(descRaw.Mtime)
+		files[i].Size = descRaw.Size
+		files[i].inode = inodeCnt
+		inodeCnt++
+	}
+	return files, nil
 }
