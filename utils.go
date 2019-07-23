@@ -170,6 +170,7 @@ func DescribeBulk(dxEnv *dxda.DXEnvironment, fileIds []string) (map[string]DxDes
 			Ctime : dxTimeToUnixTime(descRaw.CreatedMillisec),
 			Mtime : dxTimeToUnixTime(descRaw.ModifiedMillisec),
 		}
+		//fmt.Printf("%v\n", desc)
 		files[desc.FileId] = desc
 	}
 	return files, nil

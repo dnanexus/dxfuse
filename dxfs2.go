@@ -56,7 +56,7 @@ type FileHandle struct {
 }
 
 type DxFileDesc struct {
-	dxDesc *DxDescribe
+	dxDesc DxDescribe
 	inode uint64
 }
 
@@ -95,7 +95,7 @@ func Mount(mountpoint string, dxEnv dxda.DXEnvironment, files map[string]DxDescr
 	catalog := make(map[string]DxFileDesc)
 	for fid, dxDesc := range(files) {
 		catalog[fid] = DxFileDesc {
-			dxDesc : &dxDesc,
+			dxDesc : dxDesc,
 			inode : inodeCnt,
 		}
 		inodeCnt++
@@ -188,7 +188,7 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 
 	child := &File{
 		fs: dir.fs,
-		dxDesc: catEntry.dxDesc,
+		dxDesc: &catEntry.dxDesc,
 		inode: catEntry.inode,
 	}
 	return child, nil
@@ -198,6 +198,7 @@ var _ fs.Node = (*File)(nil)
 
 func (f *File) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.Size = f.dxDesc.Size
+	log.Printf("Attr  size=%d\n", a.Size)
 
 	// because the platform has only immutable files, these
 	// timestamps are all the same
@@ -208,7 +209,7 @@ func (f *File) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.Nlink = 1
 	a.Uid = f.fs.uid
 	a.Gid = f.fs.gid
-	a.BlockSize = 1024 * 1024
+	//a.BlockSize = 1024 * 1024
 	return nil
 }
 
