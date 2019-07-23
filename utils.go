@@ -94,27 +94,31 @@ func DxAPI(dxEnv *dxda.DXEnvironment, api string, payload string) (body []byte, 
 
 
 type Request struct {
-	objects []string `json:"objects"`
+	Objects []string `json:"objects"`
 }
 
 type Reply struct {
-	results []DxDescribeRaw `json:"results"`
+	Results []DxDescribeRawTop `json:"results"`
+}
+
+type DxDescribeRawTop struct {
+	Describe DxDescribeRaw `json:"describe"`
 }
 
 type DxDescribeRaw struct {
-	ProjId           string `json:"project"`
 	FileId           string `json:"id"`
+	ProjId           string `json:"project"`
+	Name             string `json:"name"`
+	State            string `json:"state"`
+	Folder           string `json:"folder"`
 	CreatedMillisec  int64 `json:"created"`
 	ModifiedMillisec int64 `json:"modified"`
-	State            string `json:"state"`
-	Name             string `json:"name"`
-	Folder           string `json:"folder"`
 	Size             uint64 `json:"size"`
 }
 
 type DxDescribe struct {
-	ProjId    string
 	FileId    string
+	ProjId    string
 	Name      string
 	Folder    string
 	Size      uint64
@@ -134,15 +138,16 @@ func dxTimeToUnixTime(dxTime int64) time.Time {
 // Describe a large number of file-ids in one API call.
 func DescribeBulk(dxEnv *dxda.DXEnvironment, fileIds []string) (map[string]DxDescribe, error) {
 	request := Request{
-		objects : fileIds,
+		Objects : fileIds,
 	}
 	var payload []byte
 	payload, err := json.Marshal(request)
 	if err != nil {
 		return nil, err
 	}
+	//fmt.Printf("payload = %s", string(payload))
 
-	repJs, err := DxAPI(dxEnv, "/system/describeDataObjects", string(payload))
+	repJs, err := DxAPI(dxEnv, "system/describeDataObjects", string(payload))
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +155,8 @@ func DescribeBulk(dxEnv *dxda.DXEnvironment, fileIds []string) (map[string]DxDes
 	json.Unmarshal(repJs, &reply)
 
 	var files = make(map[string]DxDescribe)
-	for _, descRaw := range(reply.results) {
+	for _, descRawTop := range(reply.Results) {
+		descRaw := descRawTop.Describe
 		if descRaw.State != "closed" {
 			err := errors.New("The file is not in the closed state, it is [" + descRaw.State + "]")
 			return nil, err

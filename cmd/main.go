@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -62,9 +64,17 @@ func main() {
 		fmt.Println(err)
 		os.Exit(1)
 	}
-	fileIds = readManifest(manifest)
-
-	if err := dxfs2.Mount(mountpoint, dxEnv, fileIds); err != nil {
+	fileIds,err := readManifest(manifest)
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	fileInfo,err := dxfs2.DescribeBulk(&dxEnv, fileIds)
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	if err := dxfs2.Mount(mountpoint, dxEnv, fileInfo); err != nil {
 		log.Fatal(err)
 	}
 }
