@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
-	"os"
 	"strings"
 	"time"
 
@@ -92,25 +91,36 @@ func DxAPI(dxEnv *dxda.DXEnvironment, api string, payload string) (body []byte, 
 }
 
 
-type DxDescribeFileRawJSON struct {
-	ProjectId        string `json:"project"`
+
+
+type Request struct {
+	objects []string `json:"objects"`
+}
+
+type Reply struct {
+	results []DxDescribeRaw `json:"results"`
+}
+
+type DxDescribeRaw struct {
+	ProjId           string `json:"project"`
 	FileId           string `json:"id"`
 	CreatedMillisec  int64 `json:"created"`
+	ModifiedMillisec int64 `json:"modified"`
 	State            string `json:"state"`
 	Name             string `json:"name"`
 	Folder           string `json:"folder"`
 	Size             uint64 `json:"size"`
 }
 
-type DxDescribeFile struct {
+type DxDescribe struct {
 	ProjId    string
 	FileId    string
 	Name      string
 	Folder    string
 	Size      uint64
-	Created   time.Time
+	Ctime     time.Time
+	Mtime     time.Time
 }
-
 
 // convert time in milliseconds since 1970, in the equivalent
 // golang structure
@@ -120,96 +130,41 @@ func dxTimeToUnixTime(dxTime int64) time.Time {
 	return time.Unix(sec, millisec)
 }
 
-// make an API call that describes a file
-//
-// If the file isn't closed, or closing, return an error.
-func Describe(dxEnv *dxda.DXEnvironment, projId string, fileId string) (*DxDescribeFile, error) {
-	payload := fmt.Sprintf("{\"project\": \"%s\"}", projId)
-	apiCall := fmt.Sprintf("%s/describe", fileId)
-	body, err := DxAPI(dxEnv, apiCall, payload)
-	if err != nil {
-		return nil, err
-	}
-
-	// unmarshal the response
-	var descRaw DxDescribeFileRawJSON
-	json.Unmarshal(body, &descRaw)
-
-	if descRaw.State != "closed" {
-		err := errors.New("The file is not in the closed state, it is [" + descRaw.State + "]")
-		return nil, err
-	}
-
-	desc := &DxDescribeFile{
-		ProjId : descRaw.ProjectId,
-		FileId : descRaw.FileId,
-		Name : descRaw.Name,
-		Folder : descRaw.Folder,
-		Created : dxTimeToUnixTime(descRaw.CreatedMillisec),
-		Size : descRaw.Size,
-	}
-	return desc, nil
-}
-
 
 // Describe a large number of file-ids in one API call.
-//func DescribeBulk(dxEnv *dxda.DXEnvironment, fileIds []string) (map[String]DxDescribeFile, error) {
-//	DxAPI()
-//}
-
-type DxFileDescRaw struct {
-	FileId string `json:"id"`
-	ProjId string `json:"proj"`
-	Ctime  int64 `json:ctime"`
-	Mtime  int64 `json:mtime"`
-	Size   uint64 `json:size"`
-}
-
-type DxFileDesc struct {
-	FileId string
-	ProjId string
-	Ctime  time.Time
-	Mtime  time.Time
-	Size   uint64
-	inode  uint64
-}
-
-// Read a manifest file of the form:
-// {
-//  [
-//    { "id": "file-0001",
-//      "proj" : "project-1001",
-//      "ctime" :   911191911,
-//      "mtime": 911191911,
-//      "size" : 8102
-//    },
-//    ...
-//  ]
-//}
-func ReadManifest(path string) ([]DxFileDesc, error) {
-	jsonFile, err := os.Open(path)
+func DescribeBulk(dxEnv *dxda.DXEnvironment, fileIds []string) (map[string]DxDescribe, error) {
+	request := Request{
+		objects : fileIds,
+	}
+	var payload []byte
+	payload, err := json.Marshal(request)
 	if err != nil {
 		return nil, err
 	}
-	defer jsonFile.Close()
 
-	bytes, err := ioutil.ReadAll(jsonFile)
+	repJs, err := DxAPI(dxEnv, "/system/describeDataObjects", string(payload))
 	if err != nil {
 		return nil, err
 	}
-	var descsRaw []DxFileDescRaw
-	json.Unmarshal(bytes, &descsRaw)
+	var reply Reply
+	json.Unmarshal(repJs, &reply)
 
-	var inodeCnt uint64 = 10
-	var files = make([]DxFileDesc, len(descsRaw))
-	for i, descRaw := range(descsRaw) {
-		files[i].FileId = descRaw.FileId
-		files[i].ProjId = descRaw.ProjId
-		files[i].Ctime = dxTimeToUnixTime(descRaw.Ctime)
-		files[i].Mtime = dxTimeToUnixTime(descRaw.Mtime)
-		files[i].Size = descRaw.Size
-		files[i].inode = inodeCnt
-		inodeCnt++
+	var files = make(map[string]DxDescribe)
+	for _, descRaw := range(reply.results) {
+		if descRaw.State != "closed" {
+			err := errors.New("The file is not in the closed state, it is [" + descRaw.State + "]")
+			return nil, err
+		}
+		desc := DxDescribe{
+			ProjId : descRaw.ProjId,
+			FileId : descRaw.FileId,
+			Name : descRaw.Name,
+			Folder : descRaw.Folder,
+			Size : descRaw.Size,
+			Ctime : dxTimeToUnixTime(descRaw.CreatedMillisec),
+			Mtime : dxTimeToUnixTime(descRaw.ModifiedMillisec),
+		}
+		files[desc.FileId] = desc
 	}
 	return files, nil
 }

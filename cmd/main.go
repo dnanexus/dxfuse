@@ -16,9 +16,32 @@ var progName = filepath.Base(os.Args[0])
 
 func usage() {
 	fmt.Fprintf(os.Stderr, "Usage of %s:\n", progName)
-	fmt.Fprintf(os.Stderr, "  %s MOUNTPOINT MANIFEST\n", progName)
+	fmt.Fprintf(os.Stderr, "  %s MOUNTPOINT FILE_IDS\n", progName)
 	flag.PrintDefaults()
 }
+
+// Read a JSON manifest file of the form:
+//  [ "file-0001",
+//    "file-1122",
+//    "file-77337",
+//  ]
+//
+func readManifest(path string) ([]string, error) {
+	jsonFile, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer jsonFile.Close()
+
+	bytes, err := ioutil.ReadAll(jsonFile)
+	if err != nil {
+		return nil, err
+	}
+	var fileIds []string
+	json.Unmarshal(bytes, &fileIds)
+	return fileIds, nil
+}
+
 
 func main() {
 	log.SetFlags(0)
@@ -39,25 +62,9 @@ func main() {
 		fmt.Println(err)
 		os.Exit(1)
 	}
-
-	fileIds,err = utils.ReadManifest(manifest)
-
-	// See that we can describe a file
-//	testFileDescribe(&dxEnv, projId, fileId)
+	fileIds = readManifest(manifest)
 
 	if err := dxfs2.Mount(mountpoint, dxEnv, fileIds); err != nil {
 		log.Fatal(err)
 	}
 }
-
-/*
-func testFileDescribe(dxEnv *dxda.DXEnvironment, projId string, fileId string) {
-	desc, err := dxfs2.Describe(dxEnv, projId, fileId)
-	if desc == nil {
-		fmt.Printf("The description is empty\n")
-		fmt.Printf(err.Error() + "\n")
-	} else {
-		fmt.Printf("%v\n", *desc)
-	}
-}
-*/

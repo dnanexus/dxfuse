@@ -36,3 +36,15 @@ func TestReadManifest(t *testing.T) {
 		t.Logf("%v\n", value)
 	}
 }
+
+
+
+func testFileDescribe(dxEnv *dxda.DXEnvironment, projId string, fileId string) {
+	desc, err := dxfs2.Describe(dxEnv, projId, fileId)
+	if desc == nil {
+		fmt.Printf("The description is empty\n")
+		fmt.Printf(err.Error() + "\n")
+	} else {
+		fmt.Printf("%v\n", *desc)
+	}
+}
