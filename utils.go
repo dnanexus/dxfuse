@@ -23,10 +23,10 @@ const minRetryTime = 1   // seconds
 const maxRetryTime = 120 // seconds
 const maxRetryCount = 10
 const userAgent = "dxfs2: DNAnexus FUSE filesystem"
-const reqTimeout = 15  // seconds
+const reqTimeout = 30  // seconds
 const maxNumAttempts = 3
 
-func DxHttpRequest(requestType string, url string, headers map[string]string, data []byte) (body []byte, err error) {
+func dxHttpRequestCore(requestType string, url string, headers map[string]string, data []byte) (body []byte, err error) {
 	var client *retryablehttp.Client
 	client = &retryablehttp.Client{
 		HTTPClient:   cleanhttp.DefaultClient(),
@@ -71,6 +71,14 @@ func DxHttpRequest(requestType string, url string, headers map[string]string, da
 	return body, nil
 }
 
+
+// Add retries around the core http-request method
+func DxHttpRequest(requestType string, url string, headers map[string]string, data []byte) (body []byte, err error) {
+
+	body, err := dxHttpRequestCore(string, url, headers, data)
+}
+
+
 // DxAPI - Function to wrap a generic API call to DNAnexus
 func DxAPI(dxEnv *dxda.DXEnvironment, api string, payload string) (body []byte, err error) {
 	if (dxEnv.Token == "") {
@@ -89,8 +97,6 @@ func DxAPI(dxEnv *dxda.DXEnvironment, api string, payload string) (body []byte, 
 		api)
 	return DxHttpRequest("POST", url, headers, []byte(payload))
 }
-
-
 
 
 type Request struct {
