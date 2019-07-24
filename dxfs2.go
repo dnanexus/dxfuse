@@ -3,7 +3,7 @@ package dxfs2
 import (
 	"encoding/json"
 	"fmt"
-//	"log"
+	"log"
 	"os"
 	"os/user"
 	"sort"
@@ -69,7 +69,7 @@ const BASE_FILE_INODE uint64 = 10
 func Mount(mountpoint string, dxEnv dxda.DXEnvironment, files map[string]DxDescribe) error {
 	//log.Printf("mounting dxfs2\n")
 	c, err := fuse.Mount(mountpoint, fuse.AllowOther(), fuse.ReadOnly(),
-		fuse.MaxReadahead(16 * 1024 * 1024), fuse.AsyncRead())
+		fuse.MaxReadahead(1024 * 1024), fuse.AsyncRead())
 	if err != nil {
 		return err
 	}

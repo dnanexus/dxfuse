@@ -73,9 +73,10 @@ func dxHttpRequestCore(requestType string, url string, headers map[string]string
 
 
 // Add retries around the core http-request method
+//
+// TODO
 func DxHttpRequest(requestType string, url string, headers map[string]string, data []byte) (body []byte, err error) {
-
-	body, err := dxHttpRequestCore(string, url, headers, data)
+	return dxHttpRequestCore(requestType, url, headers, data)
 }
 
 
