@@ -20,9 +20,17 @@ import (
 	"golang.org/x/net/context"
 )
 
+type Options struct {
+	Debug bool
+}
+
+
 type FS struct {
 	// configuration information for accessing dnanexus servers
 	dxEnv dxda.DXEnvironment
+
+	// various options
+	options Options
 
 	// File catalog. A fixed list of dx:files that are exposed by this mount point.
 	catalog map[string]DxFileDesc
@@ -66,8 +74,7 @@ const BASE_FILE_INODE uint64 = 10
 // Mount the filesystem:
 //  - setup the debug log to the FUSE kernel log (I think)
 //  - mount as read-only
-func Mount(mountpoint string, dxEnv dxda.DXEnvironment, files map[string]DxDescribe) error {
-	//log.Printf("mounting dxfs2\n")
+func Mount(mountpoint string, dxEnv dxda.DXEnvironment, files map[string]DxDescribe, options Options) error {
 	c, err := fuse.Mount(mountpoint, fuse.AllowOther(), fuse.ReadOnly(),
 		fuse.MaxReadahead(1024 * 1024), fuse.AsyncRead())
 	if err != nil {
@@ -104,6 +111,7 @@ func Mount(mountpoint string, dxEnv dxda.DXEnvironment, files map[string]DxDescr
 
 	filesys := &FS{
 		dxEnv : dxEnv,
+		options: options,
 		catalog : catalog,
 		uid : uint32(uid),
 		gid : uint32(gid),
@@ -118,6 +126,16 @@ func Mount(mountpoint string, dxEnv dxda.DXEnvironment, files map[string]DxDescr
 		return err
 	}
 
+	// extra debugging information from FUSE
+	if options.Debug {
+		fuse.Debug = func(msg interface{}) {
+			log.Print(msg)
+		}
+	}
+
+	if filesys.options.Debug {
+		log.Printf("mounted dxfs2\n")
+	}
 	return nil
 }
 
@@ -158,7 +176,9 @@ func (dir *Dir) Attr(ctx context.Context, a *fuse.Attr) error {
 }
 
 func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
-	//log.Printf("ReadDirAll dir=%s\n", dir.path)
+	if dir.fs.options.Debug {
+		log.Printf("ReadDirAll dir=%s\n", dir.path)
+	}
 
 	// create a directory entry for each of the file descriptions
 	dEntries := make([]fuse.Dirent, 0, len(dir.fs.catalog))
@@ -179,7 +199,9 @@ var _ = fs.NodeRequestLookuper(&Dir{})
 
 // We ignore the directory, because it is always the root of the filesystem.
 func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.LookupResponse) (fs.Node, error) {
-	//log.Printf("Lookup dir=%s  filename=%s\n", dir.path, req.Name)
+	if dir.fs.options.Debug {
+		log.Printf("Lookup dir=%s filename=%s\n", dir.path, req.Name)
+	}
 
 	// lookup in the in-memory catalog
 	catEntry, ok := dir.fs.catalog[req.Name]
@@ -264,7 +286,9 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 	// add an extent in the file that we want to read
 	endOfs := req.Offset + int64(req.Size) - 1
 	headers["Range"] = fmt.Sprintf("bytes=%d-%d", req.Offset, endOfs)
-	//log.Printf("Read  ofs=%d  len=%d\n", req.Offset, req.Size)
+	if fh.f.fs.options.Debug {
+		log.Printf("Read  ofs=%d  len=%d\n", req.Offset, req.Size)
+	}
 
 	reqUrl := fh.url.URL + "/" + fh.f.dxDesc.ProjId
 	body,err := DxHttpRequest("GET", reqUrl, headers, []byte("{}"))
