@@ -45,6 +45,10 @@ func readManifest(path string) ([]string, error) {
 }
 
 
+var (
+	debugFlag = flag.Bool("debug", false, "enable verbose debugging")
+)
+
 func main() {
 	log.SetFlags(0)
 	log.SetPrefix(progName + ": ")
@@ -58,6 +62,10 @@ func main() {
 	}
 	mountpoint := flag.Arg(0)
 	manifest := flag.Arg(1)
+
+	options := dxfs2.Options {
+		Debug : *debugFlag,
+	}
 
 	dxEnv, _, err := dxda.GetDxEnvironment()
 	if err != nil {
@@ -74,7 +82,7 @@ func main() {
 		fmt.Println(err)
 		os.Exit(1)
 	}
-	if err := dxfs2.Mount(mountpoint, dxEnv, fileInfo); err != nil {
+	if err := dxfs2.Mount(mountpoint, dxEnv, fileInfo, options); err != nil {
 		log.Fatal(err)
 	}
 }
