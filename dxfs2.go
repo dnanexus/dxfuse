@@ -13,10 +13,7 @@ import (
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
-
-	// The dxda package has the get-environment code
 	"github.com/dnanexus/dxda"
-
 	"golang.org/x/net/context"
 )
 
@@ -290,8 +287,7 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 		log.Printf("Read  ofs=%d  len=%d\n", req.Offset, req.Size)
 	}
 
-	reqUrl := fh.url.URL + "/" + fh.f.dxDesc.ProjId
-	body,err := DxHttpRequest("GET", reqUrl, headers, []byte("{}"))
+	body,err := DxHttpRequest("GET", fh.url.URL, headers, []byte("{}"))
 	if err != nil {
 		return err
 	}
