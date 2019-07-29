@@ -66,8 +66,6 @@ type DxFileDesc struct {
 	inode uint64
 }
 
-const BASE_FILE_INODE uint64 = 10
-
 // Mount the filesystem:
 //  - setup the debug log to the FUSE kernel log (I think)
 //  - mount as read-only
