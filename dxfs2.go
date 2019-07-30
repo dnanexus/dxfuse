@@ -29,21 +29,33 @@ type FS struct {
 	// various options
 	options Options
 
-	// File catalog. A fixed list of dx:files that are exposed by this mount point.
-	catalog map[string]DxFileDesc
-
 	uid uint32
 	gid uint32
+
+	// the project being mounted
+	projectId string
+
+	// A file holding a sqllite database with all the files and
+	// directories collected thus far.
+	dbPath string
 }
 
 type Dir struct {
 	fs    *FS
-	path   string
+	dname  string  // This is the last part of the full path
+	mtime  time.Time
+	ctime  time.Time
+	inode  uint64
 }
 
 type File struct {
 	fs       *FS
-	dxDesc   *DxDescribe
+	fileId    string  // Required to build a download URL
+	projId    string  // -"-
+	name      string
+	size      uint64
+	mtime     time.Time
+	ctime     time.Time
 	inode     uint64
 }
 
@@ -61,17 +73,12 @@ type FileHandle struct {
 	url DxDownloadURL
 }
 
-type DxFileDesc struct {
-	dxDesc DxDescribe
-	inode uint64
-}
-
 // Mount the filesystem:
 //  - setup the debug log to the FUSE kernel log (I think)
 //  - mount as read-only
-func Mount(mountpoint string, dxEnv dxda.DXEnvironment, files map[string]DxDescribe, options Options) error {
+func Mount(mountpoint string, dxEnv dxda.DXEnvironment, projectId string, options Options) error {
 	c, err := fuse.Mount(mountpoint, fuse.AllowOther(), fuse.ReadOnly(),
-		fuse.MaxReadahead(1024 * 1024), fuse.AsyncRead())
+		fuse.MaxReadahead(4 * 1024 * 1024), fuse.AsyncRead())
 	if err != nil {
 		return err
 	}
@@ -91,25 +98,19 @@ func Mount(mountpoint string, dxEnv dxda.DXEnvironment, files map[string]DxDescr
 		return err
 	}
 
-	// set a mapping from file-id to its description.
-	// Choose a stable inode for each file. It cannot change
-	// during the filesystem lifetime.
-	var inodeCnt uint64 = BASE_FILE_INODE
-	catalog := make(map[string]DxFileDesc)
-	for fid, dxDesc := range(files) {
-		catalog[fid] = DxFileDesc {
-			dxDesc : dxDesc,
-			inode : inodeCnt,
-		}
-		inodeCnt++
+	dbPath := "/tmp/dxfs2_metadata.db"
+	err := MetadataDbInit(dxEnv, projectId, dbPath)
+	if err != nil {
+		return err
 	}
 
 	filesys := &FS{
 		dxEnv : dxEnv,
 		options: options,
-		catalog : catalog,
 		uid : uint32(uid),
 		gid : uint32(gid),
+		projectId : projectId,
+		dbPath : dbPath,
 	}
 	if err := fs.Serve(c, filesys); err != nil {
 		return err
@@ -174,9 +175,9 @@ func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	if dir.fs.options.Debug {
 		log.Printf("ReadDirAll dir=%s\n", dir.path)
 	}
-
 	// create a directory entry for each of the file descriptions
-	dEntries := make([]fuse.Dirent, 0, len(dir.fs.catalog))
+	dEntries := make([]fuse.Dirent, 0, 10)
+/*
 	for key, fDesc := range dir.fs.catalog {
 		dEntries = append(dEntries, fuse.Dirent{
 			Inode : fDesc.inode,
@@ -185,6 +186,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 		})
 	}
 	sort.Slice(dEntries, func(i, j int) bool { return dEntries[i].Name < dEntries[j].Name })
+*/
 	return dEntries, nil
 }
 
@@ -198,17 +200,19 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 		log.Printf("Lookup dir=%s filename=%s\n", dir.path, req.Name)
 	}
 
+/*
 	// lookup in the in-memory catalog
 	catEntry, ok := dir.fs.catalog[req.Name]
 	if !ok {
 		// file does not exist
 		return nil, fuse.ENOENT
 	}
+*/
 
 	child := &File{
 		fs: dir.fs,
-		dxDesc: &catEntry.dxDesc,
-		inode: catEntry.inode,
+		dxDesc: nil,
+		inode: 0,
 	}
 	return child, nil
 }
@@ -216,14 +220,14 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 var _ fs.Node = (*File)(nil)
 
 func (f *File) Attr(ctx context.Context, a *fuse.Attr) error {
-	a.Size = f.dxDesc.Size
+	a.Size = f.size
 	//log.Printf("Attr  size=%d\n", a.Size)
 
 	// because the platform has only immutable files, these
 	// timestamps are all the same
-	a.Mtime = f.dxDesc.Mtime
-	a.Ctime = f.dxDesc.Ctime
-	a.Crtime = f.dxDesc.Ctime
+	a.Mtime = f.mtime
+	a.Ctime = f.ctime
+	a.Crtime = f.ctime
 	a.Mode = 0400 // read only access
 	a.Nlink = 1
 	a.Uid = f.fs.uid

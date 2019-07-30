@@ -5,7 +5,6 @@ import (
 	"errors"
 	"time"
 
-
 	// The dxda package has the get-environment code
 	"github.com/dnanexus/dxda"
 )
@@ -46,6 +45,12 @@ type DxDescribe struct {
 	Mtime     time.Time
 }
 
+// a directory holds files and sub-directories
+type DxDir struct {
+	files map[string]DxDescribe
+	subdirs []string
+}
+
 // convert time in milliseconds since 1970, in the equivalent
 // golang structure
 func dxTimeToUnixTime(dxTime int64) time.Time {
@@ -72,7 +77,10 @@ func submit(dxEnv *dxda.DXEnvironment, fileIds []string) (map[string]DxDescribe,
 		return nil, err
 	}
 	var reply Reply
-	json.Unmarshal(repJs, &reply)
+	err := json.Unmarshal(repJs, &reply)
+	if err != nil {
+		return nil, err
+	}
 
 	var files = make(map[string]DxDescribe)
 	for _, descRawTop := range(reply.Results) {
@@ -96,8 +104,7 @@ func submit(dxEnv *dxda.DXEnvironment, fileIds []string) (map[string]DxDescribe,
 	return files, nil
 }
 
-
-func DescribeBulk(dxEnv *dxda.DXEnvironment, fileIds []string) (map[string]DxDescribe, error) {
+func DxDescribeBulkObjects(dxEnv *dxda.DXEnvironment, fileIds []string) (map[string]DxDescribe, error) {
 	// split into limited batchs
 	batchSize := MAX_NUM_OBJECTS_IN_DESCRIBE
 	var batches [][]string
@@ -123,4 +130,93 @@ func DescribeBulk(dxEnv *dxda.DXEnvironment, fileIds []string) (map[string]DxDes
 		}
 	}
 	return gMap, nil
+}
+
+type ListFolderRequest struct {
+	Folder string `json:"folder"`
+	Only   string `json:"only"`
+	IncludeHidden bool `json:"includeHidden"`
+}
+
+type ListFolderResponse struct {
+	Objects []ObjInfo  `json:"objects"`
+	Folders []string   `json:"folders"`
+}
+
+type ObjInfo struct {
+	Id string  `json:"id"`
+}
+
+type DxListFolder {
+	fileIds  []string
+	otherIds []string
+	subdirs  []string
+}
+
+// Issue a /project-xxxx/listFolder API call. Get
+// back a list of object-ids and sub-directories.
+func listFolder(
+	dxEnv *dxda.DXEnvironment,
+	projectId string,
+	dir string) (DxListFolder, error) {
+
+	request := ListFolderRequest{
+		Folder : dir,
+		Only : "all",
+		IncludeHidden : true,
+	}
+	var payload []byte
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return nil, err
+	}
+	//fmt.Printf("payload = %s", string(payload))
+	dxRequest := fmt.sprintf("%s/listFolder", projectId)
+	repJs, err := DxAPI(dxEnv, dxRequest , string(payload))
+	if err != nil {
+		return nil, err
+	}
+	var reply ListFolderResponse
+	json.Unmarshal(repJs, &reply)
+	if err != nil {
+		return nil, err
+	}
+	objectIds := make([]string)
+	otherIds := make([]string)
+	for objInfo := range reply.Objects {
+		if objInfo.Id.HasPrefix("file-") {
+			objectIds.Append(objInfo.Id)
+		} else {
+			otherIds.Append(objInfo.Id)
+		}
+	}
+	retval := {
+		fileIds : objectIds,
+		otherIds : otherIds,
+		subdirs : reply.Folders,
+	}
+	return &retval, nil
+}
+
+
+func DxDescribeFolder(
+	dxEnv *dxda.DXEnvironment,
+	projectId string,
+	dir string) (DxDir, error) {
+
+	// The listFolder API call returns a list of object ids and folders.
+	// We could describe the objects right here, but we do that separately.
+	folderInfo, err := listFolder(dxEnv, projectId, dir)
+	if err != nil {
+		return nil, err
+	}
+	files, err := DxDescribeBulkObjects(dxEnv, folderInfo.fileIds)
+	if err != nil {
+		return nil, err
+	}
+
+	return &DxDir{
+		files : files,
+		subdirs : subdirs
+	}
 }

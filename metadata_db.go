@@ -4,6 +4,9 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"sync"
+
+	"database/sql"
 
 	"github.com/dnanexus/dxda"
 	_ "github.com/mattn/go-sqlite3"         // Following canonical example on go-sqlite3 'simple.go'
@@ -17,11 +20,12 @@ import (
 // We need to download the file metadata because we must make sure that there
 // are no POSIX violations, and, we need to disambiguate versions of the same file.
 const (
-	MAX_DIR_SIZE int    = 10 * 1000
-	INODE_INITIAL int64 = 10
-	FILE_TYPE           = 1
-	DIR_TYPE            = 2
-	OTHER_TYPE          = 3
+	MAX_DIR_SIZE int     = 10 * 1000
+	INODE_ROOT_DIR int64 = 1
+	INODE_INITIAL int64  = 10
+	KIND_FILE            = 1
+	KIND_DIR             = 2
+	KIND_OTHER           = 3
 )
 
 var mutex = &sync.Mutex{}
@@ -39,9 +43,8 @@ func MetadataDbInit(
 	dbFname string) error {
 
 	// insert into an sqllite database
-	dbName := dbFname + ".db?cache=shared&mode=rwc"
-	os.Remove(dbName)
-	db, err := sql.Open("sqlite3", dbName)
+	os.Remove(dbFname)
+	db, err := sql.Open("sqlite3", dbFname + ".db?cache=shared&mode=rwc")
 	if err != nil {
 		return "", err
 	}
@@ -71,63 +74,56 @@ func MetadataDbInit(
 	`
 	_, err = db.Exec(sqlStmt)
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	// Add a root directory
 	_, err = db.Exec("BEGIN TRANSACTION")
 	if err != nil {
-		return "", err
+		return err
 	}
 
-	// TODO: describe the project, and the mtime, ctime
+	// TODO: describe the project, and get the mtime, ctime
 	sqlStmt = fmt.Sprintf(`
  		        INSERT INTO files
 			VALUES ('%s', '%s', '%s', '%s', %d, '%d', '%d', '%d', '%d');
 			`,
-		"", projId, "/", "", 4096, 0, 0, getInodeNum(), DIR_TYPE)
+		"", projId, "/", "", 4096, 0, 0, INODE_ROOT_DIR, DIR_TYPE)
 	_, err = db.Exec(sqlStmt)
 	if err != nil {
-		return "", err
+		return err
 	}
 	_, err = db.Exec("END TRANSACTION")
 	if err != nil {
-		return "", err
+		return err
 	}
-	return dbName, nil
+	return nil
 }
 
+// Allocate an inode number. These must remain stable during the
+// lifetime of the mount.
+//
+// Note: this call should perform while holding the mutex
 func getInodeNum() int64 {
-	mutex.Lock()
 	inodeCnt++
-	mutex.Unlock()
 	return inodeCnt
-}
-
-// an entire range of inodes
-func getInodeRange(r int) int64 {
-	assert(r > 0)
-	mutex.Lock()
-	retval := inodeCnt + 1
-	inodeCnt += int64(r)
-	mutex.Unlock()
-	return retval
 }
 
 // Add a directory with its contents to an exisiting database
 func MetadataDbAddDir(
 	dxEnv *dxda.DXEnvironment,
 	dbFname string,
+	projectId string,
 	dirName string) error {
 
 	// limit the number of files
-	if len(fileIds) > DB_NUM_OBJECTS_LIMIT {
-		err := fmt.Errorf("Too many objects (%d), the limit is %d", len(descs), DB_NUM_OBJECTS_LIMIT)
+	if len(fileIds) > MAX_DIR_SIZE {
+		err := fmt.Errorf("Too many objects (%d), the limit is %d", len(descs), MAX_DIR_SIZE)
 		return "", err
 	}
 
 	// describe all the files
-	descs, err := DescribeBulk(dxEnv, fileIds)
+	dxDir, err := DxDescribeFolder(dxEnv, projectId, dirName)
 	if err != nil {
 		return "", err
 	}
@@ -140,10 +136,13 @@ func MetadataDbAddDir(
 
 	// TODO: check for posix violations
 
+	// This may be overly restrictive, but we are locking the database
+	// here, so there could be no conflicting write accesses.
+	mutex.Lock()
+	defer mutex.Unlock()
+
 	// insert into an sqllite database
-	dbName := dbFname + ".db?cache=shared&mode=rwc"
-	os.Remove(dbName)
-	db, err := sql.Open("sqlite3", dbName)
+	db, err := sql.Open("sqlite3", dbFname + ".db?cache=shared&mode=rwc")
 	if err != nil {
 		return "", err
 	}
@@ -170,22 +169,53 @@ func MetadataDbAddDir(
 		return "", err
 	}
 
-	inodeCnt := BASE_FILE_INODE
-	for _, d := range descs {
+	// Create a database entry for each file
+	for _, d := range dxDir.files {
+		inode := getInodeNum()
 		sqlStmt = fmt.Sprintf(`
  		        INSERT INTO files
-			VALUES ('%s', '%s', '%s', '%s', %d, '%d', '%d');
+			VALUES ('%s', '%s', '%s', '%s', %d, '%d', '%d', '%d', '%d');
 			`,
-			d.FileId, d.ProjId, d.Name, d.Folder, d.Size, d.Ctime, d.Mtime, inodeCnt)
+			d.FileId, d.ProjId, d.Name, d.Folder, d.Size, d.Ctime, d.Mtime, inode, KIND_FILE)
 		_, err = db.Exec(sqlStmt)
 		if err != nil {
 			return "", err
 		}
-		inodeCnt++
 	}
+
+	// Create a database entry for each sub-directory
+	for _, subDirName := range dxDir.subdirs {
+		inode := getInodeNum()
+
+		// DNAx stores directories as full paths. For example: /A/B has
+		// as subdirectories  "A/B/C", "A/B/D", "A/B/KKK". A POSIX
+		// filesystem represents these as: "A/B", {"C", "D", "KKK"}
+		//
+		subDirLastPart := strings.trimPrefix(subDirName, dirName)
+		sqlStmt = fmt.Sprintf(`
+ 		        INSERT INTO files
+			VALUES ('%s', '%s', '%s', '%s', %d, '%d', '%d', '%d', '%d');
+			`,
+			"", // folders don't have an object-id
+			projectId,
+			subDirLastPart,
+			dirName,
+			4096,
+			0,  // folders don't have a creation time
+			0,  // -"-     don't have a modification time
+			inode,
+			KIND_FILE)
+		_, err = db.Exec(sqlStmt)
+		if err != nil {
+			return "", err
+		}
+	}
+
 	_, err = db.Exec("END TRANSACTION")
 	if err != nil {
 		return "", err
 	}
 	return dbName, nil
 }
+
+func LookupRoot()
