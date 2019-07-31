@@ -6,8 +6,6 @@ import (
 	"os"
 	"sync"
 
-	"database/sql"
-
 	"github.com/dnanexus/dxda"
 	_ "github.com/mattn/go-sqlite3"         // Following canonical example on go-sqlite3 'simple.go'
 )
@@ -38,8 +36,8 @@ var inodeCnt = INODE_INITIAL
 
 // construct an initial empty database, representing an entire project.
 func MetadataDbInit(
-	dxEnv *dxda.DXEnvironment
-	projId string
+	dxEnv *dxda.DXEnvironment,
+	projId string,
 	dbFname string) error {
 
 	// insert into an sqllite database
@@ -218,4 +216,16 @@ func MetadataDbAddDir(
 	return dbName, nil
 }
 
-func LookupRoot()
+// Look for file [filename] in directory [parent]/[dname].
+//
+// 1. Look if the directory has already been downloaded and placed in the DB
+// 2. If not, populate it
+// 3. Do a lookup in the directory.
+//
+// Note: the file might not exist.
+func MetadataDbLookupFileInDir(
+	parent string,
+	dname string,
+	filename string) (*File, error) {
+	return nil, nil
+}

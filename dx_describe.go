@@ -3,6 +3,8 @@ package dxfs2
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	// The dxda package has the get-environment code
@@ -77,7 +79,7 @@ func submit(dxEnv *dxda.DXEnvironment, fileIds []string) (map[string]DxDescribe,
 		return nil, err
 	}
 	var reply Reply
-	err := json.Unmarshal(repJs, &reply)
+	err = json.Unmarshal(repJs, &reply)
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +149,7 @@ type ObjInfo struct {
 	Id string  `json:"id"`
 }
 
-type DxListFolder {
+type DxListFolder struct {
 	fileIds  []string
 	otherIds []string
 	subdirs  []string
@@ -158,7 +160,7 @@ type DxListFolder {
 func listFolder(
 	dxEnv *dxda.DXEnvironment,
 	projectId string,
-	dir string) (DxListFolder, error) {
+	dir string) (*DxListFolder, error) {
 
 	request := ListFolderRequest{
 		Folder : dir,
@@ -171,7 +173,7 @@ func listFolder(
 		return nil, err
 	}
 	//fmt.Printf("payload = %s", string(payload))
-	dxRequest := fmt.sprintf("%s/listFolder", projectId)
+	dxRequest := fmt.Sprintf("%s/listFolder", projectId)
 	repJs, err := DxAPI(dxEnv, dxRequest , string(payload))
 	if err != nil {
 		return nil, err
@@ -181,16 +183,16 @@ func listFolder(
 	if err != nil {
 		return nil, err
 	}
-	objectIds := make([]string)
-	otherIds := make([]string)
-	for objInfo := range reply.Objects {
-		if objInfo.Id.HasPrefix("file-") {
-			objectIds.Append(objInfo.Id)
+	var objectIds []string
+	var otherIds []string
+	for _, objInfo := range reply.Objects {
+		if strings.HasPrefix(objInfo.Id, "file-") {
+			objectIds = append(objectIds, objInfo.Id)
 		} else {
-			otherIds.Append(objInfo.Id)
+			otherIds = append(otherIds, objInfo.Id)
 		}
 	}
-	retval := {
+	retval := DxListFolder{
 		fileIds : objectIds,
 		otherIds : otherIds,
 		subdirs : reply.Folders,
@@ -202,7 +204,7 @@ func listFolder(
 func DxDescribeFolder(
 	dxEnv *dxda.DXEnvironment,
 	projectId string,
-	dir string) (DxDir, error) {
+	dir string) (*DxDir, error) {
 
 	// The listFolder API call returns a list of object ids and folders.
 	// We could describe the objects right here, but we do that separately.
@@ -217,6 +219,6 @@ func DxDescribeFolder(
 
 	return &DxDir{
 		files : files,
-		subdirs : subdirs
-	}
+		subdirs : folderInfo.subdirs,
+	}, nil
 }

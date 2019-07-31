@@ -17,48 +17,6 @@ import (
 	"golang.org/x/net/context"
 )
 
-type Options struct {
-	Debug bool
-}
-
-
-type FS struct {
-	// configuration information for accessing dnanexus servers
-	dxEnv dxda.DXEnvironment
-
-	// various options
-	options Options
-
-	uid uint32
-	gid uint32
-
-	// the project being mounted
-	projectId string
-
-	// A file holding a sqllite database with all the files and
-	// directories collected thus far.
-	dbPath string
-}
-
-type Dir struct {
-	fs    *FS
-	dname  string  // This is the last part of the full path
-	mtime  time.Time
-	ctime  time.Time
-	inode  uint64
-}
-
-type File struct {
-	fs       *FS
-	fileId    string  // Required to build a download URL
-	projId    string  // -"-
-	name      string
-	size      uint64
-	mtime     time.Time
-	ctime     time.Time
-	inode     uint64
-}
-
 // A URL generated with the /file-xxxx/download API call, that is
 // used to download file ranges.
 type DxDownloadURL struct {
@@ -76,7 +34,12 @@ type FileHandle struct {
 // Mount the filesystem:
 //  - setup the debug log to the FUSE kernel log (I think)
 //  - mount as read-only
-func Mount(mountpoint string, dxEnv dxda.DXEnvironment, projectId string, options Options) error {
+func Mount(
+	mountpoint string,
+	dxEnv dxda.DXEnvironment,
+	projectId string,
+	options Options) error {
+
 	c, err := fuse.Mount(mountpoint, fuse.AllowOther(), fuse.ReadOnly(),
 		fuse.MaxReadahead(4 * 1024 * 1024), fuse.AsyncRead())
 	if err != nil {
@@ -99,12 +62,12 @@ func Mount(mountpoint string, dxEnv dxda.DXEnvironment, projectId string, option
 	}
 
 	dbPath := "/tmp/dxfs2_metadata.db"
-	err := MetadataDbInit(dxEnv, projectId, dbPath)
+	err = MetadataDbInit(&dxEnv, projectId, dbPath)
 	if err != nil {
 		return err
 	}
 
-	filesys := &FS{
+	filesys := &Filesys{
 		dxEnv : dxEnv,
 		options: options,
 		uid : uint32(uid),
@@ -135,45 +98,43 @@ func Mount(mountpoint string, dxEnv dxda.DXEnvironment, projectId string, option
 	return nil
 }
 
-var _ fs.FS = (*FS)(nil)
+func Unmount(dirname string) error {
+	// TODO: close the sql database
+	if err := fuse.Unmount(dirname); err != nil {
+		return err
+	}
+	return nil
+}
 
-func (f *FS) Root() (fs.Node, error) {
+func (f *Filesys) Root() (fs.Node, error) {
 	//log.Printf("Get root directory\n")
 	n := &Dir{
-		fs : f,
-		path : "/",
+		Fs : f,
+		Parent : "",
+		Dname : "/",
+		Inode : 1,
 	}
 	return n, nil
 }
 
-// Make sure that Dir implements the fs.Node interface
-var _ fs.Node = (*Dir)(nil)
 
-
-// We only support the root directory
 func (dir *Dir) Attr(ctx context.Context, a *fuse.Attr) error {
-	if dir.path != "/" {
-		return fuse.ENOSYS;
-	}
 	// this can be retained in cache indefinitely (a year is an approximation)
 	a.Valid = time.Until(time.Unix(1000 * 1000 * 1000, 0))
 	a.Inode = 1
 	a.Size = 4096  // dummy size
 	a.Blocks = 8
-	a.Atime = time.Now()
-	a.Mtime = time.Now()
-	a.Ctime = time.Now()
-	a.Mode = os.ModeDir | 0777
+	a.Mode = os.ModeDir | 0555
 	a.Nlink = 1
-	a.Uid = dir.fs.uid
-	a.Gid = dir.fs.uid
+	a.Uid = dir.Fs.uid
+	a.Gid = dir.Fs.uid
 	a.BlockSize = 4 * 1024
 	return nil
 }
 
 func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
-	if dir.fs.options.Debug {
-		log.Printf("ReadDirAll dir=%s\n", dir.path)
+	if dir.Fs.options.Debug {
+		log.Printf("ReadDirAll dir=%s\n", (dir.Parent + "/" + dir.Dname))
 	}
 	// create a directory entry for each of the file descriptions
 	dEntries := make([]fuse.Dirent, 0, 10)
@@ -184,9 +145,10 @@ func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 			Type : fuse.DT_File,
 			Name : key,
 		})
-	}
+	}*/
+
+	// directory entries need to be sorted
 	sort.Slice(dEntries, func(i, j int) bool { return dEntries[i].Name < dEntries[j].Name })
-*/
 	return dEntries, nil
 }
 
@@ -196,42 +158,27 @@ var _ = fs.NodeRequestLookuper(&Dir{})
 
 // We ignore the directory, because it is always the root of the filesystem.
 func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.LookupResponse) (fs.Node, error) {
-	if dir.fs.options.Debug {
-		log.Printf("Lookup dir=%s filename=%s\n", dir.path, req.Name)
+	if dir.Fs.options.Debug {
+		log.Printf("Lookup dir=%s filename=%s\n", dir.Parent + "/" + dir.Dname, req.Name)
 	}
 
-/*
-	// lookup in the in-memory catalog
-	catEntry, ok := dir.fs.catalog[req.Name]
-	if !ok {
-		// file does not exist
-		return nil, fuse.ENOENT
-	}
-*/
-
-	child := &File{
-		fs: dir.fs,
-		dxDesc: nil,
-		inode: 0,
-	}
-	return child, nil
+	// lookup in the database
+	return MetadataDbLookupFileInDir(dir.Parent, dir.Dname, req.Name)
 }
 
-var _ fs.Node = (*File)(nil)
-
 func (f *File) Attr(ctx context.Context, a *fuse.Attr) error {
-	a.Size = f.size
+	a.Size = f.Size
 	//log.Printf("Attr  size=%d\n", a.Size)
 
 	// because the platform has only immutable files, these
 	// timestamps are all the same
-	a.Mtime = f.mtime
-	a.Ctime = f.ctime
-	a.Crtime = f.ctime
+	a.Mtime = f.Mtime
+	a.Ctime = f.Ctime
+	a.Crtime = f.Ctime
 	a.Mode = 0400 // read only access
 	a.Nlink = 1
-	a.Uid = f.fs.uid
-	a.Gid = f.fs.gid
+	a.Uid = f.Fs.uid
+	a.Gid = f.Fs.gid
 	//a.BlockSize = 1024 * 1024
 	return nil
 }
@@ -247,9 +194,9 @@ func (f *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenR
 	// create a download URL for this file
 	const secondsInYear int = 60 * 60 * 24 * 365
 	payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
-		f.dxDesc.ProjId, secondsInYear)
+		f.ProjId, secondsInYear)
 
-	body, err := DxAPI(&f.fs.dxEnv, fmt.Sprintf("%s/download", f.dxDesc.FileId), payload)
+	body, err := DxAPI(&f.Fs.dxEnv, fmt.Sprintf("%s/download", f.FileId), payload)
 	if err != nil {
 		return nil, err
 	}
@@ -285,7 +232,7 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 	// add an extent in the file that we want to read
 	endOfs := req.Offset + int64(req.Size) - 1
 	headers["Range"] = fmt.Sprintf("bytes=%d-%d", req.Offset, endOfs)
-	if fh.f.fs.options.Debug {
+	if fh.f.Fs.options.Debug {
 		log.Printf("Read  ofs=%d  len=%d\n", req.Offset, req.Size)
 	}
 
