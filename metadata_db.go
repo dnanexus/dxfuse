@@ -69,10 +69,7 @@ func MetadataDbInit(
                 inode bigint,
 	);
 	`
-	if stmt, err = db.Prepare(sqlStmt); err != nil {
-		return err
-	}
-	if _, err = stmt.Exec(); err != nil {
+	if _, err = db.Exec(sqlStmt); err != nil {
 		return err
 	}
 
@@ -82,10 +79,7 @@ func MetadataDbInit(
 			VALUES ('%s', '%s', '%s', '%s', %d, '%d', '%d', '%d', '%d');
 			`,
 		projId, "/", "", INODE_ROOT_DIR)
-	if stmt, err = db.Prepare(sqlStmt); err != nil {
-		return err
-	}
-	if _, err = stmt.Exec(); err != nil {
+	if _, err = db.Exec(sqlStmt); err != nil {
 		return err
 	}
 
@@ -115,7 +109,7 @@ func MetadataDbReadDirAll(
 		//
 		// If the inode is -1, then, the directory does not
 		// exist on the platform.
-		return nil, ENOENT
+		return nil, nil, fuse.ENOENT
 	}
 
 	// The directory has not been queried yet.
@@ -142,7 +136,7 @@ func MetadataDbReadDirAll(
 	//   foo/X.txt
 	//      /1/X.txt
 
-	if txn, err = fsys.db.Prepare(); err != nil {
+	if _, err = db.Exec("BEGIN TRANSACTION"); err != nil {
 		return "", err
 	}
 
@@ -182,13 +176,13 @@ func MetadataDbReadDirAll(
 			0,  // -"-     don't have a modification time
 			inode,
 			KIND_FILE)
-		_, err = txn.Stmt(sqlStmtdb.Exec(sqlStmt)
+		_, err = db.Exec(sqlStmt)
 		if err != nil {
 			return "", err
 		}
 	}
 
-	_, err = txn.Commit()
+	_, err = db.Exec("END TRANSACTION")
 	return err
 }
 
