@@ -66,8 +66,8 @@ type File struct {
 	ProjId    string  // -"-
 	Name      string
 	Size      uint64
-	Mtime     time.Time
 	Ctime     time.Time
+	Mtime     time.Time
 	Inode     uint64
 }
 

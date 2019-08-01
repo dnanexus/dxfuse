@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/dnanexus/dxda"
@@ -76,7 +77,7 @@ func MetadataDbInit(
 	// Adding a root directory
 	sqlStmt = fmt.Sprintf(`
  		        INSERT INTO directories
-			VALUES ('%s', '%s', '%s', '%s', %d, '%d', '%d', '%d', '%d');
+			VALUES ('%s', '%s', '%s', '%d');
 			`,
 		projId, "/", "", INODE_ROOT_DIR)
 	if _, err = db.Exec(sqlStmt); err != nil {
@@ -94,24 +95,27 @@ func MetadataDbInit(
 // lifetime of the mount.
 //
 // Note: this call should perform while holding the mutex
-func getInodeNum() int64 {
-	inodeCnt++
-	return inodeCnt
+func allocInodeNum(fsys *Filesys) int64 {
+	fsys.inodeCnt++
+	return fsys.inodeCnt
 }
 
 // Three options:
 // 1. Directory has been read from DNAx
 // 2. Directory does not exist on DNAx
 // 3. Directory has been fully read, and is in the database
-func directoryExists(fsys *Filesys, dirname string) (boolean, error) {
+func directoryExists(fsys *Filesys, dirFullName string) (boolean, error) {
 	// split the directory into parent into last part:
 	// "A/B/C" ---> "A/B", "C"
+	parentFolder := filepath.Dir(dirFullName)
+	base := filepath.Base(dirFullName)
 
 	sqlStmt := fmt.Sprintf(`
  		        SELECT inode FROM directories
-			WHERE (folder = %s AND dname = %s);
+			WHERE folder = %s
+                        AND dname = %s;
 			`,
-		parent, dname)
+		parentFolder, base)
 	if rows, err := db.Query(sqlStmt); err != nil {
 		return false, err
 	}
@@ -121,6 +125,7 @@ func directoryExists(fsys *Filesys, dirname string) (boolean, error) {
 	numRows := 0
 	for rows.Next() {
 		rows.Scan(&inode)
+		numRows++
 	}
 	rows.Close()
 
@@ -147,13 +152,52 @@ func directoryExists(fsys *Filesys, dirname string) (boolean, error) {
 // The directory is in the database, read it in its entirety.
 func directoryReadAllEntries(
 	fsys * Filesys,
-	dirName string) (map[string]File, map[string]Dir, error) {
-	return nil, nil, nil
+	dirFullName string) (map[string]File, map[string]Dir, error) {
+
+	// Find the subdirectories
+	sqlStmt := fmt.Sprintf(`
+ 		        SELECT dname,inode FROM directories
+			WHERE folder = %s;
+			`,
+		dirFullName)
+	if rows, err := db.Query(sqlStmt); err != nil {
+		return nil, nil, err
+	}
+
+	subdirs := make(map[string]Dir)
+	for rows.Next() {
+		var d Dir
+		d.Fsys = fsys
+		d.Parent = dirFullName,
+		rows.Scan(&d.dname, &d.inode)
+		subdirs[dname] = d
+	}
+	rows.Close()
+
+	// Find the files in the directory
+	sqlStmt = fmt.Sprintf(`
+ 		        SELECT file_id,proj_id,fname,size,ctime,mtime,inode FROM files
+			WHERE folder = %s;
+			`,
+		dirFullName)
+	if rows, err := db.Query(sqlStmt); err != nil {
+		return nil, nil, err
+	}
+
+	files := make(map[string]File)
+	for rows.Next() {
+		var f File
+		f.Fsys = fsys
+		rows.Scan(&f.FileId, &f.ProjId, &f.Name, &f.Size, &f.Ctime, &f.Mtime, &f.Inode)
+		files[f.Name] = f
+	}
+
+	return files, subdirs, nil
 }
 
 // Add a directory with its contents to an exisiting database
 func MetadataDbReadDirAll(
-	fsys *Filesys
+	fsys *Filesys,
 	dirName string) (map[string]File, map[string]Dir, error) {
 
 	if retval, err := directoryExists(fsys); err != nil {
@@ -171,7 +215,7 @@ func MetadataDbReadDirAll(
 	// describe all the files
 	dxDir, err := DxDescribeFolder(dxEnv, projectId, dirName)
 	if err != nil {
-		return "", err
+		return nil, nil, err
 	}
 
 	// limit the number of files
@@ -180,7 +224,7 @@ func MetadataDbReadDirAll(
 			"Too many files (%d) in a directory, the limit is %d",
 			len(dxDir.fiels),
 			MAX_DIR_SIZE)
-		return "", err
+		return nil, nil, err
 	}
 
 	// TODO: check for files with the same name, and modify their directories.
@@ -190,12 +234,12 @@ func MetadataDbReadDirAll(
 	//      /1/X.txt
 
 	if _, err = db.Exec("BEGIN TRANSACTION"); err != nil {
-		return "", err
+		return nil, nil, err
 	}
 
 	// Create a database entry for each file
 	for _, d := range dxDir.files {
-		inode := getInodeNum()
+		inode := allocInodeNum(fsys)
 		sqlStmt = fmt.Sprintf(`
  		        INSERT INTO files
 			VALUES ('%s', '%s', '%s', '%s', %d, '%d', '%d', '%d', '%d');
@@ -203,13 +247,13 @@ func MetadataDbReadDirAll(
 			d.FileId, d.ProjId, d.Name, d.Folder, d.Size, d.Ctime, d.Mtime, inode, KIND_FILE)
 		_, err = db.Exec(sqlStmt)
 		if err != nil {
-			return "", err
+			return nil, nil, err
 		}
 	}
 
 	// Create a database entry for each sub-directory
 	for _, subDirName := range dxDir.subdirs {
-		inode := getInodeNum()
+		inode := allocInodeNum(fsys)
 
 		// DNAx stores directories as full paths. For example: /A/B has
 		// as subdirectories  "A/B/C", "A/B/D", "A/B/KKK". A POSIX
@@ -231,12 +275,12 @@ func MetadataDbReadDirAll(
 			KIND_FILE)
 		_, err = db.Exec(sqlStmt)
 		if err != nil {
-			return "", err
+			return nil, nil, err
 		}
 	}
 
 	if _, err = db.Exec("END TRANSACTION"); err != nil {
-		return err
+		return nil, nil, err
 	}
 
 	// Now that the directory is in the database, we can read it with a local query.
@@ -267,5 +311,30 @@ func MetadataDbLookupFileInDir(
 
 // Return the root directory
 func MetadataDbRoot(fsys Filesys) (*Dir, error) {
-	return nil, nil
+	sqlStmt := fmt.Sprintf(`
+ 		        SELECT FROM directories
+			WHERE dname = "/";
+			`)
+	if rows, err := db.Query(sqlStmt); err != nil {
+		return nil, err
+	}
+
+	var d Dir
+	d.Fsys = fsys
+	d.Parent = ""
+	numRows := 0
+	for rows.Next() {
+		rows.Scan(&d.dname, &d.inode)
+		numRows++
+	}
+	rows.Close()
+
+	switch numRows {
+	case 0:
+		return nil, fmt.Errorf("Could not find root directory")
+	case 1:
+		return &d, nil
+	default:
+		return nil, fmt.Errorf("Found more than one root directory")
+	}
 }
