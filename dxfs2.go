@@ -31,6 +31,9 @@ type FileHandle struct {
 	url DxDownloadURL
 }
 
+// global static value for the dxfs2 filesystem
+var gFsys *Filesys = nil
+
 // Mount the filesystem:
 //  - setup the debug log to the FUSE kernel log (I think)
 //  - mount as read-only
@@ -61,19 +64,28 @@ func Mount(
 		return err
 	}
 
-	dbPath := "/tmp/dxfs2_metadata.db"
-	err = MetadataDbInit(&dxEnv, projectId, dbPath)
-	if err != nil {
+	// create the metadata database
+	dbFullPath := DB_PATH + "/" + DB_NAME
+	if err = MetadataDbInit(&dxEnv, projectId, dbFullPath); err != nil {
 		return err
 	}
 
-	filesys := &Filesys{
+	// create a connection to the database, that will be kept open
+	dbFullPathWithModifiers := DB_PATH + "/" + DB_NAME + "?cache=shared&mode=rwc"
+	if dbConn, err := sql.Open("sqlite3", dbFullPathWithModifiers); err != nil {
+		return err
+	}
+
+	gFsys = &Filesys{
 		dxEnv : dxEnv,
 		options: options,
 		uid : uint32(uid),
 		gid : uint32(gid),
 		projectId : projectId,
-		dbPath : dbPath,
+		dbFullPath : dbFullPath,
+		mutex : &sync.Mutex{},
+		inodeCnt : INODE_INITIAL,
+		dbConn : dbConn,
 	}
 	if err := fs.Serve(c, filesys); err != nil {
 		return err
@@ -99,53 +111,79 @@ func Mount(
 }
 
 func Unmount(dirname string) error {
-	// TODO: close the sql database
+	// Close the sql database.
+	//
+	// If there is an error, we report it. There is nothing actionable
+	// to do with it.
+	//
+	// We do not remove the metadata database file, so it could be inspected offline.
+	if err := gFsys.dbConn.Close(); err != nil {
+		log.Printf("Error closing the sqllite database %s, err=%s",
+			gFsys.dbFullPath,
+			err.Error())
+	}
+
 	if err := fuse.Unmount(dirname); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (f *Filesys) Root() (fs.Node, error) {
-	//log.Printf("Get root directory\n")
-	n := &Dir{
-		Fs : f,
-		Parent : "",
-		Dname : "/",
-		Inode : 1,
-	}
-	return n, nil
+func (fsys *Filesys) Root() (fs.Node, error) {
+	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
+
+	return MetadataDbRoot(fsys)
 }
 
 
 func (dir *Dir) Attr(ctx context.Context, a *fuse.Attr) error {
 	// this can be retained in cache indefinitely (a year is an approximation)
 	a.Valid = time.Until(time.Unix(1000 * 1000 * 1000, 0))
-	a.Inode = 1
+	a.Inode = dir.inode
 	a.Size = 4096  // dummy size
 	a.Blocks = 8
 	a.Mode = os.ModeDir | 0555
 	a.Nlink = 1
-	a.Uid = dir.Fs.uid
-	a.Gid = dir.Fs.uid
+	a.Uid = dir.Fsys.uid
+	a.Gid = dir.Fsys.uid
 	a.BlockSize = 4 * 1024
 	return nil
 }
 
 func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
-	if dir.Fs.options.Debug {
+	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
+
+	if dir.Fsys.options.Debug {
 		log.Printf("ReadDirAll dir=%s\n", (dir.Parent + "/" + dir.Dname))
 	}
-	// create a directory entry for each of the file descriptions
-	dEntries := make([]fuse.Dirent, 0, 10)
-/*
-	for key, fDesc := range dir.fs.catalog {
+
+	if files, subdirs, err := MetadataDbReadDirAll(dir.Fsys); err != nil {
+		return nil, err
+	}
+
+	dEntries := make([]fuse.Dirent, 0, len(files) + len(subdirs))
+
+	// Add entries for files
+	for filename, fDesc := range files {
 		dEntries = append(dEntries, fuse.Dirent{
 			Inode : fDesc.inode,
 			Type : fuse.DT_File,
-			Name : key,
+			Name : filename,
 		})
-	}*/
+	}
+
+	// Add entries for subdirs
+	for subDirName, dirDesc := range subdirs {
+		dEntries = append(dEntries, fuse.Dirent{
+			Inode : dirDesc.inode,
+			Type : fuse.DT_Dir,
+			Name : subDirName,
+		})
+	}
+
+	// TODO: we need to add entries for '.' and '..'
 
 	// directory entries need to be sorted
 	sort.Slice(dEntries, func(i, j int) bool { return dEntries[i].Name < dEntries[j].Name })
@@ -158,7 +196,7 @@ var _ = fs.NodeRequestLookuper(&Dir{})
 
 // We ignore the directory, because it is always the root of the filesystem.
 func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.LookupResponse) (fs.Node, error) {
-	if dir.Fs.options.Debug {
+	if dir.Fsys.options.Debug {
 		log.Printf("Lookup dir=%s filename=%s\n", dir.Parent + "/" + dir.Dname, req.Name)
 	}
 
@@ -177,8 +215,8 @@ func (f *File) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.Crtime = f.Ctime
 	a.Mode = 0400 // read only access
 	a.Nlink = 1
-	a.Uid = f.Fs.uid
-	a.Gid = f.Fs.gid
+	a.Uid = f.Fsys.uid
+	a.Gid = f.Fsys.gid
 	//a.BlockSize = 1024 * 1024
 	return nil
 }
@@ -196,7 +234,7 @@ func (f *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenR
 	payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
 		f.ProjId, secondsInYear)
 
-	body, err := DxAPI(&f.Fs.dxEnv, fmt.Sprintf("%s/download", f.FileId), payload)
+	body, err := DxAPI(&f.Fsys.dxEnv, fmt.Sprintf("%s/download", f.FileId), payload)
 	if err != nil {
 		return nil, err
 	}
@@ -232,7 +270,7 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 	// add an extent in the file that we want to read
 	endOfs := req.Offset + int64(req.Size) - 1
 	headers["Range"] = fmt.Sprintf("bytes=%d-%d", req.Offset, endOfs)
-	if fh.f.Fs.options.Debug {
+	if fh.f.Fsys.options.Debug {
 		log.Printf("Read  ofs=%d  len=%d\n", req.Offset, req.Size)
 	}
 

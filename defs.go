@@ -1,10 +1,20 @@
 package dxfs2
 
 import (
+	"sync"
 	"time"
 
 	"bazil.org/fuse/fs"
 	"github.com/dnanexus/dxda"
+	_ "github.com/mattn/go-sqlite3"
+)
+
+const (
+	MAX_DIR_SIZE int     = 10 * 1000
+	INODE_ROOT_DIR int64 = 1
+	INODE_INITIAL int64  = 10
+	DB_PATH              = "/var/dxfs2"
+	DB_NAME              = "metadata.db"
 )
 
 type Options struct {
@@ -27,15 +37,20 @@ type Filesys struct {
 
 	// A file holding a sqllite database with all the files and
 	// directories collected thus far.
-	dbPath string
+	dbFullPath string
 
-	// TODO: add an open handle for the sql DB
+	// Lock for protecting shared access to the database
+	mutex sync.Mutex
+	inodeCnt int64
+
+	// an open handle to the database
+	db  *SQLiteConn
 }
 
 var _ fs.FS = (*Filesys)(nil)
 
 type Dir struct {
-	Fs    *Filesys
+	Fsys  *Filesys
 	Parent string  // the parent directory, used for debugging
 	Dname  string  // This is the last part of the full path
 	Inode  uint64
@@ -46,7 +61,7 @@ var _ fs.Node = (*Dir)(nil)
 
 
 type File struct {
-	Fs       *Filesys
+	Fsys     *Filesys
 	FileId    string  // Required to build a download URL
 	ProjId    string  // -"-
 	Name      string

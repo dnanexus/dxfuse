@@ -48,7 +48,7 @@ type DxDescribe struct {
 }
 
 // a directory holds files and sub-directories
-type DxDir struct {
+type DxFolder struct {
 	files map[string]DxDescribe
 	subdirs []string
 }
@@ -204,7 +204,7 @@ func listFolder(
 func DxDescribeFolder(
 	dxEnv *dxda.DXEnvironment,
 	projectId string,
-	dir string) (*DxDir, error) {
+	dir string) (*DxFolder, error) {
 
 	// The listFolder API call returns a list of object ids and folders.
 	// We could describe the objects right here, but we do that separately.

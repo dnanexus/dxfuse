@@ -10,24 +10,6 @@ import (
 	_ "github.com/mattn/go-sqlite3"         // Following canonical example on go-sqlite3 'simple.go'
 )
 
-// We need some limit of the number of objects, because we are downloading
-// all of this metadata from the platform before mounting the filesystem.
-// This is initial guess at a number that is big enough to be useful, but
-// not so large, as to be prohibitive.
-//
-// We need to download the file metadata because we must make sure that there
-// are no POSIX violations, and, we need to disambiguate versions of the same file.
-const (
-	MAX_DIR_SIZE int     = 10 * 1000
-	INODE_ROOT_DIR int64 = 1
-	INODE_INITIAL int64  = 10
-	KIND_FILE            = 1
-	KIND_DIR             = 2
-	KIND_OTHER           = 3
-)
-
-var mutex = &sync.Mutex{}
-var inodeCnt = INODE_INITIAL
 
 // Construct a local sql database that holds metadata for
 // a large number of dx:files. This metadata_db will be consulted
@@ -38,63 +20,75 @@ var inodeCnt = INODE_INITIAL
 func MetadataDbInit(
 	dxEnv *dxda.DXEnvironment,
 	projId string,
-	dbFname string) error {
+	dbFullPath string) error {
 
+	if _, err := os.Stat(DB_PATH); os.IsNotExist(err) {
+		os.Mkdir(path, mode)
+	}
 	// insert into an sqllite database
-	os.Remove(dbFname)
-	db, err := sql.Open("sqlite3", dbFname + ".db?cache=shared&mode=rwc")
+	os.Remove(dbFullPath)
+	db, err := sql.Open("sqlite3", dbFullPath + "?cache=shared&mode=rwc")
 	if err != nil {
 		return "", err
 	}
 	defer db.Close()
 
-	// Create table for files and subdirectories. In Unix, "everything is a file",
-	// so, we treating directories as special files. The 'kind' field
-	// denotes if this is a file, directory, or otherwise.
-	//
-	// The encoding is
-	// 1 : File
-	// 2 : Directory
-	// 3 : Other
-	//
+	// Create table for files. The folders are represented as their full
+	// path from the base of the project.
 	sqlStmt := `
 	CREATE TABLE files (
 		file_id text,
 		proj_id text,
-		name text,
-		folder text,
+		fname text,
+		folder text PRIMARY KEY,
 		size integer,
                 ctime bigint,
                 mtime bigint,
                 inode bigint,
-                kind  int
 	);
 	`
-	_, err = db.Exec(sqlStmt)
-	if err != nil {
+	if stmt, err = db.Prepare(sqlStmt); err != nil {
+		return err
+	}
+	if _, err = stmt.Exec(); err != nil {
 		return err
 	}
 
-	// Add a root directory
-	_, err = db.Exec("BEGIN TRANSACTION")
-	if err != nil {
+
+	// Create a table for directories. The folder here is the parent directory.
+	// For example, directory /A/B/C will be represented with record:
+	//    dname="C"
+	//    folder="/A/B"
+	//
+	// If the inode is -1, then, the directory does not exist on the platform.
+	sqlStmt = `
+	CREATE TABLE directories (
+		proj_id text,
+		dname text,
+		folder text PRIMARY KEY,
+                inode bigint,
+	);
+	`
+	if stmt, err = db.Prepare(sqlStmt); err != nil {
+		return err
+	}
+	if _, err = stmt.Exec(); err != nil {
 		return err
 	}
 
-	// TODO: describe the project, and get the mtime, ctime
+	// Adding a root directory
 	sqlStmt = fmt.Sprintf(`
- 		        INSERT INTO files
+ 		        INSERT INTO directories
 			VALUES ('%s', '%s', '%s', '%s', %d, '%d', '%d', '%d', '%d');
 			`,
-		"", projId, "/", "", 4096, 0, 0, INODE_ROOT_DIR, DIR_TYPE)
-	_, err = db.Exec(sqlStmt)
-	if err != nil {
+		projId, "/", "", INODE_ROOT_DIR)
+	if stmt, err = db.Prepare(sqlStmt); err != nil {
 		return err
 	}
-	_, err = db.Exec("END TRANSACTION")
-	if err != nil {
+	if _, err = stmt.Exec(); err != nil {
 		return err
 	}
+
 	return nil
 }
 
@@ -108,23 +102,39 @@ func getInodeNum() int64 {
 }
 
 // Add a directory with its contents to an exisiting database
-func MetadataDbAddDir(
-	dxEnv *dxda.DXEnvironment,
-	dbFname string,
-	projectId string,
-	dirName string) error {
+func MetadataDbReadDirAll(
+	fsys *Filesys
+	dirName string) (map[string]File, map[string]Dir, error) {
 
-	// limit the number of files
-	if len(fileIds) > MAX_DIR_SIZE {
-		err := fmt.Errorf("Too many objects (%d), the limit is %d", len(descs), MAX_DIR_SIZE)
-		return "", err
+	if retval, err := directoryExists(fsys); err != nil {
+		return err
+	}
+	if retval {
+		// the directory already exists, read it, and return
+		// all the entries.
+		//
+		// If the inode is -1, then, the directory does not
+		// exist on the platform.
+		return nil, ENOENT
 	}
 
+	// The directory has not been queried yet.
+	//
 	// describe all the files
 	dxDir, err := DxDescribeFolder(dxEnv, projectId, dirName)
 	if err != nil {
 		return "", err
 	}
+
+	// limit the number of files
+	if len(dxDir.files) > MAX_DIR_SIZE {
+		err := fmt.Errorf(
+			"Too many files (%d) in a directory, the limit is %d",
+			len(dxDir.fiels),
+			MAX_DIR_SIZE)
+		return "", err
+	}
+
 
 	// TODO: check for files with the same name, and modify their directories.
 	// For example, if we have two version of file X.txt under directory foo,
@@ -132,38 +142,7 @@ func MetadataDbAddDir(
 	//   foo/X.txt
 	//      /1/X.txt
 
-	// TODO: check for posix violations
-
-	// This may be overly restrictive, but we are locking the database
-	// here, so there could be no conflicting write accesses.
-	mutex.Lock()
-	defer mutex.Unlock()
-
-	// insert into an sqllite database
-	db, err := sql.Open("sqlite3", dbFname + ".db?cache=shared&mode=rwc")
-	if err != nil {
-		return "", err
-	}
-	defer db.Close()
-	sqlStmt := `
-	CREATE TABLE files (
-		file_id text,
-		proj_id text,
-		name text,
-		folder text,
-		size integer,
-                ctime bigint,
-                mtime bigint,
-                inode bigint
-	);
-	`
-	_, err = db.Exec(sqlStmt)
-	if err != nil {
-		return "", err
-	}
-
-	_, err = db.Exec("BEGIN TRANSACTION")
-	if err != nil {
+	if txn, err = fsys.db.Prepare(); err != nil {
 		return "", err
 	}
 
@@ -203,17 +182,14 @@ func MetadataDbAddDir(
 			0,  // -"-     don't have a modification time
 			inode,
 			KIND_FILE)
-		_, err = db.Exec(sqlStmt)
+		_, err = txn.Stmt(sqlStmtdb.Exec(sqlStmt)
 		if err != nil {
 			return "", err
 		}
 	}
 
-	_, err = db.Exec("END TRANSACTION")
-	if err != nil {
-		return "", err
-	}
-	return dbName, nil
+	_, err = txn.Commit()
+	return err
 }
 
 // Look for file [filename] in directory [parent]/[dname].
@@ -224,8 +200,21 @@ func MetadataDbAddDir(
 //
 // Note: the file might not exist.
 func MetadataDbLookupFileInDir(
+	fsys *Filesys,
 	parent string,
 	dname string,
 	filename string) (*File, error) {
+	if files, subdirs, err := MetadataDbReadDirAll(fsys, parent + "/" + dname); err != nil {
+		return nil, err
+	}
+	elem, ok := files[filename]
+	if !ok {
+		return nil, fuse.ENOENT
+	}
+	return elem, nil
+}
+
+// Return the root directory
+func MetadataDbRoot(fsys Filesys) (*Dir, error) {
 	return nil, nil
 }
