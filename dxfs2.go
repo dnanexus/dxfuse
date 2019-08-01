@@ -85,7 +85,7 @@ func Mount(
 		dbFullPath : dbFullPath,
 		mutex : &sync.Mutex{},
 		inodeCnt : INODE_INITIAL,
-		dbConn : dbConn,
+		db : dbConn,
 	}
 	if err := fs.Serve(c, filesys); err != nil {
 		return err
@@ -117,7 +117,7 @@ func Unmount(dirname string) error {
 	// to do with it.
 	//
 	// We do not remove the metadata database file, so it could be inspected offline.
-	if err := gFsys.dbConn.Close(); err != nil {
+	if err := gFsys.db.Close(); err != nil {
 		log.Printf("Error closing the sqllite database %s, err=%s",
 			gFsys.dbFullPath,
 			err.Error())
