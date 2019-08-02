@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync"
 
 	"github.com/dnanexus/dxda"
 	_ "github.com/mattn/go-sqlite3"         // Following canonical example on go-sqlite3 'simple.go'
@@ -310,7 +309,7 @@ func MetadataDbLookupFileInDir(
 }
 
 // Return the root directory
-func MetadataDbRoot(fsys Filesys) (*Dir, error) {
+func MetadataDbRoot(fsys *Filesys) (*Dir, error) {
 	sqlStmt := fmt.Sprintf(`
  		        SELECT FROM directories
 			WHERE dname = "/";

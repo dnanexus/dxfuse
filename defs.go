@@ -6,7 +6,7 @@ import (
 
 	"bazil.org/fuse/fs"
 	"github.com/dnanexus/dxda"
-	_ "github.com/mattn/go-sqlite3"
+	"github.com/mattn/go-sqlite3"
 )
 
 const (
@@ -44,7 +44,7 @@ type Filesys struct {
 	inodeCnt int64
 
 	// an open handle to the database
-	db  *SQLiteConn
+	db  *sqlite3.SQLiteConn
 }
 
 var _ fs.FS = (*Filesys)(nil)

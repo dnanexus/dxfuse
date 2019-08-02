@@ -217,7 +217,7 @@ func DxDescribeFolder(
 		return nil, err
 	}
 
-	return &DxDir{
+	return &DxFolder{
 		files : files,
 		subdirs : folderInfo.subdirs,
 	}, nil

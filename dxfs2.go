@@ -1,6 +1,7 @@
 package dxfs2
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -8,6 +9,7 @@ import (
 	"os/user"
 	"sort"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -83,11 +85,11 @@ func Mount(
 		gid : uint32(gid),
 		projectId : projectId,
 		dbFullPath : dbFullPath,
-		mutex : &sync.Mutex{},
+		mutex : sync.Mutex{},
 		inodeCnt : INODE_INITIAL,
 		db : dbConn,
 	}
-	if err := fs.Serve(c, filesys); err != nil {
+	if err := fs.Serve(c, gFsys); err != nil {
 		return err
 	}
 
@@ -104,7 +106,7 @@ func Mount(
 		}
 	}
 
-	if filesys.options.Debug {
+	if gFsys.options.Debug {
 		log.Printf("mounted dxfs2\n")
 	}
 	return nil
