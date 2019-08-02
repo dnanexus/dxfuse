@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/user"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"sync"
@@ -17,6 +18,9 @@ import (
 	"bazil.org/fuse/fs"
 	"github.com/dnanexus/dxda"
 	"golang.org/x/net/context"
+
+	// for the sqlite driver
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // A URL generated with the /file-xxxx/download API call, that is
@@ -66,15 +70,16 @@ func Mount(
 		return err
 	}
 
-	// create the metadata database
-	dbFullPath := DB_PATH + "/" + DB_NAME
-	if err = MetadataDbInit(&dxEnv, projectId, dbFullPath); err != nil {
-		return err
+	// Create a fresh SQL database
+	dbParentFolder := filepath.Dir(DB_PATH)
+	if _, err := os.Stat(dbParentFolder); os.IsNotExist(err) {
+		os.Mkdir(dbParentFolder, 0755)
 	}
+	os.Remove(DB_PATH)
 
 	// create a connection to the database, that will be kept open
-	dbFullPathWithModifiers := DB_PATH + "/" + DB_NAME + "?cache=shared&mode=rwc"
-	if dbConn, err := sql.Open("sqlite3", dbFullPathWithModifiers); err != nil {
+	db, err := sql.Open("sqlite3", DB_PATH + "?cache=shared&mode=rwc")
+	if err != nil {
 		return err
 	}
 
@@ -84,11 +89,17 @@ func Mount(
 		uid : uint32(uid),
 		gid : uint32(gid),
 		projectId : projectId,
-		dbFullPath : dbFullPath,
+		dbFullPath : DB_PATH,
 		mutex : sync.Mutex{},
 		inodeCnt : INODE_INITIAL,
-		db : dbConn,
+		db : db,
 	}
+
+	// create the metadata database
+	if err = MetadataDbInit(gFsys); err != nil {
+		return err
+	}
+
 	if err := fs.Serve(c, gFsys); err != nil {
 		return err
 	}
@@ -100,7 +111,7 @@ func Mount(
 	}
 
 	// extra debugging information from FUSE
-	if options.Debug {
+	if gFsys.options.Debug {
 		fuse.Debug = func(msg interface{}) {
 			log.Print(msg)
 		}
@@ -142,7 +153,7 @@ func (fsys *Filesys) Root() (fs.Node, error) {
 func (dir *Dir) Attr(ctx context.Context, a *fuse.Attr) error {
 	// this can be retained in cache indefinitely (a year is an approximation)
 	a.Valid = time.Until(time.Unix(1000 * 1000 * 1000, 0))
-	a.Inode = dir.inode
+	a.Inode = dir.Inode
 	a.Size = 4096  // dummy size
 	a.Blocks = 8
 	a.Mode = os.ModeDir | 0555
@@ -154,14 +165,16 @@ func (dir *Dir) Attr(ctx context.Context, a *fuse.Attr) error {
 }
 
 func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
-	fsys.mutex.Lock()
-	defer fsys.mutex.Unlock()
+	dir.Fsys.mutex.Lock()
+	defer dir.Fsys.mutex.Unlock()
 
+	dirFullPath := dir.Parent + "/" + dir.Dname
 	if dir.Fsys.options.Debug {
-		log.Printf("ReadDirAll dir=%s\n", (dir.Parent + "/" + dir.Dname))
+		log.Printf("ReadDirAll dir=%s\n", dirFullPath)
 	}
 
-	if files, subdirs, err := MetadataDbReadDirAll(dir.Fsys); err != nil {
+	files, subdirs, err := MetadataDbReadDirAll(dir.Fsys, dirFullPath)
+	if err != nil {
 		return nil, err
 	}
 
@@ -170,7 +183,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	// Add entries for files
 	for filename, fDesc := range files {
 		dEntries = append(dEntries, fuse.Dirent{
-			Inode : fDesc.inode,
+			Inode : fDesc.Inode,
 			Type : fuse.DT_File,
 			Name : filename,
 		})
@@ -179,7 +192,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	// Add entries for subdirs
 	for subDirName, dirDesc := range subdirs {
 		dEntries = append(dEntries, fuse.Dirent{
-			Inode : dirDesc.inode,
+			Inode : dirDesc.Inode,
 			Type : fuse.DT_Dir,
 			Name : subDirName,
 		})
@@ -203,7 +216,7 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 	}
 
 	// lookup in the database
-	return MetadataDbLookupFileInDir(dir.Parent, dir.Dname, req.Name)
+	return MetadataDbLookupInDir(dir.Fsys, dir.Parent, dir.Dname, req.Name)
 }
 
 func (f *File) Attr(ctx context.Context, a *fuse.Attr) error {

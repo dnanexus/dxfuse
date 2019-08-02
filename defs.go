@@ -1,20 +1,19 @@
 package dxfs2
 
 import (
+	"database/sql"
 	"sync"
 	"time"
 
 	"bazil.org/fuse/fs"
 	"github.com/dnanexus/dxda"
-	"github.com/mattn/go-sqlite3"
 )
 
 const (
 	MAX_DIR_SIZE int     = 10 * 1000
 	INODE_ROOT_DIR int64 = 1
 	INODE_INITIAL int64  = 10
-	DB_PATH              = "/var/dxfs2"
-	DB_NAME              = "metadata.db"
+	DB_PATH              = "/var/dxfs2/metadata.db"
 )
 
 type Options struct {
@@ -44,7 +43,7 @@ type Filesys struct {
 	inodeCnt int64
 
 	// an open handle to the database
-	db  *sqlite3.SQLiteConn
+	db  *sql.DB
 }
 
 var _ fs.FS = (*Filesys)(nil)
