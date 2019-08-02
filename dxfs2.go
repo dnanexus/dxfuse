@@ -130,8 +130,12 @@ func Unmount(dirname string) error {
 	// to do with it.
 	//
 	// We do not remove the metadata database file, so it could be inspected offline.
+	if gFsys.options.Debug {
+		log.Printf("unmounting dxfs2 from %s\n", dirname)
+	}
+
 	if err := gFsys.db.Close(); err != nil {
-		log.Printf("Error closing the sqllite database %s, err=%s",
+		log.Printf("Error closing the sqlite database %s, err=%s",
 			gFsys.dbFullPath,
 			err.Error())
 	}
@@ -168,14 +172,17 @@ func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	dir.Fsys.mutex.Lock()
 	defer dir.Fsys.mutex.Unlock()
 
-	dirFullPath := dir.Parent + "/" + dir.Dname
 	if dir.Fsys.options.Debug {
-		log.Printf("ReadDirAll dir=%s\n", dirFullPath)
+		log.Printf("ReadDirAll dir=%s\n", dir.FullPath)
 	}
 
-	files, subdirs, err := MetadataDbReadDirAll(dir.Fsys, dirFullPath)
+	files, subdirs, err := MetadataDbReadDirAll(dir.Fsys, dir.FullPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if dir.Fsys.options.Debug {
+		log.Printf("%d files, %d subdirs\n", len(files), len(subdirs))
 	}
 
 	dEntries := make([]fuse.Dirent, 0, len(files) + len(subdirs))
@@ -212,11 +219,11 @@ var _ = fs.NodeRequestLookuper(&Dir{})
 // We ignore the directory, because it is always the root of the filesystem.
 func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.LookupResponse) (fs.Node, error) {
 	if dir.Fsys.options.Debug {
-		log.Printf("Lookup dir=%s filename=%s\n", dir.Parent + "/" + dir.Dname, req.Name)
+		log.Printf("Lookup dir=%s filename=%s\n", dir.FullPath, req.Name)
 	}
 
 	// lookup in the database
-	return MetadataDbLookupInDir(dir.Fsys, dir.Parent, dir.Dname, req.Name)
+	return MetadataDbLookupInDir(dir.Fsys, dir.FullPath, req.Name)
 }
 
 func (f *File) Attr(ctx context.Context, a *fuse.Attr) error {

@@ -52,6 +52,7 @@ type Dir struct {
 	Fsys  *Filesys
 	Parent string  // the parent directory, used for debugging
 	Dname  string  // This is the last part of the full path
+	FullPath string // combine parent and dname, then normalize
 	Inode  uint64
 }
 
