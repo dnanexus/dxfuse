@@ -15,6 +15,11 @@ import (
 // when performing dxfs2 operations. For example, a read-dir is
 // translated into a query for all the files inside a directory.
 
+func makeFullPath(parent string, name string) string {
+	fullPath := parent + "/" + name
+	return strings.ReplaceAll(fullPath, "//", "/")
+}
+
 // construct an initial empty database, representing an entire project.
 func MetadataDbInit(fsys *Filesys) error {
 	if fsys.options.Debug {
@@ -182,7 +187,7 @@ func queryDirInode(
 	}
 	rows.Close()
 	if numRows != 1 {
-		return 0, fmt.Errorf("Found %d != 1 entries for directory %s", dirFullName)
+		return 0, fmt.Errorf("Found %d != 1 entries for directory %s", numRows, dirFullName)
 	}
 	return inode, nil
 }
@@ -236,8 +241,7 @@ func directoryReadAllEntries(
 
 		// create a normalize full path. The edge case occurs for
 		// a root directory.
-		d.FullPath = d.Parent + "/" + d.Dname
-		d.FullPath = strings.ReplaceAll(d.FullPath, "//", "/")
+		d.FullPath = makeFullPath(d.Parent, d.Dname)
 
 		// We need to query the directories table, to get the inode
 		inode, err := queryDirInode(fsys, d.FullPath)
@@ -269,6 +273,7 @@ func directoryReadAllEntries(
 		rows.Scan(&f.FileId, &f.ProjId, &f.Name, &f.Size, &f.Ctime, &f.Mtime, &f.Inode)
 		files[f.Name] = f
 	}
+	rows.Close()
 
 	log.Printf("#files %d\n", len(files))
 	return files, subdirs, nil
@@ -425,6 +430,75 @@ func MetadataDbReadDirAll(
 	return directoryReadAllEntries(fsys, dirFullName)
 }
 
+func fastLookup(
+	fsys *Filesys,
+	dirFullName string,
+	dirOrFileName string) (fs.Node, error) {
+	// point lookup in the files table
+	sqlStmt := fmt.Sprintf(`
+ 		        SELECT file_id,proj_id,fname,size,ctime,mtime,inode FROM files
+			WHERE folder = '%s' AND fname = '%s';
+			`,
+		dirFullName, dirOrFileName)
+	rows, err := fsys.db.Query(sqlStmt)
+	if err != nil {
+		log.Printf(err.Error())
+		return nil, err
+	}
+
+	var f File
+	f.Fsys = fsys
+	numRows := 0
+	for rows.Next() {
+		rows.Scan(&f.FileId, &f.ProjId, &f.Name, &f.Size, &f.Ctime, &f.Mtime, &f.Inode)
+		numRows++
+	}
+	rows.Close()
+	if numRows == 1 {
+		return &f, nil
+	}
+	if numRows > 1 {
+		err = fmt.Errorf("Found %d files of the form %s/%s",
+			numRows, dirFullName, dirOrFileName)
+		return nil, err
+	}
+
+	// do a point lookup in the directory table
+	fullPath := makeFullPath(dirFullName, dirOrFileName)
+	sqlStmt = fmt.Sprintf(`
+ 		        SELECT inode FROM directories
+			WHERE dirFullName = '%s';
+			`,
+		fullPath)
+
+	rows, err = fsys.db.Query(sqlStmt)
+	if err != nil {
+		return nil, err
+	}
+
+	var d Dir
+	d.Fsys = fsys
+	d.Parent = dirFullName
+	d.Dname = dirOrFileName
+	d.FullPath = fullPath
+	numRows = 0
+	for rows.Next() {
+		rows.Scan(&d.Inode)
+		numRows++
+	}
+	rows.Close()
+
+	if numRows == 1 {
+		return &d, nil
+	}
+	if numRows > 1 {
+		return nil, fmt.Errorf("Found %d > 1 entries for directory %s", numRows, d.FullPath)
+	}
+
+	// no such entry
+	return nil, fuse.ENOENT
+}
+
 // Look for file [filename] in directory [parent]/[dname].
 //
 // 1. Look if the directory has already been downloaded and placed in the DB
@@ -436,6 +510,15 @@ func MetadataDbLookupInDir(
 	fsys *Filesys,
 	dirFullName string,
 	dirOrFileName string) (fs.Node, error) {
+
+	retval, populated, err := directoryExists(fsys, dirFullName)
+	if retval && populated {
+		// The directory exists, and has already been populated.
+		// I think this is the normal path.
+		return fastLookup(fsys, dirFullName, dirOrFileName)
+	}
+
+	// Slow path,
 	files, subdirs, err := MetadataDbReadDirAll(fsys, dirFullName)
 	if err != nil {
 		return nil, err
