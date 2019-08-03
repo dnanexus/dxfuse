@@ -32,11 +32,12 @@ func MetadataDbInit(fsys *Filesys) error {
 		file_id text,
 		proj_id text,
 		fname text,
-		folder text PRIMARY KEY,
+		folder text,
 		size integer,
                 ctime bigint,
                 mtime bigint,
-                inode bigint
+                inode bigint,
+                PRIMARY KEY (folder,fname)
 	);
 	`
 	if _, err := fsys.db.Exec(sqlStmt); err != nil {
@@ -51,8 +52,9 @@ func MetadataDbInit(fsys *Filesys) error {
 	sqlStmt = `
 	CREATE TABLE subdirs (
 		proj_id text,
-		parent text PRIMARY KEY,
-		dname text
+		parent text,
+		dname text,
+                PRIMARY KEY (parent,dname)
 	);
 	`
 	if _, err := fsys.db.Exec(sqlStmt); err != nil {
@@ -163,7 +165,7 @@ func queryDirInode(
 	fsys *Filesys,
 	dirFullName string) (uint64, error) {
 	sqlStmt := fmt.Sprintf(`
- 		        SELECT dname FROM directories
+ 		        SELECT inode FROM directories
 			WHERE dirFullName = '%s';
 			`,
 		dirFullName)
@@ -192,7 +194,7 @@ func queryDirSubdirs(
 	// Find the subdirectories
 	sqlStmt := fmt.Sprintf(`
  		        SELECT dname FROM subdirs
-			WHERE folder = '%s';
+			WHERE parent = '%s';
 			`,
 		dirFullName)
 	rows, err := fsys.db.Query(sqlStmt)
@@ -217,11 +219,13 @@ func queryDirSubdirs(
 func directoryReadAllEntries(
 	fsys * Filesys,
 	dirFullName string) (map[string]File, map[string]Dir, error) {
+	log.Printf("directoryReadAllEntries %s", dirFullName)
 
 	subdirList, err := queryDirSubdirs(fsys, dirFullName)
 	if err != nil {
 		return nil, nil, err
 	}
+	log.Printf("queryDirSubdirs %s -- done", dirFullName)
 
 	subdirs := make(map[string]Dir)
 	for _, subDir := range subdirList {
@@ -243,17 +247,21 @@ func directoryReadAllEntries(
 		d.Inode = inode
 		subdirs[d.Dname] = d
 	}
+	log.Printf("#subdirs %d", len(subdirs))
 
 	// Find the files in the directory
 	sqlStmt := fmt.Sprintf(`
  		        SELECT file_id,proj_id,fname,size,ctime,mtime,inode FROM files
-			WHERE folder = %s;
+			WHERE folder = '%s';
 			`,
 		dirFullName)
 	rows, err := fsys.db.Query(sqlStmt)
 	if err != nil {
+		log.Printf(err.Error())
 		return nil, nil, err
 	}
+
+	log.Printf("creating files structure\n")
 	files := make(map[string]File)
 	for rows.Next() {
 		var f File
@@ -262,6 +270,7 @@ func directoryReadAllEntries(
 		files[f.Name] = f
 	}
 
+	log.Printf("#files %d\n", len(files))
 	return files, subdirs, nil
 }
 
@@ -311,11 +320,12 @@ func directoryCopyFromDNAx(fsys *Filesys, dirFullName string) error {
 		inode := allocInodeNum(fsys)
 		sqlStmt := fmt.Sprintf(`
  		        INSERT INTO files
-			VALUES ('%s', '%s', '%s', '%s', %d, '%d', '%d', '%d');
+			VALUES ('%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d');
 			`,
 			d.FileId, d.ProjId, d.Name, d.Folder, d.Size, d.Ctime, d.Mtime, inode)
 		_, err = fsys.db.Exec(sqlStmt)
 		if err != nil {
+			log.Printf(err.Error())
 			return err
 		}
 	}
@@ -371,6 +381,9 @@ func directoryCopyFromDNAx(fsys *Filesys, dirFullName string) error {
 
 	if _, err = fsys.db.Exec("END TRANSACTION"); err != nil {
 		return err
+	}
+	if fsys.options.Debug {
+		log.Printf("directoryCopyFromDNAx done")
 	}
 
 	return nil
