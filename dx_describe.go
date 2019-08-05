@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -107,6 +108,11 @@ func submit(dxEnv *dxda.DXEnvironment, fileIds []string) (map[string]DxDescribe,
 }
 
 func DxDescribeBulkObjects(dxEnv *dxda.DXEnvironment, fileIds []string) (map[string]DxDescribe, error) {
+	var gMap = make(map[string]DxDescribe)
+	if len(fileIds) == 0 {
+		return gMap, nil
+	}
+
 	// split into limited batchs
 	batchSize := MAX_NUM_OBJECTS_IN_DESCRIBE
 	var batches [][]string
@@ -119,8 +125,8 @@ func DxDescribeBulkObjects(dxEnv *dxda.DXEnvironment, fileIds []string) (map[str
 	// Don't forget the tail of the requests, that is smaller than the batch size
 	batches = append(batches, fileIds)
 
-	var gMap = make(map[string]DxDescribe)
 	for _, fileIdBatch := range(batches) {
+		log.Printf("submit %d files", len(fileIdBatch))
 		m, err := submit(dxEnv, fileIdBatch)
 		if err != nil {
 			return nil, err
@@ -172,7 +178,6 @@ func listFolder(
 	if err != nil {
 		return nil, err
 	}
-	//fmt.Printf("payload = %s", string(payload))
 	dxRequest := fmt.Sprintf("%s/listFolder", projectId)
 	repJs, err := DxAPI(dxEnv, dxRequest , string(payload))
 	if err != nil {
@@ -210,10 +215,12 @@ func DxDescribeFolder(
 	// We could describe the objects right here, but we do that separately.
 	folderInfo, err := listFolder(dxEnv, projectId, dir)
 	if err != nil {
+		log.Printf("error %s", err.Error())
 		return nil, err
 	}
 	files, err := DxDescribeBulkObjects(dxEnv, folderInfo.fileIds)
 	if err != nil {
+		log.Printf("error %s", err.Error())
 		return nil, err
 	}
 

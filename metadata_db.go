@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
@@ -32,6 +33,9 @@ func MetadataDbInit(fsys *Filesys) error {
 
 	// Create table for files. The folders are represented as their full
 	// path from the base of the project.
+	//
+	// mtime and ctime are measured in seconds since 1st of January 1970
+	// (Unix time).
 	sqlStmt := `
 	CREATE TABLE files (
 		file_id text,
@@ -39,9 +43,9 @@ func MetadataDbInit(fsys *Filesys) error {
 		fname text,
 		folder text,
 		size integer,
-                ctime bigint,
-                mtime bigint,
-                inode bigint,
+                inode integer,
+                ctime integer,
+                mtime integer,
                 PRIMARY KEY (folder,fname)
 	);
 	`
@@ -74,7 +78,7 @@ func MetadataDbInit(fsys *Filesys) error {
 	CREATE TABLE directories (
 		proj_id text,
 		dirFullName text PRIMARY KEY,
-                inode bigint,
+                inode integer,
                 populated int
 	);
 	`
@@ -107,7 +111,7 @@ func MetadataDbInit(fsys *Filesys) error {
 //
 // Note: this call should perform while holding the mutex
 func allocInodeNum(fsys *Filesys) int64 {
-	fsys.inodeCnt++
+	fsys.inodeCnt += 1
 	return fsys.inodeCnt
 }
 
@@ -168,7 +172,7 @@ func directoryExists(fsys *Filesys, dirFullName string) (bool, bool, error) {
 
 func queryDirInode(
 	fsys *Filesys,
-	dirFullName string) (uint64, error) {
+	dirFullName string) (int64, error) {
 	sqlStmt := fmt.Sprintf(`
  		        SELECT inode FROM directories
 			WHERE dirFullName = '%s';
@@ -179,7 +183,7 @@ func queryDirInode(
 	if err != nil {
 		return 0, err
 	}
-	var inode uint64
+	var inode int64
 	numRows := 0
 	for rows.Next() {
 		rows.Scan(&inode)
@@ -244,18 +248,22 @@ func directoryReadAllEntries(
 		d.FullPath = makeFullPath(d.Parent, d.Dname)
 
 		// We need to query the directories table, to get the inode
-		inode, err := queryDirInode(fsys, d.FullPath)
+		subdInode, err := queryDirInode(fsys, d.FullPath)
 		if err != nil {
 			return nil, nil, err
 		}
-		d.Inode = inode
+		d.Inode = subdInode
 		subdirs[d.Dname] = d
 	}
 	log.Printf("#subdirs %d", len(subdirs))
 
 	// Find the files in the directory
+	//
+	// TODO: something is going wrong with the ctime and mtime. Not sure
+	// what exactly. The order matters, for some reason. Which is why I
+	// query inode first.
 	sqlStmt := fmt.Sprintf(`
- 		        SELECT file_id,proj_id,fname,size,ctime,mtime,inode FROM files
+ 		        SELECT file_id,proj_id,fname,size,inode,ctime,mtime FROM files
 			WHERE folder = '%s';
 			`,
 		dirFullName)
@@ -265,17 +273,33 @@ func directoryReadAllEntries(
 		return nil, nil, err
 	}
 
-	log.Printf("creating files structure\n")
+	log.Printf("creating files structure [")
 	files := make(map[string]File)
 	for rows.Next() {
-		var f File
-		f.Fsys = fsys
-		rows.Scan(&f.FileId, &f.ProjId, &f.Name, &f.Size, &f.Ctime, &f.Mtime, &f.Inode)
-		files[f.Name] = f
+		var fileId string
+		var projId string
+		var name string
+		var size int64
+		var inode int64
+		var ctime int64
+		var mtime int64
+		rows.Scan(&fileId, &projId, &name, &size, &inode, &ctime, &mtime)
+		log.Printf("  fname=%s, inode=%d", name, inode)
+
+		files[name] = File{
+			Fsys: fsys,
+			FileId : fileId,
+			ProjId : projId,
+			Name : name,
+			Size : size,
+			Inode : inode,
+			Ctime : time.Unix(ctime, 0),
+			Mtime : time.Unix(mtime, 0),
+		}
 	}
 	rows.Close()
-
-	log.Printf("#files %d\n", len(files))
+	log.Printf("  #files=%d", len(files))
+	log.Printf("]")
 	return files, subdirs, nil
 }
 
@@ -322,12 +346,13 @@ func directoryCopyFromDNAx(fsys *Filesys, dirFullName string) error {
 		log.Printf("inserting files")
 	}
 	for _, d := range dxDir.files {
-		inode := allocInodeNum(fsys)
+		fInode := allocInodeNum(fsys)
+		log.Printf("fInode = %d", fInode)
 		sqlStmt := fmt.Sprintf(`
  		        INSERT INTO files
 			VALUES ('%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d');
 			`,
-			d.FileId, d.ProjId, d.Name, d.Folder, d.Size, d.Ctime, d.Mtime, inode)
+			d.FileId, d.ProjId, d.Name, d.Folder, d.Size, fInode, d.Ctime.Unix(), d.Mtime.Unix())
 		_, err = fsys.db.Exec(sqlStmt)
 		if err != nil {
 			log.Printf(err.Error())
@@ -345,6 +370,13 @@ func directoryCopyFromDNAx(fsys *Filesys, dirFullName string) error {
 		// filesystem represents these as: "A/B", {"C", "D", "KKK"}
 		//
 		subDirLastPart := strings.TrimPrefix(subDirName, dirFullName)
+		subDirLastPart = strings.TrimPrefix(subDirLastPart,"/")
+		log.Printf("dirFullNAme=%s sub=%s lastPart=%s",
+			dirFullName, subDirName, subDirLastPart)
+
+		// TODO: the [subDirLatPart] cannot include a slash, that is a POSIX
+		// violation.
+
 		sqlStmt := fmt.Sprintf(`
  		        INSERT INTO subdirs
 			VALUES ('%s', '%s', '%s');
@@ -353,6 +385,7 @@ func directoryCopyFromDNAx(fsys *Filesys, dirFullName string) error {
 			dirFullName,
 			subDirLastPart)
 		if _, err = fsys.db.Exec(sqlStmt); err != nil {
+			log.Printf(err.Error())
 			return err
 		}
 
@@ -366,12 +399,13 @@ func directoryCopyFromDNAx(fsys *Filesys, dirFullName string) error {
                        `,
 			fsys.projectId, subDirName, subdirInode, 0)
 		if _, err = fsys.db.Exec(sqlStmt); err != nil {
+			log.Printf(err.Error())
 			return err
 		}
 	}
 
 	if fsys.options.Debug {
-		log.Printf("setting populated for for dir %s", dirFullName)
+		log.Printf("setting populated for directory %s", dirFullName)
 	}
 
 	// Update the directory populated flag to TRUE
@@ -436,7 +470,7 @@ func fastLookup(
 	dirOrFileName string) (fs.Node, error) {
 	// point lookup in the files table
 	sqlStmt := fmt.Sprintf(`
- 		        SELECT file_id,proj_id,fname,size,ctime,mtime,inode FROM files
+ 		        SELECT file_id,proj_id,fname,size,inode,ctime,mtime FROM files
 			WHERE folder = '%s' AND fname = '%s';
 			`,
 		dirFullName, dirOrFileName)
@@ -450,7 +484,7 @@ func fastLookup(
 	f.Fsys = fsys
 	numRows := 0
 	for rows.Next() {
-		rows.Scan(&f.FileId, &f.ProjId, &f.Name, &f.Size, &f.Ctime, &f.Mtime, &f.Inode)
+		rows.Scan(&f.FileId, &f.ProjId, &f.Name, &f.Size, &f.Inode, &f.Ctime, &f.Mtime)
 		numRows++
 	}
 	rows.Close()

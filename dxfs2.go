@@ -75,7 +75,11 @@ func Mount(
 	if _, err := os.Stat(dbParentFolder); os.IsNotExist(err) {
 		os.Mkdir(dbParentFolder, 0755)
 	}
-	os.Remove(DB_PATH)
+	log.Printf("Removing old version of the database (%s)", DB_PATH)
+	var err2 = os.Remove(DB_PATH)
+	if err2 != nil {
+		log.Printf(err.Error())
+	}
 
 	// create a connection to the database, that will be kept open
 	db, err := sql.Open("sqlite3", DB_PATH + "?cache=shared&mode=rwc")
@@ -157,7 +161,7 @@ func (fsys *Filesys) Root() (fs.Node, error) {
 func (dir *Dir) Attr(ctx context.Context, a *fuse.Attr) error {
 	// this can be retained in cache indefinitely (a year is an approximation)
 	a.Valid = time.Until(time.Unix(1000 * 1000 * 1000, 0))
-	a.Inode = dir.Inode
+	a.Inode = uint64(dir.Inode)
 	a.Size = 4096  // dummy size
 	a.Blocks = 8
 	a.Mode = os.ModeDir | 0555
@@ -185,21 +189,23 @@ func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 		log.Printf("%d files, %d subdirs\n", len(files), len(subdirs))
 	}
 
-	dEntries := make([]fuse.Dirent, 0, len(files) + len(subdirs))
+	var dEntries []fuse.Dirent
 
 	// Add entries for files
+	log.Printf("Adding files")
 	for filename, fDesc := range files {
 		dEntries = append(dEntries, fuse.Dirent{
-			Inode : fDesc.Inode,
+			Inode : uint64(fDesc.Inode),
 			Type : fuse.DT_File,
 			Name : filename,
 		})
 	}
 
 	// Add entries for subdirs
+	log.Printf("Adding subdirs")
 	for subDirName, dirDesc := range subdirs {
 		dEntries = append(dEntries, fuse.Dirent{
-			Inode : dirDesc.Inode,
+			Inode : uint64(dirDesc.Inode),
 			Type : fuse.DT_Dir,
 			Name : subDirName,
 		})
@@ -208,7 +214,13 @@ func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	// TODO: we need to add entries for '.' and '..'
 
 	// directory entries need to be sorted
+	log.Printf("sorting dir entries")
 	sort.Slice(dEntries, func(i, j int) bool { return dEntries[i].Name < dEntries[j].Name })
+	log.Printf("#%d dir entries", len(dEntries))
+	for _, dEnt := range dEntries {
+		log.Printf("name=%s inode=%d", dEnt.Name, dEnt.Inode)
+	}
+
 	return dEntries, nil
 }
 
@@ -227,7 +239,7 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 }
 
 func (f *File) Attr(ctx context.Context, a *fuse.Attr) error {
-	a.Size = f.Size
+	a.Size = uint64(f.Size)
 	//log.Printf("Attr  size=%d\n", a.Size)
 
 	// because the platform has only immutable files, these

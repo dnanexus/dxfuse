@@ -53,7 +53,7 @@ type Dir struct {
 	Parent string  // the parent directory, used for debugging
 	Dname  string  // This is the last part of the full path
 	FullPath string // combine parent and dname, then normalize
-	Inode  uint64
+	Inode  int64
 }
 
 // Make sure that Dir implements the fs.Node interface
@@ -65,10 +65,10 @@ type File struct {
 	FileId    string  // Required to build a download URL
 	ProjId    string  // -"-
 	Name      string
-	Size      uint64
+	Size      int64
+	Inode     int64
 	Ctime     time.Time
 	Mtime     time.Time
-	Inode     uint64
 }
 
 // Make sure that File implements the fs.Node interface
