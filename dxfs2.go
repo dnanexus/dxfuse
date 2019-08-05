@@ -37,9 +37,6 @@ type FileHandle struct {
 	url DxDownloadURL
 }
 
-// global static value for the dxfs2 filesystem
-var gFsys *Filesys = nil
-
 // Mount the filesystem:
 //  - setup the debug log to the FUSE kernel log (I think)
 //  - mount as read-only
@@ -48,13 +45,6 @@ func Mount(
 	dxEnv dxda.DXEnvironment,
 	projectId string,
 	options Options) error {
-
-	c, err := fuse.Mount(mountpoint, fuse.AllowOther(), fuse.ReadOnly(),
-		fuse.MaxReadahead(4 * 1024 * 1024), fuse.AsyncRead())
-	if err != nil {
-		return err
-	}
-	defer c.Close()
 
 	// get the Unix uid and gid
 	user, err := user.Current()
@@ -87,7 +77,7 @@ func Mount(
 		return err
 	}
 
-	gFsys = &Filesys{
+	fsys := &Filesys{
 		dxEnv : dxEnv,
 		options: options,
 		uid : uint32(uid),
@@ -99,12 +89,36 @@ func Mount(
 		db : db,
 	}
 
+	// extra debugging information from FUSE
+	if fsys.options.Debug {
+		fuse.Debug = func(msg interface{}) {
+			log.Print(msg)
+		}
+	}
+
+	if fsys.options.Debug {
+		log.Printf("mounted dxfs2\n")
+	}
+
+
 	// create the metadata database
-	if err = MetadataDbInit(gFsys); err != nil {
+	if err = MetadataDbInit(fsys); err != nil {
 		return err
 	}
 
-	if err := fs.Serve(c, gFsys); err != nil {
+	// Fuse mount
+	c, err := fuse.Mount(mountpoint, fuse.AllowOther(), fuse.ReadOnly(),
+		fuse.MaxReadahead(4 * 1024 * 1024), fuse.AsyncRead())
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+
+	// This method does not return. close the database,
+	// and unmount the fuse FS when done.
+	defer unmount(fsys, mountpoint)
+
+	if err := fs.Serve(c, fsys); err != nil {
 		return err
 	}
 
@@ -114,33 +128,23 @@ func Mount(
 		return err
 	}
 
-	// extra debugging information from FUSE
-	if gFsys.options.Debug {
-		fuse.Debug = func(msg interface{}) {
-			log.Print(msg)
-		}
-	}
-
-	if gFsys.options.Debug {
-		log.Printf("mounted dxfs2\n")
-	}
 	return nil
 }
 
-func Unmount(dirname string) error {
+func unmount(fsys *Filesys, dirname string) error {
 	// Close the sql database.
 	//
 	// If there is an error, we report it. There is nothing actionable
 	// to do with it.
 	//
 	// We do not remove the metadata database file, so it could be inspected offline.
-	if gFsys.options.Debug {
+	if fsys.options.Debug {
 		log.Printf("unmounting dxfs2 from %s\n", dirname)
 	}
 
-	if err := gFsys.db.Close(); err != nil {
+	if err := fsys.db.Close(); err != nil {
 		log.Printf("Error closing the sqlite database %s, err=%s",
-			gFsys.dbFullPath,
+			fsys.dbFullPath,
 			err.Error())
 	}
 
@@ -230,9 +234,9 @@ var _ = fs.NodeRequestLookuper(&Dir{})
 
 // We ignore the directory, because it is always the root of the filesystem.
 func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.LookupResponse) (fs.Node, error) {
-	if dir.Fsys.options.Debug {
-		log.Printf("Lookup dir=%s filename=%s\n", dir.FullPath, req.Name)
-	}
+	//if dir.Fsys.options.Debug {
+	//log.Printf("Lookup dir=%s filename=%s\n", dir.FullPath, req.Name)
+//}
 
 	// lookup in the database
 	return MetadataDbLookupInDir(dir.Fsys, dir.FullPath, req.Name)

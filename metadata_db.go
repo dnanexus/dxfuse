@@ -124,10 +124,6 @@ func allocInodeNum(fsys *Filesys) int64 {
 func directoryExists(fsys *Filesys, dirFullName string) (bool, bool, error) {
 	// split the directory into parent into last part:
 	// "A/B/C" ---> "A/B", "C"
-	if fsys.options.Debug {
-		log.Printf("directoryExists %s", dirFullName)
-	}
-
 	sqlStmt := fmt.Sprintf(`
  		        SELECT inode,populated FROM directories
 			WHERE dirFullName = '%s';
@@ -228,13 +224,15 @@ func queryDirSubdirs(
 func directoryReadAllEntries(
 	fsys * Filesys,
 	dirFullName string) (map[string]File, map[string]Dir, error) {
-	log.Printf("directoryReadAllEntries %s", dirFullName)
+	if fsys.options.Debug {
+		log.Printf("directoryReadAllEntries %s", dirFullName)
+	}
 
 	subdirList, err := queryDirSubdirs(fsys, dirFullName)
 	if err != nil {
 		return nil, nil, err
 	}
-	log.Printf("queryDirSubdirs %s -- done", dirFullName)
+	//log.Printf("queryDirSubdirs %s -- done", dirFullName)
 
 	subdirs := make(map[string]Dir)
 	for _, subDir := range subdirList {
@@ -255,7 +253,7 @@ func directoryReadAllEntries(
 		d.Inode = subdInode
 		subdirs[d.Dname] = d
 	}
-	log.Printf("#subdirs %d", len(subdirs))
+	//log.Printf("#subdirs %d", len(subdirs))
 
 	// Find the files in the directory
 	//
@@ -273,33 +271,23 @@ func directoryReadAllEntries(
 		return nil, nil, err
 	}
 
-	log.Printf("creating files structure [")
+	//log.Printf("creating files structure [")
 	files := make(map[string]File)
 	for rows.Next() {
-		var fileId string
-		var projId string
-		var name string
-		var size int64
-		var inode int64
+		var f File
 		var ctime int64
 		var mtime int64
-		rows.Scan(&fileId, &projId, &name, &size, &inode, &ctime, &mtime)
-		log.Printf("  fname=%s, inode=%d", name, inode)
+		rows.Scan(&f.FileId, &f.ProjId, &f.Name, &f.Size, &f.Inode, &ctime, &mtime)
 
-		files[name] = File{
-			Fsys: fsys,
-			FileId : fileId,
-			ProjId : projId,
-			Name : name,
-			Size : size,
-			Inode : inode,
-			Ctime : time.Unix(ctime, 0),
-			Mtime : time.Unix(mtime, 0),
-		}
+		f.Fsys = fsys
+		f.Ctime = time.Unix(ctime, 0)
+		f.Mtime = time.Unix(mtime, 0)
+
+		files[f.Name] = f
 	}
 	rows.Close()
-	log.Printf("  #files=%d", len(files))
-	log.Printf("]")
+	//log.Printf("  #files=%d", len(files))
+	//log.Printf("]")
 	return files, subdirs, nil
 }
 
@@ -347,7 +335,7 @@ func directoryCopyFromDNAx(fsys *Filesys, dirFullName string) error {
 	}
 	for _, d := range dxDir.files {
 		fInode := allocInodeNum(fsys)
-		log.Printf("fInode = %d", fInode)
+		//log.Printf("fInode = %d", fInode)
 		sqlStmt := fmt.Sprintf(`
  		        INSERT INTO files
 			VALUES ('%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d');
@@ -371,8 +359,8 @@ func directoryCopyFromDNAx(fsys *Filesys, dirFullName string) error {
 		//
 		subDirLastPart := strings.TrimPrefix(subDirName, dirFullName)
 		subDirLastPart = strings.TrimPrefix(subDirLastPart,"/")
-		log.Printf("dirFullNAme=%s sub=%s lastPart=%s",
-			dirFullName, subDirName, subDirLastPart)
+		//log.Printf("dirFullNAme=%s sub=%s lastPart=%s",
+		//dirFullName, subDirName, subDirLastPart)
 
 		// TODO: the [subDirLatPart] cannot include a slash, that is a POSIX
 		// violation.
@@ -420,9 +408,6 @@ func directoryCopyFromDNAx(fsys *Filesys, dirFullName string) error {
 
 	if _, err = fsys.db.Exec("END TRANSACTION"); err != nil {
 		return err
-	}
-	if fsys.options.Debug {
-		log.Printf("directoryCopyFromDNAx done")
 	}
 
 	return nil
@@ -484,7 +469,11 @@ func fastLookup(
 	f.Fsys = fsys
 	numRows := 0
 	for rows.Next() {
-		rows.Scan(&f.FileId, &f.ProjId, &f.Name, &f.Size, &f.Inode, &f.Ctime, &f.Mtime)
+		var ctime int64
+		var mtime int64
+		rows.Scan(&f.FileId, &f.ProjId, &f.Name, &f.Size, &f.Inode, &ctime, &mtime)
+		f.Ctime = time.Unix(ctime, 0)
+		f.Mtime = time.Unix(mtime, 0)
 		numRows++
 	}
 	rows.Close()
