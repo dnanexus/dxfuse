@@ -100,7 +100,6 @@ func Mount(
 		log.Printf("mounted dxfs2\n")
 	}
 
-
 	// create the metadata database
 	if err = MetadataDbInit(fsys); err != nil {
 		return err
@@ -128,6 +127,7 @@ func Mount(
 		return err
 	}
 
+	// This returns only when the filesystem is mounted
 	return nil
 }
 
@@ -234,11 +234,9 @@ var _ = fs.NodeRequestLookuper(&Dir{})
 
 // We ignore the directory, because it is always the root of the filesystem.
 func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.LookupResponse) (fs.Node, error) {
-	//if dir.Fsys.options.Debug {
-	//log.Printf("Lookup dir=%s filename=%s\n", dir.FullPath, req.Name)
-//}
+	dir.Fsys.mutex.Lock()
+	defer dir.Fsys.mutex.Unlock()
 
-	// lookup in the database
 	return MetadataDbLookupInDir(dir.Fsys, dir.FullPath, req.Name)
 }
 

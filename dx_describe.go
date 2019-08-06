@@ -38,22 +38,6 @@ type DxDescribeRaw struct {
 	Size             uint64 `json:"size"`
 }
 
-type DxDescribe struct {
-	FileId    string
-	ProjId    string
-	Name      string
-	Folder    string
-	Size      uint64
-	Ctime     time.Time
-	Mtime     time.Time
-}
-
-// a directory holds files and sub-directories
-type DxFolder struct {
-	files map[string]DxDescribe
-	subdirs []string
-}
-
 // convert time in milliseconds since 1970, in the equivalent
 // golang structure
 func dxTimeToUnixTime(dxTime int64) time.Time {

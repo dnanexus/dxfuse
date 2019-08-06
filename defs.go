@@ -16,6 +16,24 @@ const (
 	DB_PATH              = "/var/dxfs2/metadata.db"
 )
 
+// Description of a DNAx data object
+type DxDescribe struct {
+	FileId    string
+	ProjId    string
+	Name      string
+	Folder    string
+	Size      uint64
+	Ctime     time.Time
+	Mtime     time.Time
+}
+
+// a DNAx directory. It holds files and sub-directories.
+type DxFolder struct {
+	files map[string]DxDescribe
+	subdirs []string
+}
+
+
 type Options struct {
 	Debug bool
 }

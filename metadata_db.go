@@ -291,7 +291,7 @@ func directoryReadAllEntries(
 	return files, subdirs, nil
 }
 
-func directoryCopyFromDNAx(fsys *Filesys, dirFullName string) error {
+func directoryReadFromDNAx(fsys *Filesys, dirFullName string) error {
 	if fsys.options.Debug {
 		log.Printf("describe folder %s", dirFullName)
 	}
@@ -304,26 +304,28 @@ func directoryCopyFromDNAx(fsys *Filesys, dirFullName string) error {
 		return err
 	}
 
-	// limit the number of files
-	if len(dxDir.files) > MAX_DIR_SIZE {
-		err := fmt.Errorf(
-			"Too many files (%d) in a directory, the limit is %d",
-			len(dxDir.files),
-			MAX_DIR_SIZE)
-		return err
-	}
-
 	if fsys.options.Debug {
-		log.Printf("read dir from DNAx #files=%d  #subdirs=%d",
+		log.Printf("read dir from DNAx #files=%d #subdirs=%d",
 			len(dxDir.files),
 			len(dxDir.subdirs))
 	}
 
-	// TODO: check for files with the same name, and modify their directories.
-	// For example, if we have two version of file X.txt under directory foo,
-	// then they should be renamed:
-	//   foo/X.txt
-	//      /1/X.txt
+	// limit the number of files
+	numElementsInDir := len(dxDir.files) + len(dxDir.subdirs)
+	if numElementsInDir > MAX_DIR_SIZE {
+		return fmt.Errorf(
+			"Too many elements (%d) in a directory, the limit is %d",
+			numElementsInDir, MAX_DIR_SIZE)
+	}
+
+	// The DNAx storage system does not adhere to POSIX. Try
+	// to fix the elements in the directory, so they would comply. This
+	// comes at the cost of renaming the original files, which can
+	// very well mislead the user.
+	dxDir, err = PosixFixDir(fsys, dirFullName, dxDir)
+	if err != nil {
+		return err
+	}
 
 	if _, err = fsys.db.Exec("BEGIN TRANSACTION"); err != nil {
 		return err
@@ -439,7 +441,7 @@ func MetadataDbReadDirAll(
 
 			// Get all the directory from dnanexus. This could take a while
 			// for large directories.
-			if err := directoryCopyFromDNAx(fsys, dirFullName); err != nil {
+			if err := directoryReadFromDNAx(fsys, dirFullName); err != nil {
 				return nil, nil, err
 			}
 		}
