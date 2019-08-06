@@ -5,31 +5,33 @@ DNAnexus storage system. It is built with a
 [FUSE](https://bazil.org/fuse/) library, implemented in
 [go](https://golang.org). The dnanexus storage system subsumes
 POSIX. It holds not just files and directories, but also records,
-databases, applets, and workflows.
-
-
-There are several key discrepencies with POSIX:
-
+databases, applets, and workflows. It allows things that are not
+POSIX:
 1. A file can have multiple versions, all of which have the same name.
 2. A filename can include slashes.
 3. The storage system holds not just files and directories, but also records, databases, applets and workflows.
 4. A file and a directory may share a name.
 
-Furthermore, directories can be very large, holding tens of thousands of files.
+To fit these names into a POSIX compliant filesystem, as FUSE and
+Linux require, files are renamed to (1) remove slashes, (2) avoid collisions
+with subdirectories, and (3) avoid collisions between files with the same names.
+Generally, slashes are replaced with underscores, and suffixes of the form _NUMBER are added
+to core names. For example, if file `foo.txt` has two versions both located in directory `bar`,
+dxfs2 will present the following Unix directory structure:
 
+```
+bar/
+    foo.txt
+    foo_1.txt
+```
 
 ## Limitations
 
 - Assumes a Linux operating system
 - Operate on platform workers
 - Mounted read only
+- Directories are limited to ten thousands elements.
 
-The current version requires specifying a list of platform files to
-export. It takes a JSON manifest file of the form:
-
-```json
-[ "file-xxxx", "file-yyyy", "file-zzzz" ]
-```
 
 ## Performance
 
@@ -52,7 +54,9 @@ inside the kernel. It must methodically propagate all error codes, and
 handle all error conditions.
 
 
-# Fixed
+# Variants
+
+## Fixed
 
 The **fixed** variant represent all the dx:files as members in a root
 directory. This makes it look like this:
@@ -68,11 +72,6 @@ MOUNTPOINT/
 The directory hierarchy is one level deep.
 
 
-# One project
+## One project
 
-The **one project* variants mounts an entire platform project. In preparation for
-the mount, metadata for all dx:files in the project is download, and
-stored in a local database. The database is scanned, checking for POSIX
-violations. If any are found, they are reported, and the mount
-fails. Otherwise, the project is mounted with a directory
-structure similar mimicking the one on the platform.
+The **one project* variant mounts a platform project.
