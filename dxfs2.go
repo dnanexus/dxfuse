@@ -90,7 +90,7 @@ func Mount(
 	}
 
 	// extra debugging information from FUSE
-	if fsys.options.Debug {
+	if fsys.options.DebugFuse {
 		fuse.Debug = func(msg interface{}) {
 			log.Print(msg)
 		}

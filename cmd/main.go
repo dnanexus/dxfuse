@@ -22,6 +22,7 @@ func usage() {
 
 var (
 	debugFlag = flag.Bool("debug", false, "enable verbose debugging")
+	debugFuseFlag = flag.Bool("debugFuse", false, "tap into FUSE debugging information")
 )
 
 func main() {
@@ -40,6 +41,7 @@ func main() {
 
 	options := dxfs2.Options {
 		Debug : *debugFlag,
+		DebugFuse: *debugFuseFlag,
 	}
 
 	dxEnv, _, err := dxda.GetDxEnvironment()

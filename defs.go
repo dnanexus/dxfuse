@@ -36,6 +36,7 @@ type DxFolder struct {
 
 type Options struct {
 	Debug bool
+	DebugFuse bool
 }
 
 

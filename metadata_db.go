@@ -326,7 +326,13 @@ func directoryReadFromDNAx(fsys *Filesys, dirFullName string) error {
 	if err != nil {
 		return err
 	}
-
+	if fsys.options.Debug {
+		log.Printf("unique file names [")
+		for _, fDesc := range dxDir.files {
+			log.Printf("  %s", fDesc.Name)
+		}
+		log.Printf("]")
+	}
 	if _, err = fsys.db.Exec("BEGIN TRANSACTION"); err != nil {
 		return err
 	}
