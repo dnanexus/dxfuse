@@ -110,7 +110,6 @@ func DxDescribeBulkObjects(dxEnv *dxda.DXEnvironment, fileIds []string) (map[str
 	batches = append(batches, fileIds)
 
 	for _, fileIdBatch := range(batches) {
-		log.Printf("submit %d files", len(fileIdBatch))
 		m, err := submit(dxEnv, fileIdBatch)
 		if err != nil {
 			return nil, err
@@ -209,6 +208,7 @@ func DxDescribeFolder(
 	}
 
 	return &DxFolder{
+		path : dir,
 		files : files,
 		subdirs : folderInfo.subdirs,
 	}, nil

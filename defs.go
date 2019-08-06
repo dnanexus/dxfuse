@@ -29,6 +29,7 @@ type DxDescribe struct {
 
 // a DNAx directory. It holds files and sub-directories.
 type DxFolder struct {
+	path  string  // Full directory name, for example: { "/A/B/C", "foo/bar/baz" }
 	files map[string]DxDescribe
 	subdirs []string
 }

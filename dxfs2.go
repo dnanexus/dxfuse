@@ -96,9 +96,7 @@ func Mount(
 		}
 	}
 
-	if fsys.options.Debug {
-		log.Printf("mounted dxfs2\n")
-	}
+	log.Printf("mounted dxfs2\n")
 
 	// create the metadata database
 	if err = MetadataDbInit(fsys); err != nil {
@@ -138,9 +136,7 @@ func unmount(fsys *Filesys, dirname string) error {
 	// to do with it.
 	//
 	// We do not remove the metadata database file, so it could be inspected offline.
-	if fsys.options.Debug {
-		log.Printf("unmounting dxfs2 from %s\n", dirname)
-	}
+	log.Printf("unmounting dxfs2 from %s\n", dirname)
 
 	if err := fsys.db.Close(); err != nil {
 		log.Printf("Error closing the sqlite database %s, err=%s",
@@ -196,7 +192,6 @@ func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	var dEntries []fuse.Dirent
 
 	// Add entries for files
-	log.Printf("Adding files")
 	for filename, fDesc := range files {
 		dEntries = append(dEntries, fuse.Dirent{
 			Inode : uint64(fDesc.Inode),
@@ -206,7 +201,6 @@ func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	}
 
 	// Add entries for subdirs
-	log.Printf("Adding subdirs")
 	for subDirName, dirDesc := range subdirs {
 		dEntries = append(dEntries, fuse.Dirent{
 			Inode : uint64(dirDesc.Inode),
@@ -218,11 +212,9 @@ func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	// TODO: we need to add entries for '.' and '..'
 
 	// directory entries need to be sorted
-	log.Printf("sorting dir entries")
 	sort.Slice(dEntries, func(i, j int) bool { return dEntries[i].Name < dEntries[j].Name })
-	log.Printf("#%d dir entries", len(dEntries))
-	for _, dEnt := range dEntries {
-		log.Printf("name=%s inode=%d", dEnt.Name, dEnt.Inode)
+	if dir.Fsys.options.Debug {
+		log.Printf("dentries=%v", dEntries)
 	}
 
 	return dEntries, nil
@@ -242,7 +234,6 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 
 func (f *File) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.Size = uint64(f.Size)
-	//log.Printf("Attr  size=%d\n", a.Size)
 
 	// because the platform has only immutable files, these
 	// timestamps are all the same

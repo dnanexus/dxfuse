@@ -73,10 +73,13 @@ func chooseUniqueName(
 }
 
 // Rename files such that they are unique, and do not contain slashes.
-func fixFileNames(files map[string]string) map[string]string {
+func fixFileNames(files map[string]string, alreadyUsed []string) map[string]string {
 	// This is really a set that keeps track
 	// of the unique names used.
 	used := make(map[string]bool)
+	for _, nm := range alreadyUsed {
+		used[nm] = true
+	}
 	totNumFiles := len(files)
 
 	// new maping from file-id to filename.
@@ -91,40 +94,29 @@ func fixFileNames(files map[string]string) map[string]string {
 	return translation
 }
 
-// rename directory names, if needed, so they do not overlap with filenames
-func fixSubdirNames(dirnames []string, filenameTranslation map[string]string) []string {
-	// This is really a set that keeps track
-	// of the unique names used.
-	used := make(map[string]bool)
-
-	// mark all the names already used
-	for _, fname := range filenameTranslation {
-		used[fname] = true
-	}
-	log.Printf("used=%#v", used)
-
-	totNumElements := len(filenameTranslation) + len(dirnames)
-	var result []string
-
-	for _, dName := range dirnames {
-		// a directory may have slashes. Note that these are full pathes (/A/B/C).
-		subdirUnq := chooseUniqueName(dName, used, totNumElements + 2, false)
-		if dName != subdirUnq {
-			log.Printf("dirname %s -> %s", dName, subdirUnq)
-		}
-		used[subdirUnq] = true
-		result = append(result, subdirUnq)
-	}
-	return result
-}
-
 // main entry point
-func PosixFixDir(fsys *Filesys, dirFullName string, dxFolder *DxFolder) (*DxFolder, error) {
+//
+// 1. Keep directory names fixed
+// 2. Change file names to not collide with directories, or with each other.
+func PosixFixDir(fsys *Filesys, dxFolder *DxFolder) (*DxFolder, error) {
 	if fsys.options.Debug {
 		log.Printf("PosixFixDir %s #files=%d #subdirs=%d",
-			dirFullName,
+			dxFolder.path,
 			len(dxFolder.files),
 			len(dxFolder.subdirs))
+	}
+
+	// The subdirectories are specified in long paths (/A/B/C), change
+	// it to just the last part of the name
+	shortSubdirs := make([]string, 0)
+	for _, subDirName := range dxFolder.subdirs {
+		lastPart := strings.TrimPrefix(subDirName, dxFolder.path)
+		lastPart = strings.TrimPrefix(lastPart,"/")
+
+		shortSubdirs = append(shortSubdirs, lastPart)
+	}
+	if fsys.options.Debug {
+		log.Printf("short subdirs = %v", shortSubdirs)
 	}
 
 	// Make the filenames POSIX
@@ -135,8 +127,7 @@ func PosixFixDir(fsys *Filesys, dirFullName string, dxFolder *DxFolder) (*DxFold
 	for fid, fDesc := range dxFolder.files {
 		filenames[fid] = fDesc.Name
 	}
-	filenameTranslation := fixFileNames(filenames)
-	log.Printf("filenameTranslation=%#v", filenameTranslation)
+	filenameTranslation := fixFileNames(filenames, shortSubdirs)
 
 	// Go over the per file descriptions, and rename the file names
 	posixFiles := make(map[string]DxDescribe)
@@ -151,13 +142,10 @@ func PosixFixDir(fsys *Filesys, dirFullName string, dxFolder *DxFolder) (*DxFold
 		posixFiles[fid] = posixDesc
 	}
 
-	// Make sure there is no overlap between subdirs and file names
-	posixSubdirs := fixSubdirNames(dxFolder.subdirs, filenameTranslation)
-	log.Printf("posixSubdirs=%v", posixSubdirs)
-
 	posixDxFolder := &DxFolder{
+		path: dxFolder.path,
 		files: posixFiles,
-		subdirs: posixSubdirs,
+		subdirs: dxFolder.subdirs,
 	}
 	return posixDxFolder, nil
 }
