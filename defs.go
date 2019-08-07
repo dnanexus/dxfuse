@@ -27,6 +27,16 @@ type DxDescribe struct {
 	Mtime     time.Time
 }
 
+type DxDescribeProject struct {
+	id        string
+	name      string
+	region    string
+	version   int
+	dataUsage uint64
+	Ctime     time.Time
+	Mtime     time.Time
+}
+
 // a DNAx directory. It holds files and sub-directories.
 type DxFolder struct {
 	path  string  // Full directory name, for example: { "/A/B/C", "foo/bar/baz" }

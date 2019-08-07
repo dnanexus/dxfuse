@@ -213,3 +213,14 @@ func DxDescribeFolder(
 		subdirs : folderInfo.subdirs,
 	}, nil
 }
+
+
+/*
+func DxDescribeProject(
+	dxEnv *dxda.DXEnvironment,
+	projName string) (*DxDescribeProject, error) {
+
+	dxRequest := fmt.Sprintf("%s/describe", projectId)
+	DxAPI(dxEnv, dxRequest, string(payload))
+}
+*/
