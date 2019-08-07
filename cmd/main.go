@@ -17,10 +17,7 @@ var progName = filepath.Base(os.Args[0])
 
 func usage() {
 	fmt.Fprintf(os.Stderr, "Usage of %s:\n", progName)
-	fmt.Fprintf(os.Stderr, "  %s MOUNTPOINT PROJECT_ID_OR_NAME", progName)
-	fmt.Fprintf(os.Stderr, "Optional flags\n")
-	fmt.Fprintf(os.Stderr, "  -debug : write debugging output to stdout")
-	fmt.Fprintf(os.Stderr, "  -debugFuse : redirect FUSE debugging outputs to stdout")
+	fmt.Fprintf(os.Stderr, "  %s MOUNTPOINT PROJECT_ID_OR_NAME\n", progName)
 	flag.PrintDefaults()
 }
 
@@ -71,11 +68,11 @@ func main() {
 		os.Exit(1)
 	}
 	if projectId == "" {
-		fmt.Printf("Error: no project with name %s found\n", projectIdOrName)
+		fmt.Printf("Error: no project with name %s\n", projectIdOrName)
 		os.Exit(1)
 	}
 
 	if err := dxfs2.Mount(mountpoint, dxEnv, projectId, options); err != nil {
-		log.Fatal(err)
+		fmt.Printf(err.Error())
 	}
 }

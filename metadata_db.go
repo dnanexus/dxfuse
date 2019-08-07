@@ -28,6 +28,7 @@ func MetadataDbInit(fsys *Filesys) error {
 	}
 
 	if _, err := fsys.db.Exec("BEGIN TRANSACTION"); err != nil {
+		log.Printf(err.Error())
 		return err
 	}
 
