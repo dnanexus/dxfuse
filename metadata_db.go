@@ -92,7 +92,7 @@ func MetadataDbInit(fsys *Filesys) error {
  		        INSERT INTO directories
 			VALUES ('%s', '%s', '%d', '%d');
 			`,
-		fsys.projectId, "/", INODE_ROOT_DIR, 0)
+		fsys.project.Id, "/", INODE_ROOT_DIR, 0)
 	if _, err := fsys.db.Exec(sqlStmt); err != nil {
 		return err
 	}
@@ -300,7 +300,7 @@ func directoryReadFromDNAx(fsys *Filesys, dirFullName string) error {
 	// The directory has not been queried yet.
 	//
 	// describe all the files
-	dxDir, err := DxDescribeFolder(&fsys.dxEnv, fsys.projectId, dirFullName)
+	dxDir, err := DxDescribeFolder(&fsys.dxEnv, fsys.project.Id, dirFullName)
 	if err != nil {
 		return err
 	}
@@ -378,7 +378,7 @@ func directoryReadFromDNAx(fsys *Filesys, dirFullName string) error {
  		        INSERT INTO subdirs
 			VALUES ('%s', '%s', '%s');
 			`,
-			fsys.projectId,
+			fsys.project.Id,
 			dirFullName,
 			subDirLastPart)
 		if _, err = fsys.db.Exec(sqlStmt); err != nil {
@@ -394,7 +394,7 @@ func directoryReadFromDNAx(fsys *Filesys, dirFullName string) error {
                        INSERT INTO directories
                        VALUES ('%s', '%s', '%d', '%d');
                        `,
-			fsys.projectId, subDirName, subdirInode, 0)
+			fsys.project.Id, subDirName, subdirInode, 0)
 		if _, err = fsys.db.Exec(sqlStmt); err != nil {
 			log.Printf(err.Error())
 			return err

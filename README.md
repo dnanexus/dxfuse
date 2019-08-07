@@ -114,3 +114,20 @@ sudo dxfs2 -debug MOUNT-POINT PROJECT-NAME
 ```
 
 Project ids can be used instead of project names.
+
+
+# Further exploration
+
+1. Use POSIX extended attributes
+[xattr](https://en.wikipedia.org/wiki/Extended_file_attributes) to
+represent DNAx file tags and properties. The
+[xattr](http://man7.org/linux/man-pages/man7/xattr.7.html) command
+line tool can be used.
+
+2. Add the ability to create new files to an existing
+   project. This does not grant the ability to rename/delete files,
+   or modify the existing directory structure.
+
+3. Mounting several projects, not just one. A key challenge is that
+   files can be linked from multiple projects. This should translate
+   into hard links on a POSIX filesystem.
