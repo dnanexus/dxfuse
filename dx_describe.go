@@ -167,8 +167,7 @@ func listFolder(
 		return nil, err
 	}
 	var reply ListFolderResponse
-	json.Unmarshal(repJs, &reply)
-	if err != nil {
+	if err := json.Unmarshal(repJs, &reply); err != nil {
 		return nil, err
 	}
 	var objectIds []string
@@ -214,13 +213,59 @@ func DxDescribeFolder(
 	}, nil
 }
 
+type RequestDescribeProject struct {
+	Fields map[string]bool `json:fields`
+}
 
-/*
+type ReplyDescribeProject struct {
+	Id               string `json:"id"`
+	Name             string `json:"name"`
+	Region           string `json:"region"`
+	Version          int    `json:"version"`
+	DataUsage        float64 `jdon:"dataUsage"`
+	CreatedMillisec  int64 `json:"created"`
+	ModifiedMillisec int64 `json:"modified"`
+}
+
 func DxDescribeProject(
 	dxEnv *dxda.DXEnvironment,
-	projName string) (*DxDescribeProject, error) {
+	projectId string) (*DxDescribePrj, error) {
+
+	var request RequestDescribeProject
+	request.Fields = map[string]bool {
+		"id" : true,
+		"name" : true,
+		"region" : true,
+		"version" : true,
+		"dataUsage" : true,
+		"created" : true,
+		"modified" : true,
+	}
+	var payload []byte
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return nil, err
+	}
 
 	dxRequest := fmt.Sprintf("%s/describe", projectId)
-	DxAPI(dxEnv, dxRequest, string(payload))
+	repJs, err := DxAPI(dxEnv, dxRequest, string(payload))
+	if err != nil {
+		return nil, err
+	}
+
+	var reply ReplyDescribeProject
+	if err := json.Unmarshal(repJs, &reply); err != nil {
+		return nil, err
+	}
+
+	prj := DxDescribePrj {
+		Id :      reply.Id,
+		Name :    reply.Name,
+		Region :  reply.Region,
+		Version : reply.Version,
+		DataUsageGiB : reply.DataUsage,
+		Ctime : dxTimeToUnixTime(reply.CreatedMillisec),
+		Mtime : dxTimeToUnixTime(reply.ModifiedMillisec),
+	}
+	return &prj, nil
 }
-*/

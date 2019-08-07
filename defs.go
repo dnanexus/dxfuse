@@ -27,14 +27,14 @@ type DxDescribe struct {
 	Mtime     time.Time
 }
 
-type DxDescribeProject struct {
-	id        string
-	name      string
-	region    string
-	version   int
-	dataUsage uint64
-	Ctime     time.Time
-	Mtime     time.Time
+type DxDescribePrj struct {
+	Id           string
+	Name         string
+	Region       string
+	Version      int
+	DataUsageGiB float64
+	Ctime        time.Time
+	Mtime        time.Time
 }
 
 // a DNAx directory. It holds files and sub-directories.
@@ -62,7 +62,7 @@ type Filesys struct {
 	gid uint32
 
 	// the project being mounted
-	projectId string
+	project *DxDescribePrj
 
 	// A file holding a sqllite database with all the files and
 	// directories collected thus far.

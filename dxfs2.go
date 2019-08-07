@@ -60,6 +60,12 @@ func Mount(
 		return err
 	}
 
+	// describe the project, get some describing metadata for it
+	projDesc, err := DxDescribeProject(&dxEnv, projectId)
+	if err != nil {
+		return err
+	}
+
 	// Create a fresh SQL database
 	dbParentFolder := filepath.Dir(DB_PATH)
 	if _, err := os.Stat(dbParentFolder); os.IsNotExist(err) {
@@ -83,7 +89,7 @@ func Mount(
 		options: options,
 		uid : uint32(uid),
 		gid : uint32(gid),
-		projectId : projectId,
+		project : projDesc,
 		dbFullPath : DB_PATH,
 		mutex : sync.Mutex{},
 		inodeCnt : INODE_INITIAL,
@@ -170,6 +176,12 @@ func (dir *Dir) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.Uid = dir.Fsys.uid
 	a.Gid = dir.Fsys.uid
 	a.BlockSize = 4 * 1024
+
+	// get the timestamps from the toplevel project
+	a.Mtime = dir.Fsys.project.Mtime
+	a.Ctime = dir.Fsys.project.Ctime
+	a.Crtime = dir.Fsys.project.Ctime
+
 	return nil
 }
 
