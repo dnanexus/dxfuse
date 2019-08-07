@@ -68,7 +68,8 @@ func Mount(
 	log.Printf("Removing old version of the database (%s)", DB_PATH)
 	var err2 = os.Remove(DB_PATH)
 	if err2 != nil {
-		log.Printf(err.Error())
+		// This is an error we ignore
+		log.Printf("Error removing file %s, continuing (%s)", DB_PATH, err.Error())
 	}
 
 	// create a connection to the database, that will be kept open
@@ -96,7 +97,7 @@ func Mount(
 		}
 	}
 
-	log.Printf("mounted dxfs2\n")
+	log.Printf("mounted dxfs2")
 
 	// create the metadata database
 	if err = MetadataDbInit(fsys); err != nil {
@@ -112,7 +113,7 @@ func Mount(
 	defer c.Close()
 
 	// This method does not return. close the database,
-	// and unmount the fuse FS when done.
+	// and unmount the fuse filesystem when done.
 	defer unmount(fsys, mountpoint)
 
 	if err := fs.Serve(c, fsys); err != nil {

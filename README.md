@@ -101,13 +101,16 @@ the file-id.
 
 # Usage
 
+To mount a dnanexus project `mammals` on local directory `/home/jonas/foo` do:
 ```
-sudo dxfs2 MOUNT-POINT PROJECT-NAME
+sudo dxfs2 /home/jonas/foo mammals
 ```
 
-To get debugging outputs, add the debug flag. Debugging output
+To get debugging outputs, add the `debug` flag. Debugging output
 will be written to stdout.
 
 ```
 sudo dxfs2 -debug MOUNT-POINT PROJECT-NAME
 ```
+
+Project ids can be used instead of project names.
