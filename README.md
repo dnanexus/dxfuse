@@ -131,3 +131,5 @@ line tool can be used.
 3. Mounting several projects, not just one. A key challenge is that
    files can be linked from multiple projects. This should translate
    into hard links on a POSIX filesystem.
+   
+4. Present applets/workflows/records/databases as special entities. We want them to look visualy different from files/folders with standard bash tools like `ls`.
