@@ -29,15 +29,15 @@ var (
 	debugFuseFlag = flag.Bool("debugFuse", false, "tap into FUSE debugging information")
 )
 
-func lookupProject(projectIdOrName string) string {
+func lookupProject(dxEnv *dxda.DXEnvironment, projectIdOrName string) (string, error) {
 	if strings.HasPrefix(projectIdOrName, "project-") {
 		// This is a project ID
-		return projectIdOrName
+		return projectIdOrName, nil
 	}
 
 	// This is a project name, describe it, and
 	// return the project-id.
-	DxDescribeProject(projectIdOrName)
+	return dxfs2.DxFindProject(dxEnv, projectIdOrName)
 }
 
 func main() {
@@ -59,13 +59,22 @@ func main() {
 		DebugFuse: *debugFuseFlag,
 	}
 
-	projectId := lookupProject(projectIdOrName)
-
 	dxEnv, _, err := dxda.GetDxEnvironment()
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
+
+	projectId, err := lookupProject(&dxEnv, projectIdOrName)
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	if projectId == "" {
+		fmt.Printf("Error: no project with name %s found\n", projectIdOrName)
+		os.Exit(1)
+	}
+
 	if err := dxfs2.Mount(mountpoint, dxEnv, projectId, options); err != nil {
 		log.Fatal(err)
 	}
