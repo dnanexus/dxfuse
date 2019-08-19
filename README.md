@@ -55,13 +55,11 @@ requests.
 Bandwidth when streaming a file is lower than `dx cat`, or `dx
 download`. This is because the Linux kernel currently limits FUSE IOs
 to 128KB. This restriction has been lifted in
-[kernel 4.20](https://github.com/torvalds/linux/commit/5da784cce4308ae10a79e3c8c41b13fb9568e4e0#diff-e3d21d11c912d0845d7a8fc1f678d4a6), which is still a ways away from running on workers.
+[kernel 4.20](https://github.com/torvalds/linux/commit/5da784cce4308ae10a79e3c8c41b13fb9568e4e0#diff-e3d21d11c912d0845d7a8fc1f678d4a6), which is still far away from running on workers.
 
-On a cloud workstation, downloading a 200MB file is 4x faster with `dx
-download`, as compared to dxfs2. On a laptop using external download
-servers, dxfs2 is 15x slower. We believe this is due to the IO size
-limitation.
-
+On a cloud workstation, downloading a 200MB file is 15x faster with `dx
+download`, as compared to dxfs2. In order to achieve good performance for streaming,
+work is ongoing to perform [readahead in dxfs2 itself](sequential_prefetch.md).
 
 ## Special considerations
 
@@ -143,6 +141,13 @@ line tool can be used.
 
 # TODO
 
-1. Allow interrupts to work when reading a directory. This is
-   important when directories are large. Safety is assured because the
-   transaction only starts when the read is complete.
+1. Allow interrupts to work when reading a directory from DNAx. This
+   is important when directories are large, and the network part could
+   take a long time. Safety is assured because the transaction
+   modifying the metadata database only starts when the read is
+   complete.
+
+
+# Related projects
+
+- [GCS FUSE](https://cloud.google.com/storage/docs/gcs-fuse)
