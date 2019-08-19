@@ -29,6 +29,12 @@ The implementation uses an [sqlite](https://www.sqlite.org/index.html)
 database, located on `/var/dxfs/metadata.db`. It stores files and
 directories and tables, indexed for fast queries.
 
+The exported filesystem is not exactly a normal POSIX filesystem. For example:
+- Metadata like last access time are not supported
+- Directories to not have create/modify times
+- Overwriting a file is not allowed.
+- At some point, we may allow creating new files, but this will not have any concurrency control.
+
 ## Limitations
 
 - Assumes a Linux operating system
@@ -131,5 +137,12 @@ line tool can be used.
 3. Mounting several projects, not just one. A key challenge is that
    files can be linked from multiple projects. This should translate
    into hard links on a POSIX filesystem.
-   
+
 4. Present applets/workflows/records/databases as special entities. We want them to look visualy different from files/folders with standard bash tools like `ls`.
+
+
+# TODO
+
+1. Allow interrupts to work when reading a directory. This is
+   important when directories are large. Safety is assured because the
+   transaction only starts when the read is complete.

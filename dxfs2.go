@@ -75,7 +75,7 @@ func Mount(
 	var err2 = os.Remove(DB_PATH)
 	if err2 != nil {
 		// This is an error we ignore
-		log.Printf("Error removing file %s, continuing (%s)", DB_PATH, err.Error())
+		log.Printf("Error removing file %s, continuing (%s)", DB_PATH, err2.Error())
 	}
 
 	// create a connection to the database, that will be kept open
