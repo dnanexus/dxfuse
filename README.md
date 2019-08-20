@@ -29,11 +29,11 @@ The implementation uses an [sqlite](https://www.sqlite.org/index.html)
 database, located on `/var/dxfs/metadata.db`. It stores files and
 directories and tables, indexed for fast queries.
 
-The exported filesystem is not exactly a normal POSIX filesystem. For example:
-- Metadata like last access time are not supported
-- Directories to not have create/modify times
-- Overwriting a file is not allowed.
-- At some point, we may allow creating new files, but this will not have any concurrency control.
+dxfs2 approximates a normal POSIX filesystem, but does not always have the same semantics. For example:
+1. Metadata like last access time are not supported
+2. Directories to not have create/modify times
+3. Overwriting a file is not allowed.
+4. At some point, we may allow creating new files, but this will not have any concurrency control.
 
 ## Limitations
 
@@ -57,9 +57,11 @@ download`. This is because the Linux kernel currently limits FUSE IOs
 to 128KB. This restriction has been lifted in
 [kernel 4.20](https://github.com/torvalds/linux/commit/5da784cce4308ae10a79e3c8c41b13fb9568e4e0#diff-e3d21d11c912d0845d7a8fc1f678d4a6), which is still far away from running on workers.
 
-On a cloud workstation, downloading a 200MB file is 15x faster with `dx
-download`, as compared to dxfs2. In order to achieve good performance for streaming,
-work is ongoing to perform [readahead in dxfs2 itself](sequential_prefetch.md).
+On a cloud workstation, downloading a 200MB file is 15x faster with
+`dx download`, as compared to dxfs2. In order to achieve good
+performance for streaming, work is ongoing to perform readahead in
+dxfs2 itself. The initial design is describe
+[here](doc/sequential_prefetch.md).
 
 ## Special considerations
 

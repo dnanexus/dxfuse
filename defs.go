@@ -74,6 +74,8 @@ type Filesys struct {
 
 	// an open handle to the database
 	db  *sql.DB
+
+	pgs *PrefetchGlobalState
 }
 
 var _ fs.FS = (*Filesys)(nil)

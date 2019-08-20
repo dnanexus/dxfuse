@@ -111,8 +111,7 @@ func Mount(
 	}
 
 	// Fuse mount
-	c, err := fuse.Mount(mountpoint, fuse.AllowOther(), fuse.ReadOnly(),
-		fuse.MaxReadahead(4 * 1024 * 1024), fuse.AsyncRead())
+	c, err := fuse.Mount(mountpoint, fuse.AllowOther(), fuse.ReadOnly())
 	if err != nil {
 		return err
 	}
@@ -269,6 +268,9 @@ func (f *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenR
 		return nil, fuse.Errno(syscall.EACCES)
 	}
 
+	// Create an entry in the prefetch table, if the file is eligable
+	gps.CreateFileEntry(f)
+
 	// create a download URL for this file
 	const secondsInYear int = 60 * 60 * 24 * 365
 	payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
@@ -300,6 +302,17 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 var _ = fs.HandleReader(&FileHandle{})
 
 func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
+	endOfs := req.Offset + int64(req.Size) - 1
+
+	// See if the data has already been prefetched.
+	// This call will wait, if a prefetch IO is in progress.
+	if prefetchData, ok := pgs.Fsys.Check(fh.f.FileId, re.Offset, endOfs); ok {
+		resp.Data = prefetchData
+		return nil
+	}
+
+	// The data has not been prefetched. Get the data from DNAx with an
+	// http request.
 	headers := make(map[string]string)
 
 	// Copy the immutable headers
@@ -308,7 +321,6 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 	}
 
 	// add an extent in the file that we want to read
-	endOfs := req.Offset + int64(req.Size) - 1
 	headers["Range"] = fmt.Sprintf("bytes=%d-%d", req.Offset, endOfs)
 	if fh.f.Fsys.options.Debug {
 		log.Printf("Read  ofs=%d  len=%d\n", req.Offset, req.Size)
