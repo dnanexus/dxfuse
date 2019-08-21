@@ -269,7 +269,7 @@ func (f *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenR
 	}
 
 	// Create an entry in the prefetch table, if the file is eligable
-	f.Fsys.gps.CreateFileEntry(f)
+	f.Fsys.pgs.CreateFileEntry(f)
 
 	// create a download URL for this file
 	const secondsInYear int = 60 * 60 * 24 * 365
@@ -306,7 +306,7 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 
 	// See if the data has already been prefetched.
 	// This call will wait, if a prefetch IO is in progress.
-	if prefetchData, ok := pgs.Fsys.Check(fh.f.FileId, fh.url, re.Offset, endOfs); ok {
+	if prefetchData, ok := fh.f.Fsys.pgs.Check(fh.f.FileId, fh.url, req.Offset, endOfs); ok {
 		resp.Data = prefetchData
 		return nil
 	}

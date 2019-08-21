@@ -4,67 +4,76 @@ package dxfs2
 // it can never return. This means that to check if a file is being streamed, all
 // we need to do is check the map.
 import (
+	"context"
+	"fmt"
 	"golang.org/x/sync/semaphore"
 	"log"
 	"math/bits"
 	"sync"
+	"time"
 )
 
 const (
-	MAX_DELTA_TIME = time.ParseDuration("5m")
+	MAX_DELTA_TIME = 5 * 60 * time.Second
 	PREFETCH_EFFECT_THRESH = 0.75      // Prefetch effectiveness should be at least this
 	PREFETCH_EFFECT_MIN_NUM_IOS = 20   // Do not calculate effectiveness below this number of IOs
 	MAX_NUM_ENTRIES_IN_TABLE = 1024    // maximal number of entries
 	PREFETCH_IO_SIZE = (1024 * 1024)   // Maximal size of IO to prefetch
 	NUM_PREFETCH_IOS = 10
+	MIN_FILE_SIZE = 3 * PREFETCH_IO_SIZE   // do not track files smaller than this size
 
 	SLOT_SIZE = PREFETCH_IO_SIZE / 64  // each slot takes up a bit
 
 	PFM_INIT = 1
-	PFM_IO_SUBMITTED = 1
-	PFM_IO_COMPLETED = 2
-	PFM_IO_ERROR = 3
-
-	EMPTY_ARRAY make([]byte, 0)
+	PFM_IO_SUBMITTED = 2
+	PFM_IO_COMPLETED = 3
+	PFM_IO_ERROR = 4
 )
 
 type PrefetchFileMetadata struct {
+	// the file being tracked
+	file      *File
+
 	// Last time an IO hit this file
 	lastIo     time.Time
 	numMisses  int   // count how many IOs missed the prefetched area
 	numHits    int   // count how many IOs were hits
 
-	startByte  uint64
-	endByte    uint64
+	startByte  int64
+	endByte    int64
 	touched    uint64  // mark the areas that have been accessed by the user
-	data       byte[]  // the data prefetched from DNAx
+	data       []byte  // the data prefetched from DNAx
 
 	// Allow user reads to wait for the prefetch IO
-	cond       sync.Cond
+	cond      *sync.Cond
 
 	state      int
 }
 
-// description of an IO to perform, and a place to store it. One
-// of the prefetch goroutines will perform it.
-type PrefetchJobInfo struct {
-	startByte uint64
-	endByte   uint64
-	url       DxDownloadURL
-	pfm      *PrefetchFileMetadata // the file from which this IO originates
-}
-
 // global limits
 type PrefetchGlobalState struct {
-	debug bool
-	lock sync.Mutex
-	files map[string]PrefetchFileMetadata // tracking state per file-id
-	sema semaphore.Weighted
+	debug        bool
+	maxDeltaTime time.Duration
+	mutex        sync.Mutex
+	files        map[string]PrefetchFileMetadata // tracking state per file-id
+	sema        *semaphore.Weighted
 }
 
+func (pgs *PrefetchGlobalState) Init(debug bool) {
+	pgs.debug = debug
+	if maxDeltaTime, err := time.ParseDuration("5m"); err != nil {
+		panic("Cannot create a five minute duration")
+	} else {
+		pgs.maxDeltaTime = maxDeltaTime
+	}
+	// limit the number of prefetch IOs
+	pgs.sema = semaphore.NewWeighted(NUM_PREFETCH_IOS)
+}
+
+
 func (pgs *PrefetchGlobalState) CreateFileEntry(f *File) {
-	pgs.Lock()
-	defer pgs.Unlock()
+	pgs.mutex.Lock()
+	defer pgs.mutex.Unlock()
 
 	// if the table is at the size limit, do not create a new entry
 	if len(pgs.files) >= MAX_NUM_ENTRIES_IN_TABLE {
@@ -77,106 +86,64 @@ func (pgs *PrefetchGlobalState) CreateFileEntry(f *File) {
 		return
 	}
 
-	entry = &PrefetchFileMetadata{
-		lastIo : time.Now()
-		numMisses : 0
-		numHits : 0
-		startByte : 0
-		endByte : PREFETCH_IO_SIZE - 1
-		touched : 0
-		data : EMPTY_ARRAY
-		state : PFM_INIT
-	}
-	pgs[f.fileId] = entry
+	var entry PrefetchFileMetadata
+	entry.file = f
+	entry.lastIo = time.Now()
+	entry.numMisses = 0
+	entry.numHits = 0
+	entry.startByte = 0
+	entry.endByte = PREFETCH_IO_SIZE - 1
+	entry.touched = 0
+	entry.data = make([]byte, 0)
+	entry.cond = sync.NewCond(&pgs.mutex)
+	entry.state = PFM_INIT
+
+	pgs.files[f.FileId] = entry
 }
 
 func (pgs *PrefetchGlobalState) RemoveFileEntry(f *File) {
-	pgs.Lock()
-	defer pgs.Unlock()
+	pgs.mutex.Lock()
+	defer pgs.mutex.Unlock()
 
-	delete(pgs.files, f.FileId)
+	if _, ok := pgs.files[f.FileId]; ok {
+		delete(pgs.files, f.FileId)
+	}
 }
 
 
-// Sets the bit at pos in the integer n.
-func setBit(n uint64, pos uint) int {
-    n |= (1 << pos)
-    return n
-}
+// Check if a file is worth tracking.
+func (pgs *PrefetchGlobalState) isWorthIt(pfm PrefetchFileMetadata) bool {
+	if pfm.state == PFM_IO_SUBMITTED {
+		// file has ongoing IO
+		return true
+	}
 
-// remove from the table all files that aren't worth it
-/*
-func (pgs *PrefetchGlobalState) cleanUpTable() {
-	// a set of all files not worth tracking
-	var notWorthIt [string]bool
-
-	// conditions for discarding a file from tracking
 	now := time.Now()
-	for fileId, pfm := range pgs.files {
-		if pfm.state == PFN_IO_SUBMITTED {
-			// skip any file with ongoing IO
-			continue
-		}
-		if (now - pfm.lastIo) > MAX_DELTA_TIME {
-			// File has not been accessed recently
-			notWorthIt[fileId] = true
-		}
+	if now.After(pfm.lastIo.Add(pgs.maxDeltaTime)) {
+		// File has not been accessed recently
+		return false
+	}
+	pfm.lastIo = now
 
-		// is prefetch effective?
-		totalNumIOs := pfm.numMisses + pfm.numHits
-		if totalNumIOs > PREFETCH_EFFECT_MIN_NUM_IOS {
-			effectivness := float64(pfm.numMisses) / float64(totalNumIOs)
-			if effectivness < PREFETCH_EFFECT_THRESH {
-				// prefetch is not effective
-				notWorthIt[fileId] = true
-			}
-
+	// is prefetch effective?
+	totalNumIOs := pfm.numMisses + pfm.numHits
+	if totalNumIOs > PREFETCH_EFFECT_MIN_NUM_IOS {
+		effectivness := float64(pfm.numMisses) / float64(totalNumIOs)
+		if effectivness < PREFETCH_EFFECT_THRESH {
+			// prefetch is not effective
 			// reset the counters
 			pfm.numMisses = 0
 			pfm.numHits = 0
+			return false
 		}
-
-		// any other cases?
-		// we don't want to track files we don't need to.
 	}
 
-	for fileId, _ := range notWorthIt {
-		delete(pgs.file, fileId)
-	}
-}
-*/
-
-// periodically cleanup the table from files that are
-// not worth prefetching.
-/*
-func cleanUpTableWorker(pgs *PrefetchGlobalState) {
-	for true {
-		// sleep for a minute
-		time.Sleep(60 * time.Second)
-
-		// if the table is large enough, check the entries
-		pgs.Lock()
-		if len(pgs.files) > (MAX_NUM_ENTRIES_IN_TABLE/2) {
-			pgs.cleanUpTable()
-		}
-		pgs.Unlock()
-	}
-}
-*/
-
-func (pgs *PrefetchGlobalState) Init(debug bool) {
-	pgs.debug = debug
-
-	// limit the number of prefetch IOs
-	pgs.sema = semaphore.NewWeighted(NUM_PREFETCH_IOS)
-
-	pgs.cond = sync.NewCond(pgs.mutex)
-
-	// start a background job to discard files not worth tracking
-	//go cleanUpTableWorker(pgs)
+	// any other cases? add them here
+	// we don't want to track files we don't need to.
+	return true
 }
 
-func readData(startByte uint64,	endByte uint64, url DxDownloadURL) ([]byte, error) {
+func (pgs *PrefetchGlobalState) readData(startByte int64, endByte int64, url DxDownloadURL) ([]byte, error) {
 	// The data has not been prefetched. Get the data from DNAx with an
 	// http request.
 	len := endByte - startByte
@@ -188,59 +155,62 @@ func readData(startByte uint64,	endByte uint64, url DxDownloadURL) ([]byte, erro
 	}
 
 	// add an extent in the file that we want to read
-	headers["Range"] = fmt.Sprintf("bytes=%d-%d", j.startByte, j.endByte)
+	headers["Range"] = fmt.Sprintf("bytes=%d-%d", startByte, endByte)
 	if pgs.debug {
-		log.Printf("Prefetch ofs=%d  len=%d", j.startByte, len)
+		log.Printf("Prefetch ofs=%d  len=%d", startByte, len)
 	}
 
 	return DxHttpRequest("GET", url.URL, headers, []byte("{}"))
 }
 
 
-func takeSliceFromData(firstByte uint64, len uint64, data []byte) []byte {
-	bgn := firstByte % PREFETCH_IO_SIZE
-	last := bgn + len - 1
-	return data[bgn:bLast]
+func takeSliceFromData(startOfs int64, endOfs int64, data []byte) []byte {
+	bgnByte := startOfs % PREFETCH_IO_SIZE
+	endByte := endOfs % PREFETCH_IO_SIZE
+	return data[bgnByte : endByte]
 }
 
 // This is done on behalf of a user read request. Check if this range is currently
 // cached.
-func (pgs *PrefetchGlobalState) Check(
-	fileId   string,
-	url      DxDownloadURL,
-	startOfs uint64,
-	endOfs   uint64) (byte[], bool) {
+func (pgs *PrefetchGlobalState) Check(fileId string, url DxDownloadURL, startOfs int64, endOfs int64) ([]byte, bool) {
+	pgs.mutex.Lock()
+	emptyArray := make([]byte, 0)
 
-	pgs.Lock()
-	len := endOfs - startOfs + 1
 	pfm, ok := pgs.files[fileId]
 	if !ok {
 		// file is not tracked, no prefetch data is available
-		pgs.Unlock()
-		return EMPTY_ARRAY, false
+		pgs.mutex.Unlock()
+		return emptyArray, false
 	}
 
-	pfm.lastIo = time.Now()
+	if !pgs.isWorthIt(pfm) {
+		// file is not worth tracking, prefetch has been ineffective.
+		// remove it from the table.
+		delete(pgs.files, fileId)
+		pgs.mutex.Unlock()
+		return emptyArray, false
+	}
 
-	if !(startsOfs >= pfm.startByte &&
+	if !(startOfs >= pfm.startByte &&
 		endOfs <= pfm.endByte) {
 		// We are not in the prefetch range
 		pfm.numMisses++
-		pgs.Unlock()
-		return EMPTY_ARRAY, false
+		pgs.mutex.Unlock()
+		return emptyArray, false
 	}
 	pfm.numHits++
 
-	startPage := (startsOfs - pfm.startByte) / SLOT_SIZE
+	startPage := (startOfs - pfm.startByte) / SLOT_SIZE
 	endPage := (endOfs - pfm.startByte) / SLOT_SIZE
 	for slot := startPage; slot <= endPage ; slot++ {
-		pfm.touched = setBit(pfm.touched, slot)
+		// Sets the bit at position [slot]
+		pfm.touched |= 1 << uint(slot)
 	}
 
 	// should we start prefetching?
-	numAccessed := pfm.touched.OnesCount
+	numAccessed := bits.OnesCount64(pfm.touched)
 	if (numAccessed == 64 &&
-		(pfm.state == PFM_IO_INIT || pfm.state == PFM_IO_COMPLETED)) {
+		(pfm.state == PFM_INIT || pfm.state == PFM_IO_COMPLETED)) {
 		// All the slots were accessed, start a prefetch for the
 		// the next chunk
 		pfm.state = PFM_IO_SUBMITTED
@@ -255,22 +225,24 @@ func (pgs *PrefetchGlobalState) Check(
 		pfm.numMisses = 0
 
 		// this is a blocking operation
-		pgs.Unlock()
+		pgs.mutex.Unlock()
 
 		// the semaphore limits the number of concurrent prefetch IOs
 		ctx := context.TODO()
 		if err := pgs.sema.Acquire(ctx, 1); err != nil {
-			panic("Could not acquire semaphore")
+			log.Printf("Could not acquire semaphore")
+			return emptyArray, false
 		}
-		data, err := readData(pfm.startByte, pfm.endByte, url)
+		data, err := pgs.readData(pfm.startByte, pfm.endByte, url)
 		pgs.sema.Release(1)
 
-		pgs.Lock()
+		pgs.mutex.Lock()
 		if err != nil {
+			len := endOfs - startOfs + 1
 			log.Printf("Prefetch error  ofs=%d len=%d error=%s",
-				pfm.startByte, len, error.Error())
+				pfm.startByte, len, err.Error())
 			pfm.state = PFM_IO_ERROR
-			pfm.data = EMPTY_ARRAY
+			pfm.data = emptyArray
 		} else {
 			// good case, we have the data
 			pfm.data = data
@@ -283,34 +255,37 @@ func (pgs *PrefetchGlobalState) Check(
 	}
 	switch pfm.state {
 	case PFM_INIT:
-		pgs.Unlock()
-		return EMPTY_ARRAY, false
+		pgs.mutex.Unlock()
+		return emptyArray, false
 
 	case PFM_IO_SUBMITTED:
 		// we are waiting for the prefetch to complete
 		pfm.cond.Wait()
-		part := EMPTY_ARRAY
-		if pfm.state == PFM_IO_COMPLETED {
-			firstByte := startOfs % PREFETCH_IO_SIZE
-			lastByte := bs + len - 1
-			part = takeSliceFromData(firstByte, lastByte, pfm.data)
+		part := emptyArray
+		// We woke up from sleep, holding the lock.
+		// Check that nothing has changed in the meanwhile, and
+		// we are still prefetching the same area.
+		if (pfm.state == PFM_IO_COMPLETED &&
+			startOfs >= pfm.startByte &&
+			endOfs <= pfm.endByte) {
+			part = takeSliceFromData(startOfs, endOfs, pfm.data)
 		}
-		pgs.Unlock()
-		return part, nil
+		pgs.mutex.Unlock()
+		return part, false
 
 	case PFM_IO_COMPLETED:
 		// copy the data
-		part = takeSliceFromData(firstByte, lastByte, pfm.data)
-		pgs.Unlock()
-		return part, nil
+		part := takeSliceFromData(startOfs, endOfs, pfm.data)
+		pgs.mutex.Unlock()
+		return part, false
 
-	case PFM_ERROR:
+	case PFM_IO_ERROR:
 		// The prefetch IO incurred an error. Let's try it again, with a smaller size
-		pgs.Unlock()
-		return EMPTY_ARRAY, false
+		pgs.mutex.Unlock()
+		return emptyArray, false
 
 	default:
-		pgs.Unlock()
-		panic(fmt.Sprintf("bad state %d for fileId=%s", pfm.state, pfm.fileId))
+		pgs.mutex.Unlock()
+		panic(fmt.Sprintf("bad state %d for fileId=%s", pfm.state, pfm.file.FileId))
 	}
 }
