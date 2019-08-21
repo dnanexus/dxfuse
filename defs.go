@@ -16,6 +16,13 @@ const (
 	DB_PATH              = "/var/dxfs2/metadata.db"
 )
 
+// A URL generated with the /file-xxxx/download API call, that is
+// used to download file ranges.
+type DxDownloadURL struct {
+	URL     string            `json:"url"`
+	Headers map[string]string `json:"headers"`
+}
+
 // Description of a DNAx data object
 type DxDescribe struct {
 	FileId    string
@@ -75,7 +82,8 @@ type Filesys struct {
 	// an open handle to the database
 	db  *sql.DB
 
-	pgs *PrefetchGlobalState
+	// prefetch state for all files
+	pgs PrefetchGlobalState
 }
 
 var _ fs.FS = (*Filesys)(nil)

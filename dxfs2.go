@@ -23,13 +23,6 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-// A URL generated with the /file-xxxx/download API call, that is
-// used to download file ranges.
-type DxDownloadURL struct {
-	URL     string            `json:"url"`
-	Headers map[string]string `json:"headers"`
-}
-
 type FileHandle struct {
 	f *File
 
@@ -110,8 +103,15 @@ func Mount(
 		return err
 	}
 
+	// initialize prefetching state
+	fsys.pgs.Init(options.Debug)
+
 	// Fuse mount
-	c, err := fuse.Mount(mountpoint, fuse.AllowOther(), fuse.ReadOnly())
+	c, err := fuse.Mount(
+		mountpoint,
+		fuse.AllowOther(),
+		fuse.ReadOnly(),
+		fuse.MaxReadahead(0)) // we don't want the kernel to do read ahead, we are already doing that.
 	if err != nil {
 		return err
 	}
@@ -269,7 +269,7 @@ func (f *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenR
 	}
 
 	// Create an entry in the prefetch table, if the file is eligable
-	gps.CreateFileEntry(f)
+	f.Fsys.gps.CreateFileEntry(f)
 
 	// create a download URL for this file
 	const secondsInYear int = 60 * 60 * 24 * 365
@@ -295,7 +295,7 @@ var _ fs.Handle = (*FileHandle)(nil)
 var _ fs.HandleReleaser = (*FileHandle)(nil)
 
 func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
-	// nothing to do
+	fh.f.Fsys.pgs.RemoveFileEntry(fh.f)
 	return nil
 }
 
@@ -306,7 +306,7 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 
 	// See if the data has already been prefetched.
 	// This call will wait, if a prefetch IO is in progress.
-	if prefetchData, ok := pgs.Fsys.Check(fh.f.FileId, re.Offset, endOfs); ok {
+	if prefetchData, ok := pgs.Fsys.Check(fh.f.FileId, fh.url, re.Offset, endOfs); ok {
 		resp.Data = prefetchData
 		return nil
 	}
