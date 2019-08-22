@@ -113,3 +113,10 @@ type File struct {
 
 // Make sure that File implements the fs.Node interface
 var _ fs.Node = (*File)(nil)
+
+type FileHandle struct {
+	f *File
+
+	// URL used for downloading file ranges
+	url DxDownloadURL
+}

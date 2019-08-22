@@ -23,13 +23,6 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-type FileHandle struct {
-	f *File
-
-	// URL used for downloading file ranges
-	url DxDownloadURL
-}
-
 // Mount the filesystem:
 //  - setup the debug log to the FUSE kernel log (I think)
 //  - mount as read-only
@@ -111,7 +104,7 @@ func Mount(
 		mountpoint,
 		fuse.AllowOther(),
 		fuse.ReadOnly(),
-		fuse.MaxReadahead(0)) // we don't want the kernel to do read ahead, we are already doing that.
+		fuse.MaxReadahead(128 * 1024))
 	if err != nil {
 		return err
 	}
@@ -268,9 +261,6 @@ func (f *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenR
 		return nil, fuse.Errno(syscall.EACCES)
 	}
 
-	// Create an entry in the prefetch table, if the file is eligable
-	f.Fsys.pgs.CreateFileEntry(f)
-
 	// create a download URL for this file
 	const secondsInYear int = 60 * 60 * 24 * 365
 	payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
@@ -287,6 +277,10 @@ func (f *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenR
 		f : f,
 		url: u,
 	}
+
+	// Create an entry in the prefetch table, if the file is eligable
+	f.Fsys.pgs.CreateFileEntry(fh)
+
 	return fh, nil
 }
 
@@ -295,7 +289,7 @@ var _ fs.Handle = (*FileHandle)(nil)
 var _ fs.HandleReleaser = (*FileHandle)(nil)
 
 func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
-	fh.f.Fsys.pgs.RemoveFileEntry(fh.f)
+	//fh.f.Fsys.pgs.RemoveFileEntry(fh)
 	return nil
 }
 
@@ -306,7 +300,8 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 
 	// See if the data has already been prefetched.
 	// This call will wait, if a prefetch IO is in progress.
-	if prefetchData, ok := fh.f.Fsys.pgs.Check(fh.f.FileId, fh.url, req.Offset, endOfs); ok {
+	prefetchData := fh.f.Fsys.pgs.Check(fh.f.FileId, fh.url, req.Offset, endOfs)
+	if prefetchData != nil {
 		resp.Data = prefetchData
 		return nil
 	}
