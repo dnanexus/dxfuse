@@ -14,6 +14,10 @@ const (
 	INODE_ROOT_DIR int64 = 1
 	INODE_INITIAL int64  = 10
 	DB_PATH              = "/var/dxfs2/metadata.db"
+
+	KiB                  = 1024
+	MiB                  = 1024 * KiB
+	GiB                  = 1024 * MiB
 )
 
 // A URL generated with the /file-xxxx/download API call, that is

@@ -13,18 +13,27 @@ import (
 )
 
 const (
+	CACHE_MAX_SIZE = 1 * GiB               // overall limit on the amount of memory used for prefetch
+
 	MAX_DELTA_TIME = 5 * 60 * time.Second
 	PREFETCH_EFFECT_THRESH = 0.75      // Prefetch effectiveness should be at least this
 	PREFETCH_EFFECT_MIN_NUM_IOS = 20   // Do not calculate effectiveness below this number of IOs
-	MAX_NUM_ENTRIES_IN_TABLE = 1024    // maximal number of entries
-	PREFETCH_MIN_IO_SIZE = (256 * 1024)   // Maximal size of IO to prefetch
-	PREFETCH_MAX_IO_SIZE = (64 * 1024 * 1024)   // Maximal size of IO to prefetch
+
+	PREFETCH_FACTOR_MULTIPLIER = 4
+	PREFETCH_MIN_IO_SIZE = (256 * KiB) // Minimal size of IO to prefetch
+	PREFETCH_MAX_IO_SIZE = (64 * MiB)  // Maximal size of IO to prefetch
+
+	TRAILING_IO_SIZE = 2 * MiB
+
+	// An active stream can use a significant amount of memory to store prefetched data.
+	// In the worst case, this is one maximal size IO, and a trailing IO.
+	MAX_NUM_ENTRIES_IN_TABLE = CACHE_MAX_SIZE / (PREFETCH_MAX_IO_SIZE + TRAILING_IO_SIZE)
+
 	NUM_PREFETCH_THREADS = 10
-	MIN_FILE_SIZE = PREFETCH_MAX_IO_SIZE   // do not track files smaller than this size
-	MAX_NUM_IOVECS_IN_CACHE = 2
+	MIN_FILE_SIZE = 10 * MiB                  // do not track files smaller than this size
 
 	PFM_DETECT_SEQ = 1
-	PFM_IO_SUBMITTED = 2
+	PFM_IO_IN_PROGRESS = 2
 	PFM_IO_ERROR = 3
 )
 
@@ -62,6 +71,7 @@ type PrefetchFileMetadata struct {
 	current    PrefetchOp
 
 	// Allow user reads to wait until the prefetch IO completes
+	mutex      sync.Mutex  // Lock used to control this entry
 	cond      *sync.Cond
 
 	state      int
@@ -70,18 +80,22 @@ type PrefetchFileMetadata struct {
 // global limits
 type PrefetchGlobalState struct {
 	debug        bool
-	maxDeltaTime time.Duration
-	mutex        sync.Mutex
+	tableMutex   sync.Mutex  // Lock used to control the files table
 	files        map[string](*PrefetchFileMetadata) // tracking state per file-id
 	ioQueue      chan (*PrefetchFileMetadata)   // queue of IOs to prefetch
 }
 
 func (pgs *PrefetchGlobalState) Init(debug bool) {
 	pgs.debug = debug
-	if maxDeltaTime, err := time.ParseDuration("5m"); err != nil {
-		panic("Cannot create a five minute duration")
-	} else {
-		pgs.maxDeltaTime = maxDeltaTime
+
+	// The edge of the last IO has to:
+	// 1. Include the last two slots, where a slot its the maximal possible size
+	// 2. Be a multiple of metabyte
+	// 3. Needs to be at least one MiB
+	atLeast := (PREFETCH_MAX_IO_SIZE / 64)
+	if TRAILING_IO_SIZE < atLeast {
+		panic(fmt.Sprintf("trailing IO size is too small %d < %d",
+			TRAILING_IO_SIZE, atLeast))
 	}
 
 	pgs.files = make(map[string](*PrefetchFileMetadata))
@@ -102,21 +116,43 @@ func check(value bool) {
 	}
 }
 
+func (pgs *PrefetchGlobalState) leaveRightEdgeOnly(op *PrefetchOp) {
+	edgeOfPrevCachedIo := make([]byte, TRAILING_IO_SIZE)
+	ofs := op.ioSize - TRAILING_IO_SIZE
+	copy(edgeOfPrevCachedIo, op.data[ofs:])
+
+	// make sure the data is released
+	// not sure this is actually needed
+	op.data = nil
+
+	op.ioSize = TRAILING_IO_SIZE
+	op.startByte = (op.endByte + 1) - TRAILING_IO_SIZE
+	op.data = edgeOfPrevCachedIo
+
+	if pgs.debug {
+		log.Printf("prefetch: lowered older data to size=%d", TRAILING_IO_SIZE)
+	}
+}
+
 func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 	for true {
 		pfm := <-pgs.ioQueue
 
-		pgs.mutex.Lock()
+		pfm.mutex.Lock()
+		check(pfm.state == PFM_IO_IN_PROGRESS)
+
 		startByte := pfm.current.startByte
 		endByte := pfm.current.endByte
 		url := pfm.fh.url
 		pfm.numPrefetchIOs++
-		pgs.mutex.Unlock()
+		pfm.mutex.Unlock()
 
 		// perform the IO
 		data, err := pgs.readData(startByte, endByte, url)
 
-		pgs.mutex.Lock()
+		pfm.mutex.Lock()
+		check(pfm.state == PFM_IO_IN_PROGRESS)
+
 		if err != nil {
 			log.Printf("Prefetch error ofs=%d len=%d error=%s",
 				pfm.current.startByte, pfm.current.ioSize, err.Error())
@@ -143,25 +179,29 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 			} else {
 				// append to the cache
 				check(pfm.cache.endByte + 1 == completedOp.startByte)
-				pfm.cache.iovecs = append(pfm.cache.iovecs, completedOp)
+				check(len(pfm.cache.iovecs) <= 2)
 
-				if len(pfm.cache.iovecs) > MAX_NUM_IOVECS_IN_CACHE {
+				if len(pfm.cache.iovecs) == 2 {
 					// we want to limit the amount of cached data.
-					// we chop off the beginning of the vector, and
+					// Chop off the beginning of the vector, and
 					// reduce memory consumption.
-					start := len(pfm.cache.iovecs) - MAX_NUM_IOVECS_IN_CACHE
-					for i := 0; i < start; i++ {
-						pfm.cache.iovecs[i].data = nil
-					}
-					pfm.cache.iovecs = pfm.cache.iovecs[start:]
+					pfm.cache.iovecs[0].data = nil
+					pfm.cache.iovecs = pfm.cache.iovecs[1:]
 				}
-
-				// recalculate the range covered by the cache
-				nIovecs := len(pfm.cache.iovecs)
-				check(nIovecs >= 1)
-				pfm.cache.startByte = pfm.cache.iovecs[0].startByte
-				pfm.cache.endByte = pfm.cache.iovecs[nIovecs-1].endByte
+				check(len(pfm.cache.iovecs) == 1)
+				if pfm.cache.iovecs[0].ioSize > TRAILING_IO_SIZE {
+					// we don't want the older IO to be extermely large.
+					// It costs memory, but only its right edge is likely to be accessed.
+					pgs.leaveRightEdgeOnly(&pfm.cache.iovecs[0])
+				}
+				pfm.cache.iovecs = append(pfm.cache.iovecs, completedOp)
 			}
+
+			// recalculate the range covered by the cache
+			nIovecs := len(pfm.cache.iovecs)
+			check(nIovecs >= 1)
+			pfm.cache.startByte = pfm.cache.iovecs[0].startByte
+			pfm.cache.endByte = pfm.cache.iovecs[nIovecs-1].endByte
 		}
 
 		log.Printf("Prefetch #hits=%d #IOs=%d #prefetchIOs=%d ioSize=%d",
@@ -169,20 +209,24 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 
 		// release all the reads waiting for the prefetch IO to complete
 		pfm.cond.Broadcast()
-		pgs.mutex.Unlock()
+		pfm.mutex.Unlock()
 	}
 }
 
 
 // Check if a file is worth tracking.
-func (pgs *PrefetchGlobalState) isWorthIt(pfm PrefetchFileMetadata) bool {
-	if pfm.state == PFM_IO_SUBMITTED {
+func (pgs *PrefetchGlobalState) isWorthIt(pfm *PrefetchFileMetadata) bool {
+	if pfm.state == PFM_IO_IN_PROGRESS {
 		// file has ongoing IO
 		return true
 	}
+	if pfm.state == PFM_IO_ERROR {
+		// we had an IO error, get rid of this file
+		return false
+	}
 
 	now := time.Now()
-	if now.After(pfm.lastIo.Add(pgs.maxDeltaTime)) {
+	if now.After(pfm.lastIo.Add(MAX_DELTA_TIME)) {
 		// File has not been accessed recently
 		return false
 	}
@@ -209,30 +253,33 @@ func (pgs *PrefetchGlobalState) tableCleanupWorker() {
 	for true {
 		// sleep 60
 		time.Sleep(60 * time.Second)
+		if pgs.debug {
+			log.Printf("prefetch: tableCleanupWorkder")
+		}
 
 		// Files that are not worth tracking
-		toRemove := make([]string, 0)
+		var toRemove []string
 
 		// go over the table, and find all the files not worth tracking
-		pgs.mutex.Lock()
-		if len(pgs.files) > MAX_NUM_ENTRIES_IN_TABLE/2 {
-			for fileId, pfm := range pgs.files {
-				if !pgs.isWorthIt(*pfm) {
-					toRemove = append(toRemove, fileId)
-				}
+		pgs.tableMutex.Lock()
+		for fileId, pfm := range pgs.files {
+			pfm.mutex.Lock()
+			if !pgs.isWorthIt(pfm) {
+				toRemove = append(toRemove, fileId)
 			}
+			pfm.mutex.Unlock()
 		}
-		pgs.mutex.Unlock()
 
 		for _, fileId := range toRemove {
 			delete(pgs.files, fileId)
 		}
+		pgs.tableMutex.Unlock()
 	}
 }
 
 func (pgs *PrefetchGlobalState) CreateFileEntry(fh *FileHandle) {
-	pgs.mutex.Lock()
-	defer pgs.mutex.Unlock()
+	pgs.tableMutex.Lock()
+	defer pgs.tableMutex.Unlock()
 
 	// if the table is at the size limit, do not create a new entry
 	if len(pgs.files) >= MAX_NUM_ENTRIES_IN_TABLE {
@@ -260,15 +307,15 @@ func (pgs *PrefetchGlobalState) CreateFileEntry(fh *FileHandle) {
 	entry.current.endByte = PREFETCH_MIN_IO_SIZE - 1
 	entry.current.touched = 0
 
-	entry.cond = sync.NewCond(&pgs.mutex)
+	entry.cond = sync.NewCond(&entry.mutex)
 	entry.state = PFM_DETECT_SEQ
 
 	pgs.files[fh.f.FileId] = &entry
 }
 
 func (pgs *PrefetchGlobalState) RemoveFileEntry(fh *FileHandle) {
-	pgs.mutex.Lock()
-	defer pgs.mutex.Unlock()
+	pgs.tableMutex.Lock()
+	defer pgs.tableMutex.Unlock()
 
 	fileId := fh.f.FileId
 	if _, ok := pgs.files[fileId]; ok {
@@ -335,15 +382,15 @@ func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 	}
 
 	if (numAccessed == 64 &&
-		pfm.state != PFM_IO_SUBMITTED) {
+		pfm.state != PFM_IO_IN_PROGRESS) {
 		// All the slots were accessed, start a prefetch for the
 		// the next chunk
-		pfm.state = PFM_IO_SUBMITTED
+		pfm.state = PFM_IO_IN_PROGRESS
 
 		// Setup state for the next prefetch.
 		// Exponentially increase the prefetch size, assuming it is successful,
 		// until the maximal size.
-		ioSize := pfm.current.ioSize * 2
+		ioSize := pfm.current.ioSize * PREFETCH_FACTOR_MULTIPLIER
 		if ioSize > PREFETCH_MAX_IO_SIZE {
 			ioSize = PREFETCH_MAX_IO_SIZE
 		}
@@ -398,14 +445,18 @@ func (pgs *PrefetchGlobalState) getDataFromCache(
 // data. nil is returned for such cases.
 //
 func (pgs *PrefetchGlobalState) Check(fileId string, url DxDownloadURL, startOfs int64, endOfs int64) []byte  {
-	pgs.mutex.Lock()
-	defer pgs.mutex.Unlock()
-
+	pgs.tableMutex.Lock()
 	pfm, ok := pgs.files[fileId]
 	if !ok {
 		// file is not tracked, no prefetch data is available
+		pgs.tableMutex.Unlock()
 		return nil
 	}
+	// switch from the global lock to the entry lock
+	pfm.mutex.Lock()
+	pgs.tableMutex.Unlock()
+	defer pfm.mutex.Unlock()
+
 	pfm.numIOs++
 
 	if pfm.current.endByte < endOfs {
@@ -427,7 +478,7 @@ func (pgs *PrefetchGlobalState) Check(fileId string, url DxDownloadURL, startOfs
 		// no data is cached.
 		pgs.markAccessedAndMaybeStartPrefetch(pfm, startOfs, endOfs)
 
-	case PFM_IO_SUBMITTED:
+	case PFM_IO_IN_PROGRESS:
 		// ongoing prefetch IO
 		if !(startOfs <= pfm.current.startByte &&
 			endOfs <= pfm.current.endByte) {
@@ -436,7 +487,7 @@ func (pgs *PrefetchGlobalState) Check(fileId string, url DxDownloadURL, startOfs
 		}
 
 		// we are waiting for the prefetch to complete
-		for pfm.state == PFM_IO_SUBMITTED {
+		for pfm.state == PFM_IO_IN_PROGRESS {
 			pfm.cond.Wait()
 		}
 		if pgs.debug {

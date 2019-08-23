@@ -289,7 +289,7 @@ var _ fs.Handle = (*FileHandle)(nil)
 var _ fs.HandleReleaser = (*FileHandle)(nil)
 
 func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
-	//fh.f.Fsys.pgs.RemoveFileEntry(fh)
+	fh.f.Fsys.pgs.RemoveFileEntry(fh)
 	return nil
 }
 
