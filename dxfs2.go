@@ -23,20 +23,6 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-// A URL generated with the /file-xxxx/download API call, that is
-// used to download file ranges.
-type DxDownloadURL struct {
-	URL     string            `json:"url"`
-	Headers map[string]string `json:"headers"`
-}
-
-type FileHandle struct {
-	f *File
-
-	// URL used for downloading file ranges
-	url DxDownloadURL
-}
-
 // Mount the filesystem:
 //  - setup the debug log to the FUSE kernel log (I think)
 //  - mount as read-only
@@ -75,7 +61,7 @@ func Mount(
 	var err2 = os.Remove(DB_PATH)
 	if err2 != nil {
 		// This is an error we ignore
-		log.Printf("Error removing file %s, continuing (%s)", DB_PATH, err.Error())
+		log.Printf("Error removing file %s, continuing (%s)", DB_PATH, err2.Error())
 	}
 
 	// create a connection to the database, that will be kept open
@@ -110,9 +96,15 @@ func Mount(
 		return err
 	}
 
+	// initialize prefetching state
+	fsys.pgs.Init(options.Debug)
+
 	// Fuse mount
-	c, err := fuse.Mount(mountpoint, fuse.AllowOther(), fuse.ReadOnly(),
-		fuse.MaxReadahead(4 * 1024 * 1024), fuse.AsyncRead())
+	c, err := fuse.Mount(
+		mountpoint,
+		fuse.AllowOther(),
+		fuse.ReadOnly(),
+		fuse.MaxReadahead(128 * 1024))
 	if err != nil {
 		return err
 	}
@@ -285,6 +277,10 @@ func (f *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenR
 		f : f,
 		url: u,
 	}
+
+	// Create an entry in the prefetch table, if the file is eligable
+	f.Fsys.pgs.CreateFileEntry(fh)
+
 	return fh, nil
 }
 
@@ -293,13 +289,25 @@ var _ fs.Handle = (*FileHandle)(nil)
 var _ fs.HandleReleaser = (*FileHandle)(nil)
 
 func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
-	// nothing to do
+	//fh.f.Fsys.pgs.RemoveFileEntry(fh)
 	return nil
 }
 
 var _ = fs.HandleReader(&FileHandle{})
 
 func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
+	endOfs := req.Offset + int64(req.Size) - 1
+
+	// See if the data has already been prefetched.
+	// This call will wait, if a prefetch IO is in progress.
+	prefetchData := fh.f.Fsys.pgs.Check(fh.f.FileId, fh.url, req.Offset, endOfs)
+	if prefetchData != nil {
+		resp.Data = prefetchData
+		return nil
+	}
+
+	// The data has not been prefetched. Get the data from DNAx with an
+	// http request.
 	headers := make(map[string]string)
 
 	// Copy the immutable headers
@@ -308,7 +316,6 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 	}
 
 	// add an extent in the file that we want to read
-	endOfs := req.Offset + int64(req.Size) - 1
 	headers["Range"] = fmt.Sprintf("bytes=%d-%d", req.Offset, endOfs)
 	if fh.f.Fsys.options.Debug {
 		log.Printf("Read  ofs=%d  len=%d\n", req.Offset, req.Size)
