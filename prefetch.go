@@ -426,7 +426,7 @@ func (pgs *PrefetchGlobalState) getDataFromCache(
 //
 func (pgs *PrefetchGlobalState) Check(fileId string, url DxDownloadURL, startOfs int64, endOfs int64) []byte  {
 	pgs.mutex.Lock()
-	pgs.mutex.Unlock()
+	defer pgs.mutex.Unlock()
 	pfm, ok := pgs.files[fileId]
 	if !ok {
 		// file is not tracked, no prefetch data is available
