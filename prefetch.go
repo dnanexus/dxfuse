@@ -10,6 +10,8 @@ import (
 	"math/bits"
 	"sync"
 	"time"
+
+	"github.com/hashicorp/go-retryablehttp" // use http libraries from hashicorp for implement retry logic
 )
 
 const (
@@ -23,11 +25,10 @@ const (
 	PREFETCH_MIN_IO_SIZE = (256 * KiB) // Minimal size of IO to prefetch
 	PREFETCH_MAX_IO_SIZE = (64 * MiB)  // Maximal size of IO to prefetch
 
-	TRAILING_IO_SIZE = 2 * MiB
-
 	// An active stream can use a significant amount of memory to store prefetched data.
-	// In the worst case, this is one maximal size IO, and a trailing IO.
-	MAX_NUM_ENTRIES_IN_TABLE = CACHE_MAX_SIZE / (PREFETCH_MAX_IO_SIZE + TRAILING_IO_SIZE)
+	// In the worst case, this is two maximal size IOs
+	MAX_NUM_ENTRIES_IN_TABLE = CACHE_MAX_SIZE / (2 * PREFETCH_MAX_IO_SIZE)
+	NUM_MEM_CHUNKS = CACHE_MAX_SIZE / PREFETCH_MAX_IO_SIZE
 
 	NUM_PREFETCH_THREADS = 10
 	MIN_FILE_SIZE = 10 * MiB                  // do not track files smaller than this size
@@ -43,6 +44,7 @@ type PrefetchOp struct {
 	startByte  int64
 	endByte    int64
 	touched    uint64  // mark the areas that have been accessed by the user
+	chunk      []byte  // the backing store for the data
 	data       []byte
 }
 
@@ -71,7 +73,6 @@ type PrefetchFileMetadata struct {
 	current    PrefetchOp
 
 	// Allow user reads to wait until the prefetch IO completes
-	mutex      sync.Mutex  // Lock used to control this entry
 	cond      *sync.Cond
 
 	state      int
@@ -80,26 +81,18 @@ type PrefetchFileMetadata struct {
 // global limits
 type PrefetchGlobalState struct {
 	debug        bool
-	tableMutex   sync.Mutex  // Lock used to control the files table
+	mutex        sync.Mutex  // Lock used to control the files table
 	files        map[string](*PrefetchFileMetadata) // tracking state per file-id
 	ioQueue      chan (*PrefetchFileMetadata)   // queue of IOs to prefetch
+	memPool      chan([]byte)  // a memory pool of large memory chunks
 }
 
 func (pgs *PrefetchGlobalState) Init(debug bool) {
 	pgs.debug = debug
 
-	// The edge of the last IO has to:
-	// 1. Include the last two slots, where a slot its the maximal possible size
-	// 2. Be a multiple of metabyte
-	// 3. Needs to be at least one MiB
-	atLeast := (PREFETCH_MAX_IO_SIZE / 64)
-	if TRAILING_IO_SIZE < atLeast {
-		panic(fmt.Sprintf("trailing IO size is too small %d < %d",
-			TRAILING_IO_SIZE, atLeast))
-	}
-
 	pgs.files = make(map[string](*PrefetchFileMetadata))
 	pgs.ioQueue = make(chan (*PrefetchFileMetadata))
+	pgs.memPool = make(chan ([]byte), NUM_MEM_CHUNKS)
 
 	// limit the number of prefetch IOs
 	for i := 0; i < NUM_PREFETCH_THREADS; i++ {
@@ -116,41 +109,61 @@ func check(value bool) {
 	}
 }
 
-func (pgs *PrefetchGlobalState) leaveRightEdgeOnly(op *PrefetchOp) {
-	edgeOfPrevCachedIo := make([]byte, TRAILING_IO_SIZE)
-	ofs := op.ioSize - TRAILING_IO_SIZE
-	copy(edgeOfPrevCachedIo, op.data[ofs:])
-
-	// make sure the data is released
-	// not sure this is actually needed
-	op.data = nil
-
-	op.ioSize = TRAILING_IO_SIZE
-	op.startByte = (op.endByte + 1) - TRAILING_IO_SIZE
-	op.data = edgeOfPrevCachedIo
-
+func (pgs *PrefetchGlobalState) readData(
+	client *retryablehttp.Client,
+	memChunk []byte,
+	startByte int64,
+	endByte int64,
+	url DxDownloadURL) ([]byte, error) {
+	// The data has not been prefetched. Get the data from DNAx with an
+	// http request.
 	if pgs.debug {
-		log.Printf("prefetch: lowered older data to size=%d", TRAILING_IO_SIZE)
+		len := endByte - startByte + 1
+		log.Printf("prefetch: reading extent from DNAx  ofs=%d len=%d", startByte, len)
 	}
+
+	headers := make(map[string]string)
+
+	// Copy the immutable headers
+	for key, value := range url.Headers {
+		headers[key] = value
+	}
+	headers["Range"] = fmt.Sprintf("bytes=%d-%d", startByte, endByte)
+
+	recvLen, err := DxHttpRequestWithBufferAndClient(client, memChunk, "GET", url.URL, headers, []byte("{}"))
+	if pgs.debug {
+		if err == nil {
+			log.Printf("prefetch: IO returned correctly len=%d", recvLen)
+		} else {
+			log.Printf("prefetch: IO returned with error %s", err.Error())
+		}
+	}
+	return memChunk[0:recvLen], err
 }
 
+
 func (pgs *PrefetchGlobalState) prefetchIoWorker() {
+	client := newHttpClient()
+
 	for true {
 		pfm := <-pgs.ioQueue
 
-		pfm.mutex.Lock()
+		// grab a memory chunk
+		memChunk := <- pgs.memPool
+
+		pgs.mutex.Lock()
 		check(pfm.state == PFM_IO_IN_PROGRESS)
 
 		startByte := pfm.current.startByte
 		endByte := pfm.current.endByte
 		url := pfm.fh.url
 		pfm.numPrefetchIOs++
-		pfm.mutex.Unlock()
+		pgs.mutex.Unlock()
 
 		// perform the IO
-		data, err := pgs.readData(startByte, endByte, url)
+		data, err := pgs.readData(client, memChunk, startByte, endByte, url)
 
-		pfm.mutex.Lock()
+		pgs.mutex.Lock()
 		check(pfm.state == PFM_IO_IN_PROGRESS)
 
 		if err != nil {
@@ -165,6 +178,7 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 			// and add the data. The original should NEVER have
 			// a pointer to the data.
 			completedOp := pfm.current
+			completedOp.chunk = memChunk
 			completedOp.data = data
 
 			if pfm.cache == nil {
@@ -185,14 +199,10 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 					// we want to limit the amount of cached data.
 					// Chop off the beginning of the vector, and
 					// reduce memory consumption.
-					pfm.cache.iovecs[0].data = nil
+					//
+					// We know that there is no ongoing IO on the old chunk.
+					pgs.memPool <- pfm.cache.iovecs[0].chunk
 					pfm.cache.iovecs = pfm.cache.iovecs[1:]
-				}
-				check(len(pfm.cache.iovecs) == 1)
-				if pfm.cache.iovecs[0].ioSize > TRAILING_IO_SIZE {
-					// we don't want the older IO to be extermely large.
-					// It costs memory, but only its right edge is likely to be accessed.
-					pgs.leaveRightEdgeOnly(&pfm.cache.iovecs[0])
 				}
 				pfm.cache.iovecs = append(pfm.cache.iovecs, completedOp)
 			}
@@ -209,7 +219,7 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 
 		// release all the reads waiting for the prefetch IO to complete
 		pfm.cond.Broadcast()
-		pfm.mutex.Unlock()
+		pgs.mutex.Unlock()
 	}
 }
 
@@ -261,25 +271,23 @@ func (pgs *PrefetchGlobalState) tableCleanupWorker() {
 		var toRemove []string
 
 		// go over the table, and find all the files not worth tracking
-		pgs.tableMutex.Lock()
+		pgs.mutex.Lock()
 		for fileId, pfm := range pgs.files {
-			pfm.mutex.Lock()
 			if !pgs.isWorthIt(pfm) {
 				toRemove = append(toRemove, fileId)
 			}
-			pfm.mutex.Unlock()
 		}
 
 		for _, fileId := range toRemove {
 			delete(pgs.files, fileId)
 		}
-		pgs.tableMutex.Unlock()
+		pgs.mutex.Unlock()
 	}
 }
 
 func (pgs *PrefetchGlobalState) CreateFileEntry(fh *FileHandle) {
-	pgs.tableMutex.Lock()
-	defer pgs.tableMutex.Unlock()
+	pgs.mutex.Lock()
+	defer pgs.mutex.Unlock()
 
 	// if the table is at the size limit, do not create a new entry
 	if len(pgs.files) >= MAX_NUM_ENTRIES_IN_TABLE {
@@ -307,15 +315,15 @@ func (pgs *PrefetchGlobalState) CreateFileEntry(fh *FileHandle) {
 	entry.current.endByte = PREFETCH_MIN_IO_SIZE - 1
 	entry.current.touched = 0
 
-	entry.cond = sync.NewCond(&entry.mutex)
+	entry.cond = sync.NewCond(&pgs.mutex)
 	entry.state = PFM_DETECT_SEQ
 
 	pgs.files[fh.f.FileId] = &entry
 }
 
 func (pgs *PrefetchGlobalState) RemoveFileEntry(fh *FileHandle) {
-	pgs.tableMutex.Lock()
-	defer pgs.tableMutex.Unlock()
+	pgs.mutex.Lock()
+	defer pgs.mutex.Unlock()
 
 	fileId := fh.f.FileId
 	if _, ok := pgs.files[fileId]; ok {
@@ -324,34 +332,6 @@ func (pgs *PrefetchGlobalState) RemoveFileEntry(fh *FileHandle) {
 		}
 		delete(pgs.files, fileId)
 	}
-}
-
-
-func (pgs *PrefetchGlobalState) readData(startByte int64, endByte int64, url DxDownloadURL) ([]byte, error) {
-	// The data has not been prefetched. Get the data from DNAx with an
-	// http request.
-	if pgs.debug {
-		len := endByte - startByte + 1
-		log.Printf("prefetch: reading extent from DNAx  ofs=%d len=%d", startByte, len)
-	}
-
-	headers := make(map[string]string)
-
-	// Copy the immutable headers
-	for key, value := range url.Headers {
-		headers[key] = value
-	}
-	headers["Range"] = fmt.Sprintf("bytes=%d-%d", startByte, endByte)
-
-	data, err := DxHttpRequest("GET", url.URL, headers, []byte("{}"))
-	if pgs.debug {
-		if err == nil {
-			log.Printf("prefetch: IO returned correctly len=%d", len(data))
-		} else {
-			log.Printf("prefetch: IO returned with error %s", err.Error())
-		}
-	}
-	return data, err
 }
 
 
@@ -445,17 +425,13 @@ func (pgs *PrefetchGlobalState) getDataFromCache(
 // data. nil is returned for such cases.
 //
 func (pgs *PrefetchGlobalState) Check(fileId string, url DxDownloadURL, startOfs int64, endOfs int64) []byte  {
-	pgs.tableMutex.Lock()
+	pgs.mutex.Lock()
+	pgs.mutex.Unlock()
 	pfm, ok := pgs.files[fileId]
 	if !ok {
 		// file is not tracked, no prefetch data is available
-		pgs.tableMutex.Unlock()
 		return nil
 	}
-	// switch from the global lock to the entry lock
-	pfm.mutex.Lock()
-	pgs.tableMutex.Unlock()
-	defer pfm.mutex.Unlock()
 
 	pfm.numIOs++
 
