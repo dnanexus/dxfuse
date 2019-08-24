@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	// The dxda package has the get-environment code
@@ -43,6 +44,9 @@ func main() {
 
 	flag.Usage = usage
 	flag.Parse()
+
+	// Limit the number of spare OS threads
+	//runtime.GOMAXPROCS(64)
 
 	if flag.NArg() != 2 {
 		usage()
