@@ -94,6 +94,10 @@ func (pgs *PrefetchGlobalState) Init(debug bool) {
 	pgs.ioQueue = make(chan (*PrefetchFileMetadata))
 	pgs.memPool = make(chan ([]byte), NUM_MEM_CHUNKS)
 
+	for i := 0; i < NUM_MEM_CHUNKS; i++ {
+		pgs.memPool <- make([]byte, PREFETCH_MAX_IO_SIZE)
+	}
+
 	// limit the number of prefetch IOs
 	for i := 0; i < NUM_PREFETCH_THREADS; i++ {
 		go pgs.prefetchIoWorker()
