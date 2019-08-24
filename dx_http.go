@@ -207,7 +207,7 @@ func dxHttpRequestCoreWithClientAndData(
 	requestType string,
 	url string,
 	headers map[string]string,
-	data []byte) (len int, err error, status string) {
+	data []byte) (body []byte, err error, status string) {
 	// Safety procedure to force timeout to prevent hanging
 	ctx, cancel := context.WithCancel(context.TODO())
 	timer := time.AfterFunc(reqTimeout * time.Second, func() {
@@ -215,7 +215,7 @@ func dxHttpRequestCoreWithClientAndData(
 	})
 	req, err := retryablehttp.NewRequest(requestType, url, bytes.NewReader(data))
 	if err != nil {
-		return 0, err, ""
+		return nil, err, ""
 	}
 	req = req.WithContext(ctx)
 	for header, value := range headers {
@@ -224,19 +224,25 @@ func dxHttpRequestCoreWithClientAndData(
 	resp, err := client.Do(req)
 	timer.Stop()
 	if err != nil {
-		return 0, err, ""
+		return nil, err, ""
 	}
 	status = resp.Status
 
-	recvLen, _ := io.ReadFull(resp.Body, outputBuffer)
+	recvLen, err2 := io.ReadFull(resp.Body, outputBuffer)
+	//body, _ = ioutil.ReadAll(resp.Body)
 	resp.Body.Close()
 
-	// If the is not in the 200-299 range, an error occured.
+	if recvLen == 0 {
+		return nil, err2, ""
+	}
+	body = outputBuffer[0 : recvLen-1]
+
+	// If the status is not in the 200-299 range, an error occured.
 	if !(isGood(status)) {
-		return recvLen, nil, status
+		return body, nil, status
 	}
 
-	return recvLen, nil, status
+	return body, nil, status
 }
 
 func DxHttpRequestWithBufferAndClient(
@@ -245,10 +251,10 @@ func DxHttpRequestWithBufferAndClient(
 	requestType string,
 	url string,
 	headers map[string]string,
-	data []byte) (len int, err error) {
+	data []byte) (body []byte, err error) {
 	tCnt := 0
 	for tCnt < maxNumAttempts {
-		recvLen, err, status := dxHttpRequestCoreWithClientAndData(
+		body, err, status := dxHttpRequestCoreWithClientAndData(
 			client,
 			outputBuffer,
 			requestType,
@@ -256,10 +262,10 @@ func DxHttpRequestWithBufferAndClient(
 			headers,
 			data)
 		if err != nil {
-			return recvLen, err
+			return body, err
 		}
 		if isGood(status) {
-			return recvLen, nil
+			return body, nil
 		}
 		err = fmt.Errorf("%s request to '%s' failed with status %s",
 			requestType, url, status)
@@ -267,7 +273,7 @@ func DxHttpRequestWithBufferAndClient(
 
 		// check if this is a retryable error.
 		if !(isRetryable(status)) {
-			return recvLen, err
+			return body, err
 		}
 
 		// sleep before retrying
@@ -277,5 +283,5 @@ func DxHttpRequestWithBufferAndClient(
 
 	err = fmt.Errorf("%s request to '%s' failed after % attempts",
 		requestType, url, tCnt)
-	return 0, err
+	return nil, err
 }

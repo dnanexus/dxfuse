@@ -15,27 +15,29 @@ import (
 )
 
 const (
-	CACHE_MAX_SIZE = 1 * GiB               // overall limit on the amount of memory used for prefetch
+	CACHE_MAX_SIZE = 256 * MiB               // overall limit on the amount of memory used for prefetch
 
 	MAX_DELTA_TIME = 5 * 60 * time.Second
 	PREFETCH_EFFECT_THRESH = 0.75      // Prefetch effectiveness should be at least this
 	PREFETCH_EFFECT_MIN_NUM_IOS = 20   // Do not calculate effectiveness below this number of IOs
 
-	PREFETCH_FACTOR_MULTIPLIER = 4
+	PREFETCH_FACTOR_MULTIPLIER = 2
 	PREFETCH_MIN_IO_SIZE = (256 * KiB) // Minimal size of IO to prefetch
-	PREFETCH_MAX_IO_SIZE = (64 * MiB)  // Maximal size of IO to prefetch
+	PREFETCH_MAX_IO_SIZE = (4 * MiB)  // Maximal size of IO to prefetch
+	MAX_NUM_IOVECS_IN_CACHE = 2
 
 	// An active stream can use a significant amount of memory to store prefetched data.
 	// In the worst case, this is two maximal size IOs
-	MAX_NUM_ENTRIES_IN_TABLE = CACHE_MAX_SIZE / (2 * PREFETCH_MAX_IO_SIZE)
+	MAX_NUM_ENTRIES_IN_TABLE = CACHE_MAX_SIZE / (3 * PREFETCH_MAX_IO_SIZE)
 	NUM_MEM_CHUNKS = CACHE_MAX_SIZE / PREFETCH_MAX_IO_SIZE
 
 	NUM_PREFETCH_THREADS = 10
-	MIN_FILE_SIZE = 10 * MiB                  // do not track files smaller than this size
+	MIN_FILE_SIZE = 8 * MiB                  // do not track files smaller than this size
 
 	PFM_DETECT_SEQ = 1
 	PFM_IO_IN_PROGRESS = 2
 	PFM_IO_ERROR = 3
+	PFM_EOF = 4   // reached the end of the file
 )
 
 
@@ -45,7 +47,7 @@ type PrefetchOp struct {
 	endByte    int64
 	touched    uint64  // mark the areas that have been accessed by the user
 	chunk      []byte  // the backing store for the data
-	data       []byte
+	data       []byte  // a range inside the chunk, could be all of it, could be only part
 }
 
 type PrefetchCachedData struct {
@@ -94,6 +96,8 @@ func (pgs *PrefetchGlobalState) Init(debug bool) {
 	pgs.ioQueue = make(chan (*PrefetchFileMetadata))
 	pgs.memPool = make(chan ([]byte), NUM_MEM_CHUNKS)
 
+	log.Printf("numMemChunks = %d,  size(memChunk) = %d",
+		NUM_MEM_CHUNKS, PREFETCH_MAX_IO_SIZE)
 	for i := 0; i < NUM_MEM_CHUNKS; i++ {
 		pgs.memPool <- make([]byte, PREFETCH_MAX_IO_SIZE)
 	}
@@ -134,15 +138,15 @@ func (pgs *PrefetchGlobalState) readData(
 	}
 	headers["Range"] = fmt.Sprintf("bytes=%d-%d", startByte, endByte)
 
-	recvLen, err := DxHttpRequestWithBufferAndClient(client, memChunk, "GET", url.URL, headers, []byte("{}"))
+	data, err := DxHttpRequestWithBufferAndClient(client, memChunk, "GET", url.URL, headers, []byte("{}"))
 	if pgs.debug {
 		if err == nil {
-			log.Printf("prefetch: IO returned correctly len=%d", recvLen)
+			log.Printf("prefetch: IO returned correctly len=%d", len(data))
 		} else {
 			log.Printf("prefetch: IO returned with error %s", err.Error())
 		}
 	}
-	return memChunk[0:recvLen], err
+	return data, err
 }
 
 
@@ -176,7 +180,13 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 			pfm.state = PFM_IO_ERROR
 		} else {
 			// good case, we have the data
-			pfm.state = PFM_DETECT_SEQ
+			if pfm.current.endByte >= pfm.fh.f.Size - 1 {
+				// reached the end of the file, stop prefetching
+				pfm.state = PFM_EOF
+			} else {
+				// there is more data, go back to detecting sequential access
+				pfm.state = PFM_DETECT_SEQ
+			}
 
 			// make a separate copy of the prefetch IO description,
 			// and add the data. The original should NEVER have
@@ -197,16 +207,17 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 			} else {
 				// append to the cache
 				check(pfm.cache.endByte + 1 == completedOp.startByte)
-				check(len(pfm.cache.iovecs) <= 2)
 
-				if len(pfm.cache.iovecs) == 2 {
+				if len(pfm.cache.iovecs) >= MAX_NUM_IOVECS_IN_CACHE {
 					// we want to limit the amount of cached data.
-					// Chop off the beginning of the vector, and
+					// we chop off the beginning of the vector, and
 					// reduce memory consumption.
-					//
-					// We know that there is no ongoing IO on the old chunk.
-					pgs.memPool <- pfm.cache.iovecs[0].chunk
-					pfm.cache.iovecs = pfm.cache.iovecs[1:]
+					start := len(pfm.cache.iovecs) - MAX_NUM_IOVECS_IN_CACHE
+					for i := 0; i < start; i++ {
+						pfm.cache.iovecs[i].data = nil
+						pgs.memPool <- pfm.cache.iovecs[i].chunk
+					}
+					pfm.cache.iovecs = pfm.cache.iovecs[start:]
 				}
 				pfm.cache.iovecs = append(pfm.cache.iovecs, completedOp)
 			}
@@ -348,6 +359,12 @@ func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 		// IO is out of range
 		return
 	}
+	if pfm.state == PFM_EOF {
+		// we are already at the end of the file, no more
+		// prefetch is necessary. When the user closes the file,
+		// the state will be removed.
+		return
+	}
 
 	// we have 64 bits, split the space evenly between them
 	slotSize := pfm.current.ioSize / 64
@@ -358,36 +375,53 @@ func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 		pfm.current.touched |= (1 << uint(slot))
 	}
 
+	if pfm.state != PFM_DETECT_SEQ {
+		return
+	}
+
+	numSlotsThresh := 64
+	if pfm.current.ioSize == PREFETCH_MAX_IO_SIZE {
+		numSlotsThresh = 16
+	}
+
 	// should we start prefetching?
 	numAccessed := bits.OnesCount64(pfm.current.touched)
-	if pgs.debug {
+/*	if pgs.debug {
 		log.Printf("prefetch touch: %d -- %d, numAccessed=%d",
 			startSlot, endSlot, numAccessed)
+	}*/
+	if numAccessed < numSlotsThresh {
+		return
 	}
 
-	if (numAccessed == 64 &&
-		pfm.state != PFM_IO_IN_PROGRESS) {
-		// All the slots were accessed, start a prefetch for the
-		// the next chunk
-		pfm.state = PFM_IO_IN_PROGRESS
+	// A sufficient number of the slots were accessed. Start a prefetch for the
+	// the next chunk
+	pfm.state = PFM_IO_IN_PROGRESS
 
-		// Setup state for the next prefetch.
-		// Exponentially increase the prefetch size, assuming it is successful,
-		// until the maximal size.
-		ioSize := pfm.current.ioSize * PREFETCH_FACTOR_MULTIPLIER
-		if ioSize > PREFETCH_MAX_IO_SIZE {
-			ioSize = PREFETCH_MAX_IO_SIZE
-		}
-		startByte := pfm.current.startByte + pfm.current.ioSize
-
-		pfm.current.ioSize = ioSize
-		pfm.current.startByte = startByte
-		pfm.current.endByte = pfm.current.startByte + pfm.current.ioSize - 1
-		pfm.current.touched = 0
-
-		// enqueue on the work queue
-		pgs.ioQueue <- pfm
+	// Setup state for the next prefetch.
+	// Exponentially increase the prefetch size, assuming it is successful,
+	// until the maximal size.
+	ioSize := pfm.current.ioSize * PREFETCH_FACTOR_MULTIPLIER
+	if ioSize > PREFETCH_MAX_IO_SIZE {
+		ioSize = PREFETCH_MAX_IO_SIZE
 	}
+	startByte := pfm.current.startByte + pfm.current.ioSize
+
+	pfm.current.ioSize = ioSize
+	pfm.current.startByte = startByte
+	pfm.current.endByte = pfm.current.startByte + pfm.current.ioSize - 1
+	if pfm.current.endByte >= pfm.fh.f.Size {
+		// don't go over the file size
+		pfm.current.endByte = pfm.fh.f.Size - 1
+	}
+	pfm.current.touched = 0
+
+	// sanity check, don't go beyond the file size
+	if pfm.current.startByte >= pfm.fh.f.Size - 1 {
+		return
+	}
+	// enqueue on the work queue
+	pgs.ioQueue <- pfm
 }
 
 func (pgs *PrefetchGlobalState) getDataFromCache(
@@ -480,6 +514,9 @@ func (pgs *PrefetchGlobalState) Check(fileId string, url DxDownloadURL, startOfs
 	case PFM_IO_ERROR:
 		// The prefetch IO incurred an error.
 		return nil
+
+	case PFM_EOF:
+		// do nothing
 
 	default:
 		panic(fmt.Sprintf("bad state %d for fileId=%s", pfm.state, pfm.fh.f.FileId))
