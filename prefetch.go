@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	CACHE_MAX_SIZE = 256 * MiB               // overall limit on the amount of memory used for prefetch
+	CACHE_MAX_SIZE = 512 * MiB               // overall limit on the amount of memory used for prefetch
 
 	MAX_DELTA_TIME = 5 * 60 * time.Second
 	PREFETCH_EFFECT_THRESH = 0.75      // Prefetch effectiveness should be at least this
@@ -24,15 +24,15 @@ const (
 	PREFETCH_FACTOR_MULTIPLIER = 2
 	PREFETCH_MIN_IO_SIZE = (256 * KiB) // Minimal size of IO to prefetch
 	PREFETCH_MAX_IO_SIZE = (4 * MiB)  // Maximal size of IO to prefetch
-	MAX_NUM_IOVECS_IN_CACHE = 2
+	MAX_NUM_IOVECS_IN_CACHE = 9
 
 	// An active stream can use a significant amount of memory to store prefetched data.
-	// In the worst case, this is two maximal size IOs
-	MAX_NUM_ENTRIES_IN_TABLE = CACHE_MAX_SIZE / (3 * PREFETCH_MAX_IO_SIZE)
+	// Limit the total number of streams we are tracking and prefetching.
+	MAX_NUM_ENTRIES_IN_TABLE = 8
 	NUM_MEM_CHUNKS = CACHE_MAX_SIZE / PREFETCH_MAX_IO_SIZE
 
-	NUM_PREFETCH_THREADS = 10
-	MIN_FILE_SIZE = 8 * MiB                  // do not track files smaller than this size
+	NUM_PREFETCH_THREADS = 16
+	MIN_FILE_SIZE = 4 * MiB                  // do not track files smaller than this size
 
 	PFM_DETECT_SEQ = 1
 	PFM_IO_IN_PROGRESS = 2
@@ -41,21 +41,16 @@ const (
 )
 
 
-type PrefetchOp struct {
-	ioSize     int64   // The prefetch io size
+type Iovec struct {
+	ioSize     int64   // The io size
 	startByte  int64
 	endByte    int64
 	touched    uint64  // mark the areas that have been accessed by the user
-	chunk      []byte  // the backing store for the data
-	data       []byte  // a range inside the chunk, could be all of it, could be only part
-}
+	data       []byte
 
-type PrefetchCachedData struct {
-	startByte  int64
-	endByte    int64
-	iovecs     []PrefetchOp
+	// Allow user reads to wait until the IO completes
+	cond      *sync.Cond
 }
-
 
 type PrefetchFileMetadata struct {
 	// the file being tracked
@@ -67,17 +62,19 @@ type PrefetchFileMetadata struct {
 	numHits    int   // count how many IOs were hits
 	numPrefetchIOs int
 
-	// cached data
-	cache     *PrefetchCachedData
-
-	// prefetch IO that may be ongoing. Also used to detect
-	// sequential access to the file.
-	current    PrefetchOp
-
-	// Allow user reads to wait until the prefetch IO completes
-	cond      *sync.Cond
+	// cached io vectors.
+	// The assumption is that the user is accessing the last io-vector.
+	// If this assumption isn't true, prefetch is ineffective. The algorithm
+	// should detect and stop it.
+	startByte   int64
+	endByte     int64
+	cache       [](*Iovec)
 
 	state      int
+}
+
+type MemToken struct {
+	id    int
 }
 
 // global limits
@@ -86,7 +83,7 @@ type PrefetchGlobalState struct {
 	mutex        sync.Mutex  // Lock used to control the files table
 	files        map[string](*PrefetchFileMetadata) // tracking state per file-id
 	ioQueue      chan (*PrefetchFileMetadata)   // queue of IOs to prefetch
-	memPool      chan([]byte)  // a memory pool of large memory chunks
+	memPool      chan([]MemToken)  // a memory pool for limiting the total number of memory chunks
 }
 
 func (pgs *PrefetchGlobalState) Init(debug bool) {
@@ -94,12 +91,10 @@ func (pgs *PrefetchGlobalState) Init(debug bool) {
 
 	pgs.files = make(map[string](*PrefetchFileMetadata))
 	pgs.ioQueue = make(chan (*PrefetchFileMetadata))
-	pgs.memPool = make(chan ([]byte), NUM_MEM_CHUNKS)
+	pgs.memPool = make(chan MemToken, NUM_MEM_CHUNKS)
 
-	log.Printf("numMemChunks = %d,  size(memChunk) = %d",
-		NUM_MEM_CHUNKS, PREFETCH_MAX_IO_SIZE)
 	for i := 0; i < NUM_MEM_CHUNKS; i++ {
-		pgs.memPool <- make([]byte, PREFETCH_MAX_IO_SIZE)
+		pgs.memPool <- MemToken{ id : i}
 	}
 
 	// limit the number of prefetch IOs
@@ -119,7 +114,6 @@ func check(value bool) {
 
 func (pgs *PrefetchGlobalState) readData(
 	client *retryablehttp.Client,
-	memChunk []byte,
 	startByte int64,
 	endByte int64,
 	url DxDownloadURL) ([]byte, error) {
@@ -138,7 +132,7 @@ func (pgs *PrefetchGlobalState) readData(
 	}
 	headers["Range"] = fmt.Sprintf("bytes=%d-%d", startByte, endByte)
 
-	data, err := DxHttpRequestWithBufferAndClient(client, memChunk, "GET", url.URL, headers, []byte("{}"))
+	data, err := DxHttpRequest(client, "GET", url.URL, headers, []byte("{}"))
 	if pgs.debug {
 		if err == nil {
 			log.Printf("prefetch: IO returned correctly len=%d", len(data))
@@ -156,8 +150,8 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 	for true {
 		pfm := <-pgs.ioQueue
 
-		// grab a memory chunk
-		memChunk := <- pgs.memPool
+		// grab a memory token
+		memToken := <- pgs.memPool
 
 		pgs.mutex.Lock()
 		check(pfm.state == PFM_IO_IN_PROGRESS)
@@ -169,7 +163,7 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 		pgs.mutex.Unlock()
 
 		// perform the IO
-		data, err := pgs.readData(client, memChunk, startByte, endByte, url)
+		data, err := pgs.readData(client, startByte, endByte, url)
 
 		pgs.mutex.Lock()
 		check(pfm.state == PFM_IO_IN_PROGRESS)
@@ -215,7 +209,7 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 					start := len(pfm.cache.iovecs) - MAX_NUM_IOVECS_IN_CACHE
 					for i := 0; i < start; i++ {
 						pfm.cache.iovecs[i].data = nil
-						pgs.memPool <- pfm.cache.iovecs[i].chunk
+						pgs.memPool <- pfm.cache.iovecs[i].token
 					}
 					pfm.cache.iovecs = pfm.cache.iovecs[start:]
 				}

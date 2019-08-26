@@ -96,20 +96,15 @@ func newHttpClient() *retryablehttp.Client {
 }
 
 func dxHttpRequestCore(
+	client *retryablehttp.Client,
 	requestType string,
 	url string,
 	headers map[string]string,
 	data []byte) (body []byte, err error, status string) {
 
-	var client *retryablehttp.Client
-	client = &retryablehttp.Client{
-		HTTPClient:   cleanhttp.DefaultClient(),
-		Logger:       log.New(ioutil.Discard, "", 0), // Throw away retryablehttp internal logging
-		RetryWaitMin: minRetryTime * time.Second,
-		RetryWaitMax: maxRetryTime * time.Second,
-		RetryMax:     maxRetryCount,
-		CheckRetry:   retryablehttp.DefaultRetryPolicy,
-		Backoff:      retryablehttp.DefaultBackoff,
+	if client == nil {
+		// if the client is not provided, create a fresh one
+		client = newHttpClient()
 	}
 
 	// Safety procedure to force timeout to prevent hanging
@@ -147,13 +142,14 @@ func dxHttpRequestCore(
 // Add retries around the core http-request method
 //
 func DxHttpRequest(
+	client *retryablehttp.Client,
 	requestType string,
 	url string,
 	headers map[string]string,
 	data []byte) (body []byte, err error) {
 	tCnt := 0
 	for tCnt < maxNumAttempts {
-		body, err, status := dxHttpRequestCore(requestType, url, headers, data)
+		body, err, status := dxHttpRequestCore(client, requestType, url, headers, data)
 		if err != nil {
 			return nil, err
 		}
@@ -196,92 +192,5 @@ func DxAPI(dxEnv *dxda.DXEnvironment, api string, payload string) (body []byte, 
 		dxEnv.ApiServerHost,
 		dxEnv.ApiServerPort,
 		api)
-	return DxHttpRequest("POST", url, headers, []byte(payload))
-}
-
-
-
-func dxHttpRequestCoreWithClientAndData(
-	client *retryablehttp.Client,
-	outputBuffer []byte,
-	requestType string,
-	url string,
-	headers map[string]string,
-	data []byte) (body []byte, err error, status string) {
-	// Safety procedure to force timeout to prevent hanging
-	ctx, cancel := context.WithCancel(context.TODO())
-	timer := time.AfterFunc(reqTimeout * time.Second, func() {
-		cancel()
-	})
-	req, err := retryablehttp.NewRequest(requestType, url, bytes.NewReader(data))
-	if err != nil {
-		return nil, err, ""
-	}
-	req = req.WithContext(ctx)
-	for header, value := range headers {
-		req.Header.Set(header, value)
-	}
-	resp, err := client.Do(req)
-	timer.Stop()
-	if err != nil {
-		return nil, err, ""
-	}
-	status = resp.Status
-
-	recvLen, err2 := io.ReadFull(resp.Body, outputBuffer)
-	//body, _ = ioutil.ReadAll(resp.Body)
-	resp.Body.Close()
-
-	if recvLen == 0 {
-		return nil, err2, ""
-	}
-	body = outputBuffer[0 : recvLen-1]
-
-	// If the status is not in the 200-299 range, an error occured.
-	if !(isGood(status)) {
-		return body, nil, status
-	}
-
-	return body, nil, status
-}
-
-func DxHttpRequestWithBufferAndClient(
-	client *retryablehttp.Client,
-	outputBuffer []byte,
-	requestType string,
-	url string,
-	headers map[string]string,
-	data []byte) (body []byte, err error) {
-	tCnt := 0
-	for tCnt < maxNumAttempts {
-		body, err, status := dxHttpRequestCoreWithClientAndData(
-			client,
-			outputBuffer,
-			requestType,
-			url,
-			headers,
-			data)
-		if err != nil {
-			return body, err
-		}
-		if isGood(status) {
-			return body, nil
-		}
-		err = fmt.Errorf("%s request to '%s' failed with status %s",
-			requestType, url, status)
-		log.Printf(err.Error() + "\n")
-
-		// check if this is a retryable error.
-		if !(isRetryable(status)) {
-			return body, err
-		}
-
-		// sleep before retrying
-		time.Sleep(attemptTimeout * time.Second)
-		tCnt++
-	}
-
-	err = fmt.Errorf("%s request to '%s' failed after % attempts",
-		requestType, url, tCnt)
-	return nil, err
+	return DxHttpRequest(nil, "POST", url, headers, []byte(payload))
 }

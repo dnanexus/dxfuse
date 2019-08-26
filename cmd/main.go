@@ -6,7 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"runtime"
+	//"runtime"
 	"strings"
 
 	// The dxda package has the get-environment code
