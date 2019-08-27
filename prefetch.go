@@ -23,6 +23,9 @@ const (
 	NUM_CHUNKS_READ_AHEAD = 8
 	MAX_NUM_IOVECS_IN_FILE_CACHE = NUM_CHUNKS_READ_AHEAD + 2
 
+	NUM_SLOTS = 64
+	SLOT_SIZE = PREFETCH_IO_SIZE / NUM_SLOTS
+
 	// An active stream can use a significant amount of memory to store prefetched data.
 	// Limit the total number of streams we are tracking and prefetching.
 	MAX_NUM_ENTRIES_IN_TABLE = 8
@@ -156,9 +159,27 @@ func (pgs *PrefetchGlobalState) readData(
 }
 
 
+// figure out how many contiguous chunks of data we have in the cache.
+func numContiguousChunks(pfm *PrefetchFileMetadata) int {
+	contigLen := 0
+	for k := 0; k < len(pfm.cache.iovecs) ; k++ {
+		if pfm.cache.iovecs[k].data == nil {
+			break
+		}
+		contigLen++
+	}
+	return contigLen
+}
+
 // We are holding the global code at this point.
 // Wake up waiting IOs, if any.
 func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq IoReq) {
+	if pfm.state == PFM_IO_ERROR {
+		log.Printf("Dropping prefetch IO, file has encountered an error (%s)",
+			ioReq.fileId)
+		return
+	}
+
 	// Count in chunks from the beginning of the file. Find the index
 	// of this iovec according to this account.
 	n := ioReq.startByte / PREFETCH_IO_SIZE
@@ -166,8 +187,9 @@ func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq
 
 	iovIdx := int(n - bgnN)
 	check(pfm.cache.iovecs[iovIdx].data == nil)
-	if iovIdx > len(pfm.cache.iovecs) + 1 {
-		log.Printf("Dropping prefetch IO, case III")
+	if iovIdx > len(pfm.cache.iovecs)  {
+		log.Printf("Dropping prefetch IO, iovec cache not large enough")
+		log.Printf("iovIdx=%d len(cache.iovecs)=%d", iovIdx, len(pfm.cache.iovecs))
 		return
 	}
 	pfm.cache.iovecs[iovIdx].data = ioReq.data
@@ -179,14 +201,11 @@ func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq
 	pfm.numPrefetchIOs++
 
 	// if we are extending the contiguous filled chunks, then signal
-	all := true
-	for k := 0; k < iovIdx ; k++ {
-		if pfm.cache.iovecs[k].data == nil {
-			all = false
-			break
-		}
+	contigLen := numContiguousChunks(pfm)
+	if pgs.debug {
+		log.Printf("contiguity of cache chunks: %d  iovIdx=%d", contigLen, iovIdx)
 	}
-	if all {
+	if contigLen == iovIdx + 1 {
 		pfm.cond.Broadcast()
 	}
 }
@@ -216,13 +235,9 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 				log.Printf("Prefetch error ofs=%d len=%d error=%s",
 					ioReq.startByte, ioReq.endByte, err.Error())
 				pfm.state = PFM_IO_ERROR
+				pfm.cond.Broadcast()
 			} else {
-				if pfm.state != PFM_IO_ERROR {
-					pgs.addIoReqToCache(pfm, ioReq)
-				} else {
-					log.Printf("Dropping prefetch IO, file has encountered an error (%s)",
-						ioReq.fileId)
-				}
+				pgs.addIoReqToCache(pfm, ioReq)
 			}
 		}
 		pgs.mutex.Unlock()
@@ -318,11 +333,11 @@ func (pgs *PrefetchGlobalState) CreateFileEntry(fh *FileHandle) {
 	entry.cache.iovecs[0] = &Iovec{
 		ioSize : PREFETCH_IO_SIZE,
 		startByte : 0,
-		endByte : PREFETCH_IO_SIZE,
+		endByte : PREFETCH_IO_SIZE - 1,
 		touched : 0,
 		data : nil,
 	}
-
+	entry.cond = sync.NewCond(&pgs.mutex)
 	pgs.files[fh.f.FileId] = &entry
 }
 
@@ -354,10 +369,15 @@ func markRangeInIovec(iovec *Iovec, startOfs int64, endOfs int64) {
 	endOfsBoth := MinInt64(iovec.endByte, endOfs)
 
 	// now we know that there is some intersection
-	slotSize := int64(PREFETCH_IO_SIZE / 64)
-	startSlot := (startOfsBoth - iovec.startByte) / slotSize
-	endSlot := (endOfsBoth - iovec.startByte) / slotSize
+	startSlot := (startOfsBoth - iovec.startByte) / SLOT_SIZE
+	endSlot := (endOfsBoth - iovec.startByte) / SLOT_SIZE
 	check(startSlot >= 0)
+	if !(endSlot >= 0 && endSlot <= 63) {
+		log.Printf("offset(%d -- %d),  slots=(%d -- %d), iovec=(%d -- %d)",
+			startOfs, endOfs,
+			startSlot, endSlot,
+			iovec.startByte, iovec.endByte)
+	}
 	check(endSlot >= 0 && endSlot <= 63)
 
 	for slot := startSlot; slot <= endSlot ; slot++ {
@@ -462,11 +482,9 @@ func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 	pfm *PrefetchFileMetadata,
 	startOfs int64,
 	endOfs int64) {
-
+	// Mark the areas in cache that this IO accessed
 	first, last := findCoveringRange(pfm, startOfs, endOfs)
-
-	// Mark the areas in cache that are accessed
-	for i := first; i < last; i++ {
+	for i := first; i <= last; i++ {
 		markRangeInIovec(pfm.cache.iovecs[i], startOfs, endOfs)
 	}
 
@@ -500,13 +518,16 @@ func (pgs *PrefetchGlobalState) getDataFromCache(
 	}
 
 	// go through the io-vectors, and check if they contain the range
-	for _, op := range pfm.cache.iovecs {
-		if op.startByte <= startOfs &&
-			op.endByte >= endOfs {
+	for _, iov := range pfm.cache.iovecs {
+		if iov.startByte <= startOfs &&
+			iov.endByte >= endOfs {
 			// its inside this iovec
-			bgnByte := startOfs - op.startByte
-			endByte := endOfs - op.startByte
-			return op.data[bgnByte : endByte+1]
+			bgnByte := startOfs - iov.startByte
+			endByte := endOfs - iov.startByte
+			if iov.data == nil {
+				return nil
+			}
+			return iov.data[bgnByte : endByte+1]
 		}
 	}
 
