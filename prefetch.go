@@ -15,16 +15,13 @@ import (
 )
 
 const (
-	CACHE_MAX_SIZE = 512 * MiB               // overall limit on the amount of memory used for prefetch
+	CACHE_MAX_SIZE = 512 * MiB           // overall limit on the amount of memory used for prefetch
 
 	MAX_DELTA_TIME = 5 * 60 * time.Second
-	PREFETCH_EFFECT_THRESH = 0.75      // Prefetch effectiveness should be at least this
-	PREFETCH_EFFECT_MIN_NUM_IOS = 20   // Do not calculate effectiveness below this number of IOs
+	PREFETCH_EFFECT_THRESH = 0.8         // Prefetch effectiveness should be at least this
 
-	PREFETCH_FACTOR_MULTIPLIER = 2
-	PREFETCH_MIN_IO_SIZE = (256 * KiB) // Minimal size of IO to prefetch
-	PREFETCH_MAX_IO_SIZE = (4 * MiB)  // Maximal size of IO to prefetch
-	MAX_NUM_IOVECS_IN_CACHE = 9
+	PREFETCH_IO_SIZE = (1 * MiB)         // size of prefetch IO
+	MAX_NUM_IOVECS_IN_FILE_CACHE = 9
 
 	// An active stream can use a significant amount of memory to store prefetched data.
 	// Limit the total number of streams we are tracking and prefetching.
@@ -32,18 +29,21 @@ const (
 	NUM_MEM_CHUNKS = CACHE_MAX_SIZE / PREFETCH_MAX_IO_SIZE
 
 	NUM_PREFETCH_THREADS = 16
-	MIN_FILE_SIZE = 4 * MiB                  // do not track files smaller than this size
+	MIN_FILE_SIZE = 8 * MiB     // do not track files smaller than this size
 
-	PFM_DETECT_SEQ = 1
-	PFM_IO_IN_PROGRESS = 2
+	PFM_DETECT_SEQ = 1      // Beginning of the file, detecting if access is sequential
+	PFM_PREFETCH_IN_PROGRESS = 2  // normal case --- prefetch is ongoing
 	PFM_IO_ERROR = 3
 	PFM_EOF = 4   // reached the end of the file
 )
 
 
 type Iovec struct {
+	// The page this chunk belongs to
+	pfm       *PrefetchFileMetadata
+
 	ioSize     int64   // The io size
-	startByte  int64
+	startByte  int64   // start byte, counting from the beginning of the file.
 	endByte    int64
 	touched    uint64  // mark the areas that have been accessed by the user
 	data       []byte
@@ -52,29 +52,30 @@ type Iovec struct {
 	cond      *sync.Cond
 }
 
+// A cache of all the data retrieved from the platform, for one file.
+// It is a contiguous range of chunks. All IOs are the same size.
+type PrefetchCache struct {
+	startByte   int64
+	endByte     int64
+	iovecs      [](*Iovec)
+}
+
 type PrefetchFileMetadata struct {
 	// the file being tracked
 	fh        *FileHandle
 
 	// Last time an IO hit this file
 	lastIo     time.Time
-	numIOs     int   // count how many IOs this files received
-	numHits    int   // count how many IOs were hits
+	sequentiallyAccessed bool  // estimate if this file is sequentially accessed
 	numPrefetchIOs int
 
 	// cached io vectors.
 	// The assumption is that the user is accessing the last io-vector.
 	// If this assumption isn't true, prefetch is ineffective. The algorithm
 	// should detect and stop it.
-	startByte   int64
-	endByte     int64
-	cache       [](*Iovec)
+	cache      PrefetchCache
 
 	state      int
-}
-
-type MemToken struct {
-	id    int
 }
 
 // global limits
@@ -82,20 +83,14 @@ type PrefetchGlobalState struct {
 	debug        bool
 	mutex        sync.Mutex  // Lock used to control the files table
 	files        map[string](*PrefetchFileMetadata) // tracking state per file-id
-	ioQueue      chan (*PrefetchFileMetadata)   // queue of IOs to prefetch
-	memPool      chan([]MemToken)  // a memory pool for limiting the total number of memory chunks
+	ioQueue      chan (*Iovec)    // queue of IOs to prefetch
 }
 
 func (pgs *PrefetchGlobalState) Init(debug bool) {
 	pgs.debug = debug
 
 	pgs.files = make(map[string](*PrefetchFileMetadata))
-	pgs.ioQueue = make(chan (*PrefetchFileMetadata))
-	pgs.memPool = make(chan MemToken, NUM_MEM_CHUNKS)
-
-	for i := 0; i < NUM_MEM_CHUNKS; i++ {
-		pgs.memPool <- MemToken{ id : i}
-	}
+	pgs.ioQueue = make(chan (*Iovec))
 
 	// limit the number of prefetch IOs
 	for i := 0; i < NUM_PREFETCH_THREADS; i++ {
@@ -144,103 +139,89 @@ func (pgs *PrefetchGlobalState) readData(
 }
 
 
+func (pfm *PrefetchFileMetadata) addIovecToCache(iovec *Iovec) {
+	// Count in chunks from the beginning of the file. Find the index
+	// of this iovec according to this account.
+	n := iovec.startByte / PREFETCH_IO_SIZE
+	bgnN := pfm.cache.startByte / PREFETCH_IO_SIZE
+	requiredNumChunks := n - bgnN
+
+	// increase the size of the vector, so we can place the new chunk in
+	// the correct place
+	for len(pfm.cache.iovecs) < requiredNumChunks {
+		pfm.cache.iovecs = append(pfm.cache.iovecs, nil)
+	}
+	pfm.cache.iovecs[requiredNumChunks - 1] = iovec
+
+	if len(pfm.cache.iovecs) >= MAX_NUM_IOVECS_IN_FILE_CACHE {
+		// we want to limit the amount of cached data.
+		// we chop off the beginning of the vector, and
+		// reduce memory consumption.
+		start := len(pfm.cache.iovecs) - MAX_NUM_IOVECS_IN_FILE_CACHE
+		for i := 0; i < start; i++ {
+			pfm.cache.iovecs[i].data = nil
+			if pfm.sequentiallyAccessed {
+				// Estimate if the file is sequentially accessed.
+				// Check if the last chunk has been fully accessed
+				numAccessed := bits.OnesCount64(pfm.cache.iovecs[i])
+				pfm.sequentiallyAccessed = (numAccessed == 64)
+			}
+		}
+		pfm.cache.iovecs = pfm.cache.iovecs[start:]
+	}
+
+	// recalculate the range covered by the cache
+	nIovecs := len(pfm.cache.iovecs)
+	if nIovecs == 0 {
+		pfm.startByte = 0
+		pfm.endByte = 0
+	} else {
+		pfm.cache.startByte = pfm.cache.iovecs[0].startByte
+		pfm.cache.endByte = pfm.cache.iovecs[nIovecs-1].endByte
+	}
+}
+
 func (pgs *PrefetchGlobalState) prefetchIoWorker() {
+	// reuse this http client. The idea is to be able to reuse http connections.
+	// I don't know if this actually happens.
 	client := newHttpClient()
 
 	for true {
-		pfm := <-pgs.ioQueue
+		ioReq := <-pgs.ioQueue
 
-		// grab a memory token
-		memToken := <- pgs.memPool
-
-		pgs.mutex.Lock()
-		check(pfm.state == PFM_IO_IN_PROGRESS)
-
-		startByte := pfm.current.startByte
-		endByte := pfm.current.endByte
-		url := pfm.fh.url
-		pfm.numPrefetchIOs++
-		pgs.mutex.Unlock()
-
-		// perform the IO
+		// perform the IO. We don't want to hold any locks while we
+		// are doing this, because this request could take a long time.
 		data, err := pgs.readData(client, startByte, endByte, url)
+		ioReq.data = data
 
 		pgs.mutex.Lock()
-		check(pfm.state == PFM_IO_IN_PROGRESS)
+		pfm := ioReq.pfm
 
 		if err != nil {
 			log.Printf("Prefetch error ofs=%d len=%d error=%s",
 				pfm.current.startByte, pfm.current.ioSize, err.Error())
 			pfm.state = PFM_IO_ERROR
 		} else {
-			// good case, we have the data
-			if pfm.current.endByte >= pfm.fh.f.Size - 1 {
-				// reached the end of the file, stop prefetching
-				pfm.state = PFM_EOF
-			} else {
-				// there is more data, go back to detecting sequential access
-				pfm.state = PFM_DETECT_SEQ
-			}
-
-			// make a separate copy of the prefetch IO description,
-			// and add the data. The original should NEVER have
-			// a pointer to the data.
-			completedOp := pfm.current
-			completedOp.chunk = memChunk
-			completedOp.data = data
-
-			if pfm.cache == nil {
-				// initialize the cache
-				iovecs := make([]PrefetchOp, 1)
-				iovecs[0] = completedOp
-				pfm.cache = &PrefetchCachedData{
-					startByte : completedOp.startByte,
-					endByte :   completedOp.endByte,
-					iovecs :    iovecs,
-				}
-			} else {
-				// append to the cache
-				check(pfm.cache.endByte + 1 == completedOp.startByte)
-
-				if len(pfm.cache.iovecs) >= MAX_NUM_IOVECS_IN_CACHE {
-					// we want to limit the amount of cached data.
-					// we chop off the beginning of the vector, and
-					// reduce memory consumption.
-					start := len(pfm.cache.iovecs) - MAX_NUM_IOVECS_IN_CACHE
-					for i := 0; i < start; i++ {
-						pfm.cache.iovecs[i].data = nil
-						pgs.memPool <- pfm.cache.iovecs[i].token
-					}
-					pfm.cache.iovecs = pfm.cache.iovecs[start:]
-				}
-				pfm.cache.iovecs = append(pfm.cache.iovecs, completedOp)
-			}
-
-			// recalculate the range covered by the cache
-			nIovecs := len(pfm.cache.iovecs)
-			check(nIovecs >= 1)
-			pfm.cache.startByte = pfm.cache.iovecs[0].startByte
-			pfm.cache.endByte = pfm.cache.iovecs[nIovecs-1].endByte
+			pfm.addIovecToCache(ioReq)
 		}
-
-		log.Printf("Prefetch #hits=%d #IOs=%d #prefetchIOs=%d ioSize=%d",
-			pfm.numHits, pfm.numIOs, pfm.numPrefetchIOs, pfm.current.ioSize)
+		pgs.mutex.Unlock()
 
 		// release all the reads waiting for the prefetch IO to complete
-		pfm.cond.Broadcast()
-		pgs.mutex.Unlock()
+		ioReq.cond.Broadcast()
 	}
 }
 
 
 // Check if a file is worth tracking.
 func (pgs *PrefetchGlobalState) isWorthIt(pfm *PrefetchFileMetadata) bool {
-	if pfm.state == PFM_IO_IN_PROGRESS {
-		// file has ongoing IO
-		return true
-	}
 	if pfm.state == PFM_IO_ERROR {
 		// we had an IO error, get rid of this file
+		return false
+	}
+	if (pfm.state == PFM_PREFETCH_IN_PROGRESS &&
+		!pfm.sequentiallyAccessed) {
+		// The file is not sequentially accessed, but we
+		// doing prefetch on it.
 		return false
 	}
 
@@ -250,18 +231,6 @@ func (pgs *PrefetchGlobalState) isWorthIt(pfm *PrefetchFileMetadata) bool {
 		return false
 	}
 	pfm.lastIo = now
-
-	// is prefetch effective?
-	if pfm.numIOs > PREFETCH_EFFECT_MIN_NUM_IOS {
-		effectivness := float64(pfm.numHits) / float64(pfm.numIOs)
-		if effectivness < PREFETCH_EFFECT_THRESH {
-			// prefetch is not effective
-			// reset the counters
-			pfm.numIOs = 0
-			pfm.numHits = 0
-			return false
-		}
-	}
 
 	// any other cases? add them here
 	// we don't want to track files we don't need to.
@@ -318,13 +287,22 @@ func (pgs *PrefetchGlobalState) CreateFileEntry(fh *FileHandle) {
 	entry.lastIo = time.Now()
 	entry.cache = nil
 
-	// setup so we can detect a sequential stream
-	entry.current.ioSize = PREFETCH_MIN_IO_SIZE
-	entry.current.startByte = 0
-	entry.current.endByte = PREFETCH_MIN_IO_SIZE - 1
-	entry.current.touched = 0
+	// setup so we can detect a sequential stream.
+	// There is no data held in cache yet.
+	entry.cache.startByte = 0
+	entry.cache.endByte = PREFETCH_MIN_IO_SIZE - 1
+	entry.cache.iovecs = make([](*Iovec), 1)
+	entry.current.iovecs[0] = &Iovec{
+		pfm : nil,
+		ioSize : PREFETCH_MIN_IO_SIZE,
+		startByte : 0,
+		endByte : PREFETCH_MIN_IO_SIZE,
+		touched : 0,
+		data : nil,
+		cond : nil,
+	}
 
-	entry.cond = sync.NewCond(&pgs.mutex)
+	// Initial state of the file; detect if it is accessed sequentially.
 	entry.state = PFM_DETECT_SEQ
 
 	pgs.files[fh.f.FileId] = &entry
