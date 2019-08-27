@@ -300,7 +300,7 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 
 	// See if the data has already been prefetched.
 	// This call will wait, if a prefetch IO is in progress.
-	prefetchData := fh.f.Fsys.pgs.Check(fh.f.FileId, fh.url, req.Offset, endOfs)
+	prefetchData := fh.f.Fsys.pgs.CacheLookup(fh.f.FileId, req.Offset, endOfs)
 	if prefetchData != nil {
 		resp.Data = prefetchData
 		return nil
@@ -321,7 +321,7 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 		log.Printf("Read  ofs=%d  len=%d\n", req.Offset, req.Size)
 	}
 
-	body,err := DxHttpRequest("GET", fh.url.URL, headers, []byte("{}"))
+	body,err := DxHttpRequest(nil, "GET", fh.url.URL, headers, []byte("{}"))
 	if err != nil {
 		return err
 	}

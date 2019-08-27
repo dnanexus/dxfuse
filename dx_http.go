@@ -6,7 +6,6 @@ import (
 	"errors"
 	"strings"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"strconv"
