@@ -23,8 +23,8 @@ const (
 	NUM_CHUNKS_READ_AHEAD = 8
 	MAX_NUM_IOVECS_IN_FILE_CACHE = NUM_CHUNKS_READ_AHEAD + 2
 
-	NUM_SLOTS = 64
-	SLOT_SIZE = PREFETCH_IO_SIZE / NUM_SLOTS
+	NUM_SLOTS_IN_CHUNK = 64
+	SLOT_SIZE = PREFETCH_IO_SIZE / NUM_SLOTS_IN_CHUNK
 
 	// An active stream can use a significant amount of memory to store prefetched data.
 	// Limit the total number of streams we are tracking and prefetching.
@@ -163,7 +163,7 @@ func (pgs *PrefetchGlobalState) readData(
 func numContiguousChunks(pfm *PrefetchFileMetadata) int {
 	contigLen := 0
 	for k := 0; k < len(pfm.cache.iovecs) ; k++ {
-		if pfm.cache.iovecs[k].data == nil {
+		if pfm.cache.iovecs[k].data == nil && k > 0 {
 			break
 		}
 		contigLen++
@@ -360,11 +360,6 @@ func (pgs *PrefetchGlobalState) RemoveFileEntry(fh *FileHandle) {
 }
 
 func markRangeInIovec(iovec *Iovec, startOfs int64, endOfs int64) {
-	if iovec.startByte > startOfs ||
-		iovec.endByte < startOfs {
-		// there is no intersection
-		return
-	}
 	startOfsBoth := MaxInt64(iovec.startByte, startOfs)
 	endOfsBoth := MinInt64(iovec.endByte, endOfs)
 
@@ -497,13 +492,23 @@ func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 		log.Printf("prefetch touch: ofs=%d  len=%d  numAccessed=%d",
 			startOfs, endOfs - startOfs, numAccessed)
 	}
-	if numAccessed < 64 {
+	if numAccessed < NUM_SLOTS_IN_CHUNK {
 		return
 	}
 
 	// A sufficient number of the slots were accessed. Start a prefetch for
 	// the next chunk(s)
-	pfm.state = PFM_PREFETCH_IN_PROGRESS
+	if pfm.state == PFM_DETECT_SEQ {
+		pfm.state = PFM_PREFETCH_IN_PROGRESS
+
+		// the first chunk in cache has no data at this point, we need to remove
+		// it
+/*		pfm.cache.iovecs = make([]*(Iovec), 0)
+		pfm.cache.startByte = 0
+		pfm.cache. = 0*/
+	}
+	check(pfm.state == PFM_PREFETCH_IN_PROGRESS)
+
 	pgs.setupForPrefetch(pfm, last)
 }
 
@@ -522,11 +527,12 @@ func (pgs *PrefetchGlobalState) getDataFromCache(
 		if iov.startByte <= startOfs &&
 			iov.endByte >= endOfs {
 			// its inside this iovec
-			bgnByte := startOfs - iov.startByte
-			endByte := endOfs - iov.startByte
 			if iov.data == nil {
+				// waiting for prefetch to come back with data
 				return nil
 			}
+			bgnByte := startOfs - iov.startByte
+			endByte := endOfs - iov.startByte
 			return iov.data[bgnByte : endByte+1]
 		}
 	}
