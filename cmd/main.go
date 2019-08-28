@@ -23,7 +23,7 @@ func usage() {
 }
 
 var (
-	debugFlag = flag.Bool("debug", false, "enable verbose debugging")
+	verbose = flag.Int("verbose", 0, "enable verbose debugging")
 	debugFuseFlag = flag.Bool("debugFuse", false, "tap into FUSE debugging information")
 )
 
@@ -56,7 +56,8 @@ func main() {
 	projectIdOrName := flag.Arg(1)
 
 	options := dxfs2.Options {
-		Debug : *debugFlag,
+		Verbose : *verbose > 0,
+		VerboseLevel : *verbose,
 		DebugFuse: *debugFuseFlag,
 	}
 

@@ -57,7 +57,8 @@ type DxFolder struct {
 
 
 type Options struct {
-	Debug bool
+	Verbose bool
+	VerboseLevel int
 	DebugFuse bool
 }
 

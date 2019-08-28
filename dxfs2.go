@@ -97,7 +97,7 @@ func Mount(
 	}
 
 	// initialize prefetching state
-	fsys.pgs.Init(options.Debug)
+	fsys.pgs.Init(options.VerboseLevel)
 
 	// Fuse mount
 	c, err := fuse.Mount(
@@ -181,7 +181,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	dir.Fsys.mutex.Lock()
 	defer dir.Fsys.mutex.Unlock()
 
-	if dir.Fsys.options.Debug {
+	if dir.Fsys.options.Verbose {
 		log.Printf("ReadDirAll dir=%s\n", dir.FullPath)
 	}
 
@@ -190,7 +190,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 		return nil, err
 	}
 
-	if dir.Fsys.options.Debug {
+	if dir.Fsys.options.Verbose {
 		log.Printf("%d files, %d subdirs\n", len(files), len(subdirs))
 	}
 
@@ -218,7 +218,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 
 	// directory entries need to be sorted
 	sort.Slice(dEntries, func(i, j int) bool { return dEntries[i].Name < dEntries[j].Name })
-	if dir.Fsys.options.Debug {
+	if dir.Fsys.options.Verbose {
 		log.Printf("dentries=%v", dEntries)
 	}
 
@@ -317,7 +317,7 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 
 	// add an extent in the file that we want to read
 	headers["Range"] = fmt.Sprintf("bytes=%d-%d", req.Offset, endOfs)
-	if fh.f.Fsys.options.Debug {
+	if fh.f.Fsys.options.Verbose {
 		log.Printf("Read  ofs=%d  len=%d\n", req.Offset, req.Size)
 	}
 
