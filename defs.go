@@ -13,7 +13,6 @@ const (
 	MAX_DIR_SIZE int     = 10 * 1000
 	INODE_ROOT_DIR int64 = 1
 	INODE_INITIAL int64  = 10
-	DB_PATH              = "/var/dxfs2/metadata.db"
 
 	KiB                  = 1024
 	MiB                  = 1024 * KiB
@@ -57,8 +56,10 @@ type DxFolder struct {
 
 
 type Options struct {
-	Debug bool
-	DebugFuse bool
+	DebugFuse      bool
+	MetadataDbPath string
+	Verbose        bool
+	VerboseLevel   int
 }
 
 
@@ -123,4 +124,19 @@ type FileHandle struct {
 
 	// URL used for downloading file ranges
 	url DxDownloadURL
+}
+
+// Utility functions
+func MaxInt64(x, y int64) int64 {
+    if x < y {
+        return y
+    }
+    return x
+}
+
+func MinInt64(x, y int64) int64 {
+    if x > y {
+        return y
+    }
+    return x
 }

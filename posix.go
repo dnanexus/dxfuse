@@ -99,7 +99,7 @@ func fixFileNames(files map[string]string, alreadyUsed []string) map[string]stri
 // 1. Keep directory names fixed
 // 2. Change file names to not collide with directories, or with each other.
 func PosixFixDir(fsys *Filesys, dxFolder *DxFolder) (*DxFolder, error) {
-	if fsys.options.Debug {
+	if fsys.options.Verbose {
 		log.Printf("PosixFixDir %s #files=%d #subdirs=%d",
 			dxFolder.path,
 			len(dxFolder.files),
@@ -115,7 +115,7 @@ func PosixFixDir(fsys *Filesys, dxFolder *DxFolder) (*DxFolder, error) {
 
 		shortSubdirs = append(shortSubdirs, lastPart)
 	}
-	if fsys.options.Debug {
+	if fsys.options.Verbose {
 		log.Printf("short subdirs = %v", shortSubdirs)
 	}
 

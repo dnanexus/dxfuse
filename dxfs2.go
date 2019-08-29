@@ -23,6 +23,16 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+// fileExists checks if a file exists and is not a directory before we
+// try using it to prevent further errors.
+func fileExists(filename string) bool {
+    info, err := os.Stat(filename)
+    if os.IsNotExist(err) {
+        return false
+    }
+    return !info.IsDir()
+}
+
 // Mount the filesystem:
 //  - setup the debug log to the FUSE kernel log (I think)
 //  - mount as read-only
@@ -52,20 +62,24 @@ func Mount(
 		return err
 	}
 
+	dbPath := options.MetadataDbPath + "/" + "metadata.db"
+
 	// Create a fresh SQL database
-	dbParentFolder := filepath.Dir(DB_PATH)
+	dbParentFolder := filepath.Dir(dbPath)
 	if _, err := os.Stat(dbParentFolder); os.IsNotExist(err) {
 		os.Mkdir(dbParentFolder, 0755)
 	}
-	log.Printf("Removing old version of the database (%s)", DB_PATH)
-	var err2 = os.Remove(DB_PATH)
-	if err2 != nil {
-		// This is an error we ignore
-		log.Printf("Error removing file %s, continuing (%s)", DB_PATH, err2.Error())
+	if fileExists(dbPath) {
+		log.Printf("Removing old version of the database (%s)", dbPath)
+		err2 := os.Remove(dbPath)
+		if err2 != nil {
+			log.Printf("error (%s) removing old database", err2.Error())
+			os.Exit(1)
+		}
 	}
 
 	// create a connection to the database, that will be kept open
-	db, err := sql.Open("sqlite3", DB_PATH + "?cache=shared&mode=rwc")
+	db, err := sql.Open("sqlite3", dbPath + "?cache=shared&mode=rwc")
 	if err != nil {
 		return err
 	}
@@ -76,7 +90,7 @@ func Mount(
 		uid : uint32(uid),
 		gid : uint32(gid),
 		project : projDesc,
-		dbFullPath : DB_PATH,
+		dbFullPath : dbPath,
 		mutex : sync.Mutex{},
 		inodeCnt : INODE_INITIAL,
 		db : db,
@@ -97,7 +111,7 @@ func Mount(
 	}
 
 	// initialize prefetching state
-	fsys.pgs.Init(options.Debug)
+	fsys.pgs.Init(options.VerboseLevel)
 
 	// Fuse mount
 	c, err := fuse.Mount(
@@ -181,7 +195,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	dir.Fsys.mutex.Lock()
 	defer dir.Fsys.mutex.Unlock()
 
-	if dir.Fsys.options.Debug {
+	if dir.Fsys.options.Verbose {
 		log.Printf("ReadDirAll dir=%s\n", dir.FullPath)
 	}
 
@@ -190,7 +204,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 		return nil, err
 	}
 
-	if dir.Fsys.options.Debug {
+	if dir.Fsys.options.Verbose {
 		log.Printf("%d files, %d subdirs\n", len(files), len(subdirs))
 	}
 
@@ -218,7 +232,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 
 	// directory entries need to be sorted
 	sort.Slice(dEntries, func(i, j int) bool { return dEntries[i].Name < dEntries[j].Name })
-	if dir.Fsys.options.Debug {
+	if dir.Fsys.options.Verbose {
 		log.Printf("dentries=%v", dEntries)
 	}
 
@@ -300,7 +314,7 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 
 	// See if the data has already been prefetched.
 	// This call will wait, if a prefetch IO is in progress.
-	prefetchData := fh.f.Fsys.pgs.Check(fh.f.FileId, fh.url, req.Offset, endOfs)
+	prefetchData := fh.f.Fsys.pgs.CacheLookup(fh.f.FileId, req.Offset, endOfs)
 	if prefetchData != nil {
 		resp.Data = prefetchData
 		return nil
@@ -317,11 +331,11 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 
 	// add an extent in the file that we want to read
 	headers["Range"] = fmt.Sprintf("bytes=%d-%d", req.Offset, endOfs)
-	if fh.f.Fsys.options.Debug {
+	if fh.f.Fsys.options.Verbose {
 		log.Printf("Read  ofs=%d  len=%d\n", req.Offset, req.Size)
 	}
 
-	body,err := DxHttpRequest("GET", fh.url.URL, headers, []byte("{}"))
+	body,err := DxHttpRequest(nil, "GET", fh.url.URL, headers, []byte("{}"))
 	if err != nil {
 		return err
 	}

@@ -23,7 +23,7 @@ func makeFullPath(parent string, name string) string {
 
 // construct an initial empty database, representing an entire project.
 func MetadataDbInit(fsys *Filesys) error {
-	if fsys.options.Debug {
+	if fsys.options.Verbose {
 		log.Printf("Initializing metadata database\n")
 	}
 
@@ -101,7 +101,7 @@ func MetadataDbInit(fsys *Filesys) error {
 		return err
 	}
 
-	if fsys.options.Debug {
+	if fsys.options.Verbose {
 		log.Printf("Completed creating files and directories tables\n")
 	}
 	return nil
@@ -225,7 +225,7 @@ func queryDirSubdirs(
 func directoryReadAllEntries(
 	fsys * Filesys,
 	dirFullName string) (map[string]File, map[string]Dir, error) {
-	if fsys.options.Debug {
+	if fsys.options.Verbose {
 		log.Printf("directoryReadAllEntries %s", dirFullName)
 	}
 
@@ -293,7 +293,7 @@ func directoryReadAllEntries(
 }
 
 func directoryReadFromDNAx(fsys *Filesys, dirFullName string) error {
-	if fsys.options.Debug {
+	if fsys.options.Verbose {
 		log.Printf("describe folder %s", dirFullName)
 	}
 
@@ -305,7 +305,7 @@ func directoryReadFromDNAx(fsys *Filesys, dirFullName string) error {
 		return err
 	}
 
-	if fsys.options.Debug {
+	if fsys.options.Verbose {
 		log.Printf("read dir from DNAx #files=%d #subdirs=%d",
 			len(dxDir.files),
 			len(dxDir.subdirs))
@@ -327,7 +327,7 @@ func directoryReadFromDNAx(fsys *Filesys, dirFullName string) error {
 	if err != nil {
 		return err
 	}
-	if fsys.options.Debug {
+	if fsys.options.Verbose {
 		log.Printf("unique file names [")
 		for _, fDesc := range dxDir.files {
 			log.Printf("  %s", fDesc.Name)
@@ -339,7 +339,7 @@ func directoryReadFromDNAx(fsys *Filesys, dirFullName string) error {
 	}
 
 	// Create a database entry for each file
-	if fsys.options.Debug {
+	if fsys.options.Verbose {
 		log.Printf("inserting files")
 	}
 	for _, d := range dxDir.files {
@@ -358,7 +358,7 @@ func directoryReadFromDNAx(fsys *Filesys, dirFullName string) error {
 	}
 
 	// Create a database entry for each sub-directory
-	if fsys.options.Debug {
+	if fsys.options.Verbose {
 		log.Printf("inserting subdirs")
 	}
 	for _, subDirName := range dxDir.subdirs {
@@ -401,7 +401,7 @@ func directoryReadFromDNAx(fsys *Filesys, dirFullName string) error {
 		}
 	}
 
-	if fsys.options.Debug {
+	if fsys.options.Verbose {
 		log.Printf("setting populated for directory %s", dirFullName)
 	}
 
@@ -427,7 +427,7 @@ func directoryReadFromDNAx(fsys *Filesys, dirFullName string) error {
 func MetadataDbReadDirAll(
 	fsys *Filesys,
 	dirFullName string) (map[string]File, map[string]Dir, error) {
-	if fsys.options.Debug {
+	if fsys.options.Verbose {
 		log.Printf("MetadataDbReadDirAll %s", dirFullName)
 	}
 
@@ -437,7 +437,7 @@ func MetadataDbReadDirAll(
 		return nil, nil, err
 	}
 	if retval {
-		if fsys.options.Debug {
+		if fsys.options.Verbose {
 			log.Printf("Directory %s exists in the database", dirFullName)
 		}
 		// the directory already exists. read it, and return
@@ -595,7 +595,7 @@ func MetadataDbRoot(fsys *Filesys) (*Dir, error) {
 	}
 	rows.Close()
 
-	if fsys.options.Debug {
+	if fsys.options.Verbose {
 		log.Printf("Read root dir, inode=%d", d.Inode)
 	}
 
