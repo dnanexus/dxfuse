@@ -13,7 +13,6 @@ const (
 	MAX_DIR_SIZE int     = 10 * 1000
 	INODE_ROOT_DIR int64 = 1
 	INODE_INITIAL int64  = 10
-	DB_PATH              = "/var/dxfs2/metadata.db"
 
 	KiB                  = 1024
 	MiB                  = 1024 * KiB
@@ -57,9 +56,10 @@ type DxFolder struct {
 
 
 type Options struct {
-	Verbose bool
-	VerboseLevel int
-	DebugFuse bool
+	DebugFuse      bool
+	MetadataDbPath string
+	Verbose        bool
+	VerboseLevel   int
 }
 
 

@@ -23,8 +23,9 @@ func usage() {
 }
 
 var (
-	verbose = flag.Int("verbose", 0, "enable verbose debugging")
-	debugFuseFlag = flag.Bool("debugFuse", false, "tap into FUSE debugging information")
+	metadataDbPath = flag.String("dbPath", "/var/dxfs2", "Directory where to place metadata database")
+	debugFuseFlag = flag.Bool("debugFuse", false, "Tap into FUSE debugging information")
+	verbose = flag.Int("verbose", 0, "Enable verbose debugging")
 )
 
 func lookupProject(dxEnv *dxda.DXEnvironment, projectIdOrName string) (string, error) {
@@ -56,9 +57,10 @@ func main() {
 	projectIdOrName := flag.Arg(1)
 
 	options := dxfs2.Options {
+		DebugFuse: *debugFuseFlag,
+		MetadataDbPath: *metadataDbPath,
 		Verbose : *verbose > 0,
 		VerboseLevel : *verbose,
-		DebugFuse: *debugFuseFlag,
 	}
 
 	dxEnv, _, err := dxda.GetDxEnvironment()
