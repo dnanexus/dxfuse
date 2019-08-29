@@ -17,10 +17,10 @@ import (
 const (
 	MAX_DELTA_TIME = 5 * 60 * time.Second
 
-	SEQ_DETECT_SIZE	= 1 * MiB            // threshold for deciding the file is sequentially accessed
-	PREFETCH_IO_SIZE = (4 * MiB)     // size of prefetch IO
-	NUM_CHUNKS_READ_AHEAD = 8
-	MAX_NUM_IOVECS_IN_FILE_CACHE = NUM_CHUNKS_READ_AHEAD + 2
+	PREFETCH_MIN_IO_SIZE = (256 * KiB)     // threshold for deciding the file is sequentially accessed
+	PREFETCH_MAX_IO_SIZE = (4 * MiB)     // size of prefetch IO
+	PREFETCH_IO_FACTOR = 4
+	MAX_NUM_CHUNKS_READ_AHEAD = 8
 
 	NUM_SLOTS_IN_CHUNK = 64
 
@@ -28,7 +28,7 @@ const (
 	// Limit the total number of streams we are tracking and prefetching.
 	MAX_NUM_ENTRIES_IN_TABLE = 8
 
-	NUM_PREFETCH_THREADS = 16
+	NUM_PREFETCH_THREADS = 10
 	MIN_FILE_SIZE = 8 * MiB     // do not track files smaller than this size
 
 	// enumerate type for the state of a PFM (file metadata)
@@ -72,9 +72,13 @@ type Iovec struct {
 // A cache of all the data retrieved from the platform, for one file.
 // It is a contiguous range of chunks. All IOs are the same size.
 type Cache struct {
-	startByte   int64
-	endByte     int64
-	iovecs      [](*Iovec)
+	prefetchIoSize     int64  // size of the IO to issue when prefetching
+	numChunksReadAhead int
+	maxNumIovecs       int
+
+	startByte          int64
+	endByte            int64
+	iovecs             [](*Iovec)
 }
 
 type PrefetchFileMetadata struct {
@@ -323,9 +327,14 @@ func (pgs *PrefetchGlobalState) newPrefetchFileMetadata(fh *FileHandle) *Prefetc
 
 	// setup so we can detect a sequential stream.
 	// There is no data held in cache yet.
-	entry.cache.startByte = 0
-	entry.cache.endByte = SEQ_DETECT_SIZE - 1
-	entry.cache.iovecs = make([](*Iovec), 1)
+	entry.cache = Cache{
+		prefetchIoSize : PREFETCH_MIN_IO_SIZE,
+		numChunksReadAhead : 1,
+		maxNumIovecs : 3,
+		startByte : 0,
+		endByte : PREFETCH_MIN_IO_SIZE - 1,
+		iovecs : make([](*Iovec), 1),
+	}
 	entry.cache.iovecs[0] = &Iovec{
 		ioSize : entry.cache.endByte - entry.cache.startByte + 1,
 		startByte : entry.cache.startByte,
@@ -387,13 +396,13 @@ func markRangeInIovec(iovec *Iovec, startOfs int64, endOfs int64) {
 	startSlot := (startOfsBoth - iovec.startByte) / slotSize
 	endSlot := (endOfsBoth - iovec.startByte) / slotSize
 	check(startSlot >= 0)
-	if !(endSlot >= 0 && endSlot <= 63) {
+	if !(endSlot >= 0 && endSlot <= NUM_SLOTS_IN_CHUNK) {
 		log.Printf("offset(%d -- %d),  slots=(%d -- %d), iovec=(%d -- %d)",
 			startOfs, endOfs,
 			startSlot, endSlot,
 			iovec.startByte, iovec.endByte)
 	}
-	check(endSlot >= 0 && endSlot <= 63)
+	check(endSlot >= 0 && endSlot <= NUM_SLOTS_IN_CHUNK)
 
 	for slot := startSlot; slot <= endSlot ; slot++ {
 		// Sets the bit at position [slot]
@@ -442,31 +451,42 @@ func (pgs *PrefetchGlobalState) findCoveringRange(
 }
 
 
-// Setup state for the next prefetch.
+// Setup cache state for the next prefetch.
+//
+// 1) we want there to be numChunksReadAhead chunks ahead of us.
+// 2) we don't want the entire file-cache to go above MAX_NUM_IOVECS_IN_FILE_CACHE
+//
+// For example, if there are currently 2 chunks in cache, and the current IO falls
+// in the second location then:
+// assuming
+//     numChunksReadAhead = 1
+// calculate
+//     iovIndex = 1
+//     nReadAheadChunks = 1 + 1 + 1 - 2 = 1
+//
+// If the IO landed on the first location, then iovIndex=0, and we don't need
+// additional readahead IOs.
 func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIndex int) {
-	// 1) we want there to be NUM_CHUNKS_READ_AHEAD chunks ahead of us.
-	// 2) we don't want the entire file-cache to go above MAX_NUM_IOVECS_IN_FILE_CACHE
 	if pgs.verbose {
 		log.Printf("moveCacheWindow  iovIndex=%d  len(iovecs)=%d",
 			iovIndex, len(pfm.cache.iovecs))
 	}
 	nIovecs := len(pfm.cache.iovecs)
-	if (iovIndex + NUM_CHUNKS_READ_AHEAD) >= nIovecs {
-		nReadAheadChunks := iovIndex + NUM_CHUNKS_READ_AHEAD - nIovecs + 1
-
+	nReadAheadChunks := iovIndex + 1 + pfm.cache.numChunksReadAhead - nIovecs
+	if nReadAheadChunks > 0 {
 		// We need to slide the cache window forward
 		//
 		// stretch the cache forward, but don't go over the file size. Add place holder
 		// io-vectors, waiting for prefetch IOs to return.
 		lastByteInFile := pfm.fh.f.Size - 1
 		for i := 0; i < nReadAheadChunks; i++ {
-			startByte := (pfm.cache.endByte + 1) + (int64(i) * int64(PREFETCH_IO_SIZE))
+			startByte := (pfm.cache.endByte + 1) + (int64(i) * int64(pfm.cache.prefetchIoSize))
 
 			// don't go beyond the file size
 			if startByte > lastByteInFile {
 				break
 			}
-			endByte := MinInt64(startByte + int64(PREFETCH_IO_SIZE) - 1, lastByteInFile)
+			endByte := MinInt64(startByte + int64(pfm.cache.prefetchIoSize) - 1, lastByteInFile)
 			emptyIov := &Iovec{
 				ioSize : endByte - startByte + 1,
 				startByte : startByte,
@@ -476,7 +496,7 @@ func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIn
 				shouldPrefetch : true,
 				submitted : false,
 			}
-			check(emptyIov.ioSize <= PREFETCH_IO_SIZE)
+			check(emptyIov.ioSize <= PREFETCH_MAX_IO_SIZE)
 			pfm.cache.iovecs = append(pfm.cache.iovecs, emptyIov)
 
 			if pgs.verboseLevel >= 2 {
@@ -486,11 +506,11 @@ func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIn
 	}
 
 	nIovecs = len(pfm.cache.iovecs)
-	if nIovecs > MAX_NUM_IOVECS_IN_FILE_CACHE {
+	if nIovecs > pfm.cache.maxNumIovecs {
 		// we want to limit the amount of cached data.
 		// we chop off the beginning of the vector, and
 		// reduce memory consumption.
-		start := nIovecs - MAX_NUM_IOVECS_IN_FILE_CACHE
+		start := nIovecs - pfm.cache.maxNumIovecs
 		for i := 0; i < start; i++ {
 			pfm.cache.iovecs[i].data = nil
 			if pfm.state == PFM_PREFETCH_IN_PROGRESS &&
@@ -559,7 +579,18 @@ func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 		pfm.state = PFM_PREFETCH_IN_PROGRESS
 		pfm.sequentiallyAccessed = true
 	}
-	check(pfm.state == PFM_PREFETCH_IN_PROGRESS)
+
+	// increase read ahead io size, using a bounded exponential formula
+	if pfm.cache.prefetchIoSize < PREFETCH_MAX_IO_SIZE {
+		pfm.cache.prefetchIoSize =
+			MinInt64(PREFETCH_MAX_IO_SIZE, pfm.cache.prefetchIoSize * PREFETCH_IO_FACTOR)
+	}
+	if pfm.cache.prefetchIoSize == PREFETCH_MAX_IO_SIZE {
+		// if we are at the maximal io size, start issuing asynchronous
+		// readahead requests.
+		pfm.cache.numChunksReadAhead = MAX_NUM_CHUNKS_READ_AHEAD
+		pfm.cache.maxNumIovecs = MAX_NUM_CHUNKS_READ_AHEAD + 2
+	}
 
 	pgs.moveCacheWindow(pfm, last)
 	pgs.submitIoForHoles(pfm)
@@ -576,9 +607,9 @@ func (pgs *PrefetchGlobalState) getDataFromCache(
 	pfm *PrefetchFileMetadata,
 	startOfs int64,
 	endOfs int64) []byte {
+	// quick check to see if the data is in cache.
 	if !(pfm.cache.startByte <= startOfs &&
 		pfm.cache.endByte >= endOfs) {
-		// not in cache
 		return nil
 	}
 
@@ -597,9 +628,8 @@ func (pgs *PrefetchGlobalState) getDataFromCache(
 		}
 	}
 
-	// FIXME: we don't handle partial IOs. That means, IOs that
-	// fall on the boundaries of cached/prefetched data. nil is
-	// returned for such cases.
+	// FIXME: we don't handle IOs that stradle boundaries of
+	// cached data. nil is returned for such cases.
 	//
 	if pgs.verbose {
 		log.Printf("Data is in cache, but falls on an iovec boundary ofs=%d len=%d",
