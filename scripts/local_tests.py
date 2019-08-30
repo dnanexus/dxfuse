@@ -38,7 +38,6 @@ def test_download_entire_project(dxProj):
     dxTrgDir = "/tmp/dxCopy"
     dxfs2TrgDir = "/tmp/dxfs2Copy"
     mountpoint = "/tmp/dxfs2_mountpoint"
-    userHomeDir = os.environ['HOME']
 
     # clean and make fresh directories
     for d in [dxTrgDir, dxfs2TrgDir, mountpoint]:
@@ -47,17 +46,20 @@ def test_download_entire_project(dxProj):
         os.makedirs(d)
 
     # download with dxfs2
-    subprocess.Popen(["sudo", "/go/bin/dxfs2", "-dbPath", userHomeDir, mountpoint, dxProj.get_id()],
-                     close_fds=True)
+
+    # Start the dxfs2 daemon in the background, and wait for it to initilize.
+    cmdline = ["sudo", "/go/bin/dxfs2", mountpoint, dxProj.get_id()]
+    print(" ".join(cmdline))
+    subprocess.Popen(cmdline, close_fds=True)
     time.sleep(1)
     try:
-        subprocess.check_output(["cp", "-r", mountpoint + "/*", dxfs2TrgDir])
+        subprocess.check_output(["cp", "-r", mountpoint + "/correctness/small", dxfs2TrgDir])
     except:
         pass
     subprocess.check_output(["sudo", "umount", mountpoint])
 
     # download the entire project with dx
-    subprocess.check_output(["dx", "download", "-o", dxTrgDir, "-r", ":/"])
+    subprocess.check_output(["dx", "download", "-o", dxTrgDir, "-r", ":/correctness/small"])
 
     # compare
     results = subprocess.check_output(["diff", "-r", "--brief", dxTrgDir, dxfs2TrgDir])
