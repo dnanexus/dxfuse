@@ -106,7 +106,7 @@ func Mount(
 	log.Printf("mounted dxfs2")
 
 	// create the metadata database
-	if err = MetadataDbInit(fsys); err != nil {
+	if err = fsys.MetadataDbInit(); err != nil {
 		return err
 	}
 
@@ -167,7 +167,7 @@ func (fsys *Filesys) Root() (fs.Node, error) {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
 
-	return MetadataDbRoot(fsys)
+	return fsys.MetadataDbRoot()
 }
 
 
@@ -199,7 +199,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 		log.Printf("ReadDirAll dir=%s\n", dir.FullPath)
 	}
 
-	files, subdirs, err := MetadataDbReadDirAll(dir.Fsys, dir.FullPath)
+	files, subdirs, err := dir.Fsys.MetadataDbReadDirAll(dir.FullPath)
 	if err != nil {
 		return nil, err
 	}
@@ -248,7 +248,7 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 	dir.Fsys.mutex.Lock()
 	defer dir.Fsys.mutex.Unlock()
 
-	return MetadataDbLookupInDir(dir.Fsys, dir.FullPath, req.Name)
+	return dir.Fsys.MetadataDbLookupInDir(dir.FullPath, req.Name)
 }
 
 func (f *File) Attr(ctx context.Context, a *fuse.Attr) error {
