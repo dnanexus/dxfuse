@@ -1,7 +1,6 @@
 DXWDL_VERSION=1.20a
 
-#all : dxfs2 dx_testbox_image wdl_test
-all : wdl_test
+all : dxfs2 dx_testbox_image wdl_test
 
 dxfs2 :
 	go build -o dxfs2 /go/src/github.com/dnanexus/dxfs2/cmd/main.go
@@ -19,8 +18,8 @@ dxWDL-${DXWDL_VERSION}.jar :
 	wget https://github.com/dnanexus/dxWDL/releases/download/${DXWDL_VERSION}/dxWDL-${DXWDL_VERSION}.jar
 
 wdl_test: dxWDL-${DXWDL_VERSION}.jar
-	java -jar dxWDL-${DXWDL_VERSION}.jar compile test.wdl --project dxfs2_test_data --folder /applets
+	java -jar dxWDL-${DXWDL_VERSION}.jar compile test.wdl --project dxfs2_test_data --folder /applets --force
 
 clean :
-	sudo docker rmi dxfs2_testbox
+	sudo docker rmi dxfs2_testbox || true
 	dx rm --force dxfs2_test_data:/images/dxfs2_testbox.tar || true

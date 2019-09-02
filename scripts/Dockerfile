@@ -6,4 +6,5 @@ CMD mkdir -p /dxfs2_workdir
 ENV DIRPATH  /dxfs2_workdir
 
 COPY ./dxfs2 $DIRPATH/
-COPY ./*.py $DIRPATH/
+COPY ./streaming_benchmark.py $DIRPATH/
+COPY ./correctness_test.py $DIRPATH/
