@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import dxpy
+import sys
 
 def get_project(project_name):
     '''Try to find the project with the given name or id.'''

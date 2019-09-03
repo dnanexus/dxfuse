@@ -15,8 +15,7 @@ from typing import Callable, Iterator, Union, Optional, List
 ######################################################################
 ## constants
 
-userHomeDir = os.environ["HOME"]
-baseDir = os.path.join(userHomeDir, "dxfs2_test")
+baseDir = os.path.join("/tmp", "dxfs2_test")
 dxTrgDir = os.path.join(baseDir, "dxCopy")
 dxfs2TrgDir = os.path.join(baseDir, "dxfs2Copy")
 mountpoint = os.path.join(baseDir, "MNT")
@@ -60,9 +59,6 @@ def benchmark(dxProj):
     # clean and make fresh directories
     # Be careful here, NOT to erase the user home directory
     for d in [dxTrgDir, dxfs2TrgDir, mountpoint]:
-        if d == userHomeDir:
-            printf("Error, must not erase user home directory")
-            os.exit(1)
         if os.path.exists(d):
             subprocess.check_output(["sudo", "rm", "-rf", d])
         os.makedirs(d)
@@ -71,7 +67,7 @@ def benchmark(dxProj):
 
     # Start the dxfs2 daemon in the background, and wait for it to initilize.
     cprint("Mounting dxfs2", "blue")
-    subprocess.Popen(["sudo", "/go/bin/dxfs2", mountpoint, dxProj.get_id()],
+    subprocess.Popen(["sudo", "/dxfs2_workdir/dxfs2", mountpoint, dxProj.get_id()],
                      close_fds=True)
     time.sleep(1)
 
@@ -96,7 +92,7 @@ def main():
     argparser.add_argument("--verbose", help="Verbose outputs",
                            action="store_true", default=False)
     argparser.add_argument("--project", help="DNAx project to take data from",
-                           default="dxfs2_test_data")
+                           default="project-FbZ25gj04J9B8FJ3Gb5fVP41")
     args = argparser.parse_args()
 
     # some sanity checks
