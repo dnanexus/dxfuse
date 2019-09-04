@@ -322,7 +322,15 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 var _ = fs.HandleReader(&FileHandle{})
 
 func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
+	if fh.f.Size == 0 || req.Size == 0 {
+		// The file is empty
+		return nil
+	}
 	endOfs := req.Offset + int64(req.Size) - 1
+
+	// make sure we don't go over the file size
+	lastByteInFile := fh.f.Size - 1
+	endOfs = MinInt64(lastByteInFile, endOfs)
 
 	// See if the data has already been prefetched.
 	// This call will wait, if a prefetch IO is in progress.

@@ -1,8 +1,8 @@
-#!/bin/bash -xe
+#!/bin/bash
 
 # The following line causes bash to exit at any point if there is any error
 # and to output each line as it is executed -- useful for debugging
-set -e -x -o pipefail
+set -e -o pipefail
 
 ######################################################################
 ## constants
@@ -20,7 +20,9 @@ dxDirOnProject="correctness"
 main() {
     # Get all the DX environment variables, so that dxfs2 can use them
     echo "loading the dx environment"
-    source environment
+
+    # don't leak the token to stdout
+    source environment >& /dev/null
 
     # clean and make fresh directories
     for d in $dxTrgDir $dxfs2TrgDir $mountpoint; do
@@ -44,8 +46,10 @@ main() {
     echo "download recursively with dx download"
     dx download --no-progress -o $dxTrgDir -r  "$projId:/$dxDirOnProject"
 
+    # do not exit immediately if there are differences; we want to see the files
+    # that aren't the same
     mkdir -p $HOME/out/result
-    diff -r --brief $dxTrgDir $dxfs2TrgDir > $HOME/out/result/results.txt
+    diff -r --brief $dxTrgDir $dxfs2TrgDir > $HOME/out/result/results.txt || true
 
     # If the diff is non empty, declare that the results
     # are not equivalent.
