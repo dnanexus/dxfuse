@@ -34,4 +34,9 @@ ENV DIRPATH  /dxfs2_workdir
 COPY ./dxfs2 $DIRPATH/
 COPY ./streaming_benchmark.py $DIRPATH/
 COPY ./correctness_test.py $DIRPATH/
-COPY ./util.py $DIRPATH/
+
+
+# Environment variables so that dx-toolkit and dxfs2 can work
+CMD mkdir -p /home/dnanexus
+CMD mkdir -p /home/dnanexus/.dnanexus_config
+COPY ./cfg.json /home/dnanexus/.dnanexus_config/environment.json

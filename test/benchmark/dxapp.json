@@ -1,0 +1,25 @@
+{
+  "name": "benchmark",
+  "summary": "streaming benchmark",
+  "dxapi": "1.0.0",
+  "version": "0.0.1",
+  "inputSpec": [
+    {
+      "name": "verbose",
+      "class": "boolean",
+      "optional": true
+    }
+  ],
+  "outputSpec": [
+    {
+      "name": "result",
+      "class": "file"
+    }
+  ],
+  "runSpec": {
+    "interpreter": "bash",
+    "file": "code.sh",
+    "distribution": "Ubuntu",
+    "release": "16.04"
+  }
+}

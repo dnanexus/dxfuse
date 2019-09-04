@@ -8,14 +8,13 @@ import sys
 import time
 
 import dxpy
-import util
 
 from typing import Callable, Iterator, Union, Optional, List
 
 ######################################################################
 ## constants
 
-baseDir = os.path.join("/tmp", "dxfs2_test")
+baseDir = os.path.join("/home/dnanexus", "dxfs2_test")
 dxTrgDir = os.path.join(baseDir, "dxCopy")
 dxfs2TrgDir = os.path.join(baseDir, "dxfs2Copy")
 mountpoint = os.path.join(baseDir, "MNT")
@@ -55,19 +54,19 @@ def copy_file_with_dx_download(dxProj, fname : str) -> int:
 
 def benchmark(dxProj):
     cprint("Clearing out directory {} for testing".format(baseDir), "blue")
+    if os.path.exists(baseDir):
+        shutil.rmtree(baseDir)
 
     # clean and make fresh directories
     # Be careful here, NOT to erase the user home directory
     for d in [dxTrgDir, dxfs2TrgDir, mountpoint]:
-        if os.path.exists(d):
-            subprocess.check_output(["sudo", "rm", "-rf", d])
         os.makedirs(d)
 
     # download with dxfs2
 
     # Start the dxfs2 daemon in the background, and wait for it to initilize.
     cprint("Mounting dxfs2", "blue")
-    subprocess.Popen(["sudo", "/dxfs2_workdir/dxfs2", mountpoint, dxProj.get_id()],
+    subprocess.Popen(["/dxfs2_workdir/dxfs2", mountpoint, dxProj.get_id()],
                      close_fds=True)
     time.sleep(1)
 
@@ -83,7 +82,7 @@ def benchmark(dxProj):
             print("{}\t {} \t {}".format(fname, dxfs2_sec, dx_download_sec))
     finally:
         cprint("Unmounting dxfs2", "blue")
-        subprocess.check_output(["sudo", "umount", mountpoint])
+        subprocess.check_output(["umount", mountpoint])
 
 
 ## Program entry point
@@ -95,9 +94,7 @@ def main():
                            default="project-FbZ25gj04J9B8FJ3Gb5fVP41")
     args = argparser.parse_args()
 
-    # some sanity checks
-    dxProj = util.get_project(args.project)
-
+    dxProj = dxpy.DXProject(args.project)
     benchmark(dxProj)
 
 if __name__ == '__main__':

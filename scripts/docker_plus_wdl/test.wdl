@@ -8,14 +8,14 @@ task dxfs2_test {
     command {
         case ~{suite} in
             correct*)
-                /dxfs2_workdir/correctness_test.py
+                sudo /dxfs2_workdir/correctness_test.py
                 ;;
             bench*)
-                /dxfs2_workdir/streaming_benchmark.py
+                sudo /dxfs2_workdir/streaming_benchmark.py
                 ;;
              *)
-                /dxfs2_workdir/correctness_test.py
-                /dxfs2_workdir/streaming_benchmark.py
+                sudo /dxfs2_workdir/correctness_test.py
+                sudo /dxfs2_workdir/streaming_benchmark.py
                 ;;
         esac
     }
