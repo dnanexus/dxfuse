@@ -15,3 +15,7 @@ copy_all : dxfs2
 
 exec :
 	dx run applets/correctness --instance-type=mem1_ssd1_x4 -y --watch
+
+
+exec_bench :
+	dx run applets/benchmark --instance-type=mem1_ssd1_x16 -y --watch
