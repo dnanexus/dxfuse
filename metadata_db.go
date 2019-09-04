@@ -301,7 +301,9 @@ func (fsys *Filesys) directoryReadFromDNAx(dirFullName string) error {
 	// The directory has not been queried yet.
 	//
 	// describe all the files
-	dxDir, err := DxDescribeFolder(&fsys.dxEnv, fsys.project.Id, dirFullName)
+	httpClient := <- fsys.httpClientPool
+	dxDir, err := DxDescribeFolder(httpClient, &fsys.dxEnv, fsys.project.Id, dirFullName)
+	fsys.httpClientPool <- httpClient
 	if err != nil {
 		return err
 	}

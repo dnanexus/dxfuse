@@ -7,16 +7,17 @@ import (
 
 	"bazil.org/fuse/fs"
 	"github.com/dnanexus/dxda"
+	"github.com/hashicorp/go-retryablehttp"
 )
 
 const (
-	MAX_DIR_SIZE int     = 10 * 1000
-	INODE_ROOT_DIR int64 = 1
-	INODE_INITIAL int64  = 10
-
-	KiB                  = 1024
-	MiB                  = 1024 * KiB
-	GiB                  = 1024 * MiB
+	MAX_DIR_SIZE int      = 10 * 1000
+	INODE_ROOT_DIR int64  = 1
+	INODE_INITIAL int64   = 10
+	HTTP_CLIENT_POOL_SIZE = 4
+	KiB                   = 1024
+	MiB                   = 1024 * KiB
+	GiB                   = 1024 * MiB
 )
 
 // A URL generated with the /file-xxxx/download API call, that is
@@ -89,6 +90,8 @@ type Filesys struct {
 
 	// prefetch state for all files
 	pgs PrefetchGlobalState
+
+	httpClientPool chan(*retryablehttp.Client)
 }
 
 var _ fs.FS = (*Filesys)(nil)
