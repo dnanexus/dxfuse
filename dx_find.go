@@ -3,8 +3,6 @@ package dxfs2
 import (
 	"encoding/json"
 	"fmt"
-
-	// The dxda package has the get-environment code
 	"github.com/dnanexus/dxda"
 )
 
@@ -35,8 +33,8 @@ func DxFindProject(
 		return "", err
 	}
 
-	httpClient := dxda.NewHttpClient(false)
-	repJs, err := dxda.DxAPI(httpClient, dxEnv, "system/findProjects", string(payload))
+	httpClient := NewHttpClient(false)
+	repJs, err := DxAPI(httpClient, dxEnv, "system/findProjects", string(payload))
 	if err != nil {
 		return "", err
 	}
