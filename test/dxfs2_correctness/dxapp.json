@@ -1,6 +1,6 @@
 {
-  "name": "benchmark",
-  "summary": "streaming benchmark",
+  "name": "dxfs2_correctness",
+  "summary": "test dxfs2 correctness by comparing to dx-download",
   "dxapi": "1.0.0",
   "version": "0.0.1",
   "inputSpec": [
@@ -12,8 +12,13 @@
   ],
   "outputSpec": [
     {
+      "name": "equality",
+      "class": "boolean"
+    },
+    {
       "name": "result",
-      "class": "file"
+      "class": "file",
+      "optional": true
     }
   ],
   "runSpec": {

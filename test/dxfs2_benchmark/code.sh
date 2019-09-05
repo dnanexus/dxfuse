@@ -14,16 +14,10 @@ dxDirOnProject="benchmarks"
 
 ######################################################################
 
-function copy_with_dx_cat {
-    fname=$1
-    rm -f /tmp/X
-    dx cat "$projId:/$dxDirOnProject/$fname" > /tmp/X
-}
-
 function copy_with_dxfs2 {
     fname=$1
     rm -f /tmp/X
-    cat "$mountpoint/$dxDirOnProject/$fname" > /tmp/X
+
 }
 
 
@@ -49,29 +43,41 @@ main() {
     echo $files
 
     mkdir -p $HOME/out/result
-    echo "method, time(seconds), filename" > $HOME/out/result/result.txt
+    echo "method,time(seconds),filename" > $HOME/out/result/result.txt
 
     for fname in $files; do
         fname="$(basename $fname)"
         echo $fname
+        rm -f /tmp/X_dxfs2
+        rm -f /tmp/X_dx_cat
 
         echo "downloading with dx cat"
         start=`date +%s`
-        copy_with_dx_cat $fname
+        dx cat "$projId:/$dxDirOnProject/$fname" > /tmp/X_dx_cat
         end=`date +%s`
         runtime1=$((end-start))
-        echo "dx-cat, $runtime1, $fname" >> $HOME/out/result/result.txt
 
         start=`date +%s`
         echo "copying from dxfs2"
-        copy_with_dxfs2 $fname
+        cat "$mountpoint/$dxDirOnProject/$fname" > /tmp/X_dxfs2
         end=`date +%s`
         runtime2=$((end-start))
-        echo "dxfs2, $runtime2, $fname"  >> $HOME/out/result/result.txt
+
+        echo "sanity check, compare data"
+        diff /tmp/X_dxfs2 /tmp/X_dx_cat
+
+        sizeDesc=$(ls -lh /tmp/X_dxfs2 | cut -d ' ' -f 5)
+        echo "dx-cat,$runtime1,$sizeDesc"  >> $HOME/out/result/result.txt
+        echo "dxfs2,$runtime2,$sizeDesc"  >> $HOME/out/result/result.txt
     done
 
     echo "unmounting dxfs2"
     sudo umount $mountpoint
 
-    dx-upload-all-outputs
+    results=$(cat $HOME/out/result/result.txt)
+    for line in $results; do
+        dx-jobutil-add-output --array --class=array:string result $line
+    done
+
+    #dx-upload-all-outputs
 }
