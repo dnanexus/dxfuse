@@ -16,6 +16,7 @@ import (
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
+	"github.com/hashicorp/go-retryablehttp" // use http libraries from hashicorp for implement retry logic
 	"github.com/dnanexus/dxda"
 	"golang.org/x/net/context"
 
@@ -57,7 +58,8 @@ func Mount(
 	}
 
 	// describe the project, get some describing metadata for it
-	projDesc, err := DxDescribeProject(&dxEnv, projectId)
+	tmpHttpClient := NewHttpClient(false)
+	projDesc, err := DxDescribeProject(tmpHttpClient, &dxEnv, projectId)
 	if err != nil {
 		return err
 	}
@@ -84,6 +86,12 @@ func Mount(
 		return err
 	}
 
+	// initialize a pool of http-clients.
+	httpClientPool := make(chan *retryablehttp.Client, HTTP_CLIENT_POOL_SIZE)
+	for i:=0; i < HTTP_CLIENT_POOL_SIZE; i++ {
+		httpClientPool <- NewHttpClient(true)
+	}
+
 	fsys := &Filesys{
 		dxEnv : dxEnv,
 		options: options,
@@ -94,6 +102,7 @@ func Mount(
 		mutex : sync.Mutex{},
 		inodeCnt : INODE_INITIAL,
 		db : db,
+		httpClientPool : httpClientPool,
 	}
 
 	// extra debugging information from FUSE
@@ -106,7 +115,7 @@ func Mount(
 	log.Printf("mounted dxfs2")
 
 	// create the metadata database
-	if err = MetadataDbInit(fsys); err != nil {
+	if err = fsys.MetadataDbInit(); err != nil {
 		return err
 	}
 
@@ -167,7 +176,7 @@ func (fsys *Filesys) Root() (fs.Node, error) {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
 
-	return MetadataDbRoot(fsys)
+	return fsys.MetadataDbRoot()
 }
 
 
@@ -199,7 +208,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 		log.Printf("ReadDirAll dir=%s\n", dir.FullPath)
 	}
 
-	files, subdirs, err := MetadataDbReadDirAll(dir.Fsys, dir.FullPath)
+	files, subdirs, err := dir.Fsys.MetadataDbReadDirAll(dir.FullPath)
 	if err != nil {
 		return nil, err
 	}
@@ -248,7 +257,7 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 	dir.Fsys.mutex.Lock()
 	defer dir.Fsys.mutex.Unlock()
 
-	return MetadataDbLookupInDir(dir.Fsys, dir.FullPath, req.Name)
+	return dir.Fsys.MetadataDbLookupInDir(dir.FullPath, req.Name)
 }
 
 func (f *File) Attr(ctx context.Context, a *fuse.Attr) error {
@@ -280,7 +289,10 @@ func (f *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenR
 	payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
 		f.ProjId, secondsInYear)
 
-	body, err := DxAPI(&f.Fsys.dxEnv, fmt.Sprintf("%s/download", f.FileId), payload)
+	// used a shared http client
+	httpClient := <-f.Fsys.httpClientPool
+	body, err := DxAPI(httpClient, &f.Fsys.dxEnv, fmt.Sprintf("%s/download", f.FileId), payload)
+	f.Fsys.httpClientPool <- httpClient
 	if err != nil {
 		return nil, err
 	}
@@ -310,7 +322,15 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 var _ = fs.HandleReader(&FileHandle{})
 
 func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
+	if fh.f.Size == 0 || req.Size == 0 {
+		// The file is empty
+		return nil
+	}
 	endOfs := req.Offset + int64(req.Size) - 1
+
+	// make sure we don't go over the file size
+	lastByteInFile := fh.f.Size - 1
+	endOfs = MinInt64(lastByteInFile, endOfs)
 
 	// See if the data has already been prefetched.
 	// This call will wait, if a prefetch IO is in progress.
@@ -335,7 +355,10 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 		log.Printf("Read  ofs=%d  len=%d\n", req.Offset, req.Size)
 	}
 
-	body,err := DxHttpRequest(nil, "GET", fh.url.URL, headers, []byte("{}"))
+	// Take an http client from the pool. Return it when done.
+	httpClient := <-fh.f.Fsys.httpClientPool
+	body,err := DxHttpRequest(httpClient, "GET", fh.url.URL, headers, []byte("{}"))
+	fh.f.Fsys.httpClientPool <- httpClient
 	if err != nil {
 		return err
 	}

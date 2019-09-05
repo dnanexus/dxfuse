@@ -10,6 +10,7 @@ import (
 
 	// The dxda package has the get-environment code
 	"github.com/dnanexus/dxda"
+	"github.com/hashicorp/go-retryablehttp" // use http libraries from hashicorp for implement retry logic
 )
 
 // Limit on the number of objects that the bulk-describe API can take
@@ -48,7 +49,10 @@ func dxTimeToUnixTime(dxTime int64) time.Time {
 
 
 // Describe a large number of file-ids in one API call.
-func submit(dxEnv *dxda.DXEnvironment, fileIds []string) (map[string]DxDescribe, error) {
+func submit(
+	httpClient *retryablehttp.Client,
+	dxEnv *dxda.DXEnvironment,
+	fileIds []string) (map[string]DxDescribe, error) {
 	request := Request{
 		Objects : fileIds,
 	}
@@ -59,7 +63,7 @@ func submit(dxEnv *dxda.DXEnvironment, fileIds []string) (map[string]DxDescribe,
 	}
 	//fmt.Printf("payload = %s", string(payload))
 
-	repJs, err := DxAPI(dxEnv, "system/describeDataObjects", string(payload))
+	repJs, err := DxAPI(httpClient, dxEnv, "system/describeDataObjects", string(payload))
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +95,10 @@ func submit(dxEnv *dxda.DXEnvironment, fileIds []string) (map[string]DxDescribe,
 	return files, nil
 }
 
-func DxDescribeBulkObjects(dxEnv *dxda.DXEnvironment, fileIds []string) (map[string]DxDescribe, error) {
+func DxDescribeBulkObjects(
+	httpClient *retryablehttp.Client,
+	dxEnv *dxda.DXEnvironment,
+	fileIds []string) (map[string]DxDescribe, error) {
 	var gMap = make(map[string]DxDescribe)
 	if len(fileIds) == 0 {
 		return gMap, nil
@@ -110,7 +117,7 @@ func DxDescribeBulkObjects(dxEnv *dxda.DXEnvironment, fileIds []string) (map[str
 	batches = append(batches, fileIds)
 
 	for _, fileIdBatch := range(batches) {
-		m, err := submit(dxEnv, fileIdBatch)
+		m, err := submit(httpClient, dxEnv, fileIdBatch)
 		if err != nil {
 			return nil, err
 		}
@@ -147,6 +154,7 @@ type DxListFolder struct {
 // Issue a /project-xxxx/listFolder API call. Get
 // back a list of object-ids and sub-directories.
 func listFolder(
+	httpClient *retryablehttp.Client,
 	dxEnv *dxda.DXEnvironment,
 	projectId string,
 	dir string) (*DxListFolder, error) {
@@ -162,7 +170,7 @@ func listFolder(
 		return nil, err
 	}
 	dxRequest := fmt.Sprintf("%s/listFolder", projectId)
-	repJs, err := DxAPI(dxEnv, dxRequest , string(payload))
+	repJs, err := DxAPI(httpClient, dxEnv, dxRequest , string(payload))
 	if err != nil {
 		return nil, err
 	}
@@ -189,18 +197,19 @@ func listFolder(
 
 
 func DxDescribeFolder(
+	httpClient *retryablehttp.Client,
 	dxEnv *dxda.DXEnvironment,
 	projectId string,
 	dir string) (*DxFolder, error) {
 
 	// The listFolder API call returns a list of object ids and folders.
 	// We could describe the objects right here, but we do that separately.
-	folderInfo, err := listFolder(dxEnv, projectId, dir)
+	folderInfo, err := listFolder(httpClient, dxEnv, projectId, dir)
 	if err != nil {
 		log.Printf("error %s", err.Error())
 		return nil, err
 	}
-	files, err := DxDescribeBulkObjects(dxEnv, folderInfo.fileIds)
+	files, err := DxDescribeBulkObjects(httpClient, dxEnv, folderInfo.fileIds)
 	if err != nil {
 		log.Printf("error %s", err.Error())
 		return nil, err
@@ -228,6 +237,7 @@ type ReplyDescribeProject struct {
 }
 
 func DxDescribeProject(
+	httpClient *retryablehttp.Client,
 	dxEnv *dxda.DXEnvironment,
 	projectId string) (*DxDescribePrj, error) {
 
@@ -248,7 +258,7 @@ func DxDescribeProject(
 	}
 
 	dxRequest := fmt.Sprintf("%s/describe", projectId)
-	repJs, err := DxAPI(dxEnv, dxRequest, string(payload))
+	repJs, err := DxAPI(httpClient, dxEnv, dxRequest, string(payload))
 	if err != nil {
 		return nil, err
 	}

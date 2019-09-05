@@ -3,11 +3,15 @@ package dxfs2
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"strings"
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net/http"
+	"os"
 	"strconv"
 	"time"
 
@@ -82,9 +86,63 @@ func isRetryable(status string) bool {
 	}
 }
 
-func newHttpClient() *retryablehttp.Client {
+
+// These clients are intended for reuse in the same host. Throwing them
+// away will gradually leak file descriptors.
+func NewHttpClient(pooled bool) *retryablehttp.Client {
+	localCertFile := os.Getenv("DX_TLS_CERTIFICATE_FILE")
+	if localCertFile == "" {
+		client := cleanhttp.DefaultClient()
+		if pooled {
+			client = cleanhttp.DefaultPooledClient()
+		}
+		return &retryablehttp.Client{
+			HTTPClient:   client,
+			Logger:       log.New(ioutil.Discard, "", 0), // Throw away retryablehttp internal logging
+			RetryWaitMin: minRetryTime * time.Second,
+			RetryWaitMax: maxRetryTime * time.Second,
+			RetryMax:     maxRetryCount,
+			CheckRetry:   retryablehttp.DefaultRetryPolicy,
+			Backoff:      retryablehttp.DefaultBackoff,
+		}
+	}
+
+	insecure := false
+	if os.Getenv("DX_TLS_SKIP_VERIFY") == "true" {
+		insecure = true
+	}
+
+	// Get the SystemCertPool, continue with an empty pool on error
+	rootCAs, _ := x509.SystemCertPool()
+	if rootCAs == nil {
+		rootCAs = x509.NewCertPool()
+	}
+
+	// Read in the cert file
+	certs, err := ioutil.ReadFile(localCertFile)
+	if err != nil{
+		panic("Could not read certificate file")
+	}
+
+	// Append our cert to the system pool
+	if ok := rootCAs.AppendCertsFromPEM(certs); !ok {
+		log.Println("No certs appended, using system certs only")
+	}
+
+	// Trust the augmented cert pool in our client
+	config := &tls.Config{
+		InsecureSkipVerify: insecure,
+		RootCAs:            rootCAs,
+	}
+
+	tr := cleanhttp.DefaultTransport()
+	if pooled {
+		tr = cleanhttp.DefaultPooledTransport()
+	}
+	tr.TLSClientConfig = config
+
 	return &retryablehttp.Client{
-		HTTPClient:   cleanhttp.DefaultClient(),
+		HTTPClient:   &http.Client{Transport: tr},
 		Logger:       log.New(ioutil.Discard, "", 0), // Throw away retryablehttp internal logging
 		RetryWaitMin: minRetryTime * time.Second,
 		RetryWaitMax: maxRetryTime * time.Second,
@@ -94,17 +152,13 @@ func newHttpClient() *retryablehttp.Client {
 	}
 }
 
+
 func dxHttpRequestCore(
 	client *retryablehttp.Client,
 	requestType string,
 	url string,
 	headers map[string]string,
 	data []byte) (body []byte, err error, status string) {
-
-	if client == nil {
-		// if the client is not provided, create a fresh one
-		client = newHttpClient()
-	}
 
 	// Safety procedure to force timeout to prevent hanging
 	ctx, cancel := context.WithCancel(context.TODO())
@@ -176,7 +230,11 @@ func DxHttpRequest(
 
 
 // DxAPI - Function to wrap a generic API call to DNAnexus
-func DxAPI(dxEnv *dxda.DXEnvironment, api string, payload string) (body []byte, err error) {
+func DxAPI(
+	client *retryablehttp.Client,
+	dxEnv *dxda.DXEnvironment,
+	api string,
+	payload string) (body []byte, err error) {
 	if (dxEnv.Token == "") {
 		err := errors.New("The token is not set. This may be because the environment isn't set.")
 		return nil, err
@@ -191,5 +249,5 @@ func DxAPI(dxEnv *dxda.DXEnvironment, api string, payload string) (body []byte, 
 		dxEnv.ApiServerHost,
 		dxEnv.ApiServerPort,
 		api)
-	return DxHttpRequest(nil, "POST", url, headers, []byte(payload))
+	return DxHttpRequest(client, "POST", url, headers, []byte(payload))
 }

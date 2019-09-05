@@ -232,7 +232,7 @@ func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq
 func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 	// reuse this http client. The idea is to be able to reuse http connections.
 	// I don't know if this actually happens.
-	client := newHttpClient()
+	client := NewHttpClient(true)
 
 	for true {
 		ioReq := <-pgs.ioQueue

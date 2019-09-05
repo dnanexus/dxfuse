@@ -8,7 +8,6 @@ import sys
 import time
 
 import dxpy
-import util
 
 from typing import Callable, Iterator, Union, Optional, List
 
@@ -74,13 +73,11 @@ def main():
     argparser.add_argument("--verbose", help="Verbose outputs",
                            action="store_true", default=False)
     argparser.add_argument("--project", help="DNAx project to take data from",
-                           default="dxfs2_test_data")
+                           default="project-FbZ25gj04J9B8FJ3Gb5fVP41")
     args = argparser.parse_args()
 
-    # some sanity checks
-    dxProj = util.get_project(args.project)
-
-    test_download_entire_project(dxProj)
+    dxProj = dxpy.DXProject(args.project)
+    benchmark(dxProj)
 
 if __name__ == '__main__':
     main()

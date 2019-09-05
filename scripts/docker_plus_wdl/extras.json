@@ -1,0 +1,12 @@
+{
+  "default_task_dx_attributes" : {
+    "runSpec": {
+        "access" : {
+          "project": "CONTRIBUTE",
+          "network": [
+            "*"
+          ]
+        }
+    }
+  }
+}
