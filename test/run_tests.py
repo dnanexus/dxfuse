@@ -64,7 +64,7 @@ def get_project(project_name):
         raise Exception('Found more than 1 project matching {0}'.format(project_name))
 
 
-def launch(project, bench_applet):
+def launch_and_wait(project, bench_applet):
     # Run the workflows
     jobs=[]
     print("Launching benchmark applet")
@@ -94,17 +94,31 @@ def extract_results(jobs):
             parts = line.split(",")
             print("{}, {}, {}, {}".format(i_type, parts[0], parts[1], parts[2]))
 
+def run_benchmarks(dx_proj):
+    bench_applet = lookup_applet("dxfs2_benchmark", dx_proj, "/applets")
+    jobs = launch_and_wait(dx_proj, bench_applet)
+    extract_results(jobs)
+
+def run_correctness(dx_proj):
+    applet = lookup_applet("dxfs2_correctness", dx_proj, "/applets")
+    jobs = launch_and_wait(dx_proj, applet)
+
 def main():
     argparser = argparse.ArgumentParser(description="Run benchmarks on several instance types for dxfs2")
     argparser.add_argument("--project", help="DNAnexus project",
                            default="dxfs2_test_data")
+    argparser.add_argument("--suite", help="which testing suite to run [benchmark, correctness]",
+                           default="correctness")
     args = argparser.parse_args()
 
     dx_proj = get_project(args.project)
-    bench_applet = lookup_applet("dxfs2_benchmark", dx_proj, "/applets")
-    jobs = launch(dx_proj, bench_applet)
-    #jobs2 = [dxpy.DXJob(dxid=j) for j in jobs]
-    extract_results(jobs)
+    if args.suite == "benchmark":
+        run_benchmarks(dx_proj)
+    elif args.suite == "correctness":
+        run_correctness(dx_proj)
+    else:
+        print("Unknown test suite {}".format(args.suite))
+        exit(1)
 
 if __name__ == '__main__':
     main()
