@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dnanexus/dxda"
 	"github.com/hashicorp/go-retryablehttp" // use http libraries from hashicorp for implement retry logic
 )
 
@@ -153,7 +154,7 @@ func (pgs *PrefetchGlobalState) readData(
 	}
 	headers["Range"] = fmt.Sprintf("bytes=%d-%d", startByte, endByte)
 
-	data, err := DxHttpRequest(client, "GET", url.URL, headers, []byte("{}"))
+	data, err := dxda.DxHttpRequest(client, "GET", url.URL, headers, []byte("{}"))
 	if pgs.verbose {
 		if err == nil {
 			log.Printf("prefetch: IO returned correctly len=%d", len(data))
@@ -231,8 +232,7 @@ func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq
 
 func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 	// reuse this http client. The idea is to be able to reuse http connections.
-	// I don't know if this actually happens.
-	client := NewHttpClient(true)
+	client := dxda.NewHttpClient(true)
 
 	for true {
 		ioReq := <-pgs.ioQueue
@@ -740,5 +740,4 @@ func (pgs *PrefetchGlobalState) CacheLookup(fileId string, startOfs int64, endOf
 	default:
 		panic(fmt.Sprintf("bad retval from cacheLookupOnce %d", retval))
 	}
-	return nil
 }
