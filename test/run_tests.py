@@ -101,13 +101,17 @@ def run_benchmarks(dx_proj):
 
 def run_correctness(dx_proj):
     applet = lookup_applet("dxfs2_correctness", dx_proj, "/applets")
-    jobs = launch_and_wait(dx_proj, applet)
+    launch_and_wait(dx_proj, applet)
+
+def run_download(dx_proj):
+    applet = lookup_applet("dxfs2_download_only", dx_proj, "/applets")
+    launch_and_wait(dx_proj, applet)
 
 def main():
     argparser = argparse.ArgumentParser(description="Run benchmarks on several instance types for dxfs2")
     argparser.add_argument("--project", help="DNAnexus project",
                            default="dxfs2_test_data")
-    argparser.add_argument("--suite", help="which testing suite to run [benchmark, correctness]",
+    argparser.add_argument("--suite", help="which testing suite to run [benchmark, correctness, download]",
                            default="correctness")
     args = argparser.parse_args()
 
@@ -116,6 +120,8 @@ def main():
         run_benchmarks(dx_proj)
     elif args.suite == "correctness":
         run_correctness(dx_proj)
+    elif args.suite == "download":
+        run_download(dx_proj)
     else:
         print("Unknown test suite {}".format(args.suite))
         exit(1)

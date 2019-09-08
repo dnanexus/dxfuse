@@ -125,7 +125,7 @@ func (pgs *PrefetchGlobalState) Init(verboseLevel int) {
 	}
 
 	// start a periodic thread to cleanup the table if needed
-	//go pgs.tableCleanupWorker()
+	go pgs.tableCleanupWorker()
 }
 
 func check(value bool) {
