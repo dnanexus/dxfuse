@@ -7,20 +7,21 @@ set -e -o pipefail
 ######################################################################
 ## constants
 
+projId="project-FbZ25gj04J9B8FJ3Gb5fVP41"
+dxDirOnProject="correctness"
+
 baseDir="$HOME/dxfs2_test"
 dxTrgDir="${baseDir}/dxCopy"
 mountpoint="${baseDir}/MNT"
-projId="project-FbZ25gj04J9B8FJ3Gb5fVP41"
 
-dxDirOnProject="correctness"
-
-outputDir=$HOME/out/result
+dxfs2Dir="$mountpoint/$dxDirOnProject"
+dxpyDir="${baseDir}/dxCopy/$dxDirOnProject"
 
 ######################################################################
 
 function check_tree {
-    tree -n $mountpoint -o dxfs2.org.txt
-    tree -n $dxTrgDir -o dxpy.org.txt
+    tree -n $dxfs2Dir -o dxfs2.org.txt
+    tree -n $dxpyDir -o dxpy.org.txt
 
     # The first line is different, we need to get rid of it
     tail --lines=+2 dxfs2.org.txt > dxfs2.txt
@@ -37,8 +38,8 @@ function check_tree {
 
 function check_ls {
     d=$(pwd)
-    cd $mountpoint; ls -R > $d/dxfs2.txt
-    cd $dxTrgDir; ls -R > $d/dxpy.txt
+    cd $dxfs2Dir; ls -R > $d/dxfs2.txt
+    cd $dxpyDir; ls -R > $d/dxpy.txt
     cd $d
     diff dxfs2.txt dxpy.txt > D.txt || true
     if [[ -s D.txt ]]; then
@@ -52,15 +53,15 @@ function check_ls {
 function check_cmd_line_utils {
     d=$(pwd)
 
-    cd $mountpoint
+    cd $dxfs2Dir
     files=$(find . -type f)
     cd $d
 
     for f in $files; do
         echo $f
 
-        dxfs2_f=$mountpoint/$f
-        dxpy_f=$dxTrgDir/$f
+        dxfs2_f=$dxfs2Dir/$f
+        dxpy_f=$dxpyDir/$f
 
         # wc should return the same result
         wc < $dxfs2_f > 1.txt
@@ -118,8 +119,7 @@ main() {
 
     # do not exit immediately if there are differences; we want to see the files
     # that aren't the same
-    mkdir -p $outputDir
-    diff -r --brief $dxTrgDir $mountpoint > diff.txt || true
+    diff -r --brief $dxpyDir $dxfs2Dir > diff.txt || true
     if [[ -s diff.txt ]]; then
         echo "Difference in basic file structure"
         cat diff.txt
@@ -127,12 +127,15 @@ main() {
     fi
 
     # tree
+    echo "Check the tree command"
     check_tree
 
     # ls
+    echo "Checking ls -R"
     check_ls
 
     # find
+    echo "Checking head, tail, wc"
     check_cmd_line_utils
 
     # stat

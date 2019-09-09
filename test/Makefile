@@ -3,7 +3,7 @@ all : dxfs2 copy_all
 	dx build dxfs2_correctness -f --destination dxfs2_test_data:/applets/dxfs2_correctness
 	dx build dxfs2_download_only -f --destination dxfs2_test_data:/applets/dxfs2_download_only
 
-dxfs2 :
+dxfs2 : ../*.go
 	go build -o dxfs2 /go/src/github.com/dnanexus/dxfs2/cmd/main.go
 
 copy_all : dxfs2

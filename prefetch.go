@@ -410,13 +410,16 @@ func markRangeInIovec(iovec *Iovec, startOfs int64, endOfs int64) {
 	}
 }
 
-// Find the range of io-vectors in cache that cover this IO
-func (pgs *PrefetchGlobalState) findCoveringRange(
+// Find the range of io-vectors in cache that this IO covers.
+func (pgs *PrefetchGlobalState) findCoveredRange(
 	pfm *PrefetchFileMetadata,
 	startOfs int64,
 	endOfs int64) (int, int) {
-	first := -1
-	last := -1
+	// check if there is ANY intersection with cache
+	if endOfs < pfm.cache.startByte ||
+		pfm.cache.endByte < startOfs {
+		return -1, -1
+	}
 
 	if pgs.verboseLevel >= 2 {
 		for i, iovec := range pfm.cache.iovecs {
@@ -424,6 +427,7 @@ func (pgs *PrefetchGlobalState) findCoveringRange(
 		}
 	}
 
+	first := -1
 	for k, iovec := range pfm.cache.iovecs {
 		if iovec.startByte <= startOfs &&
 			iovec.endByte >= startOfs {
@@ -431,7 +435,9 @@ func (pgs *PrefetchGlobalState) findCoveringRange(
 			break
 		}
 	}
+	check(first >= 0)
 
+	last := -1
 	for k, iovec := range pfm.cache.iovecs {
 		if iovec.startByte <= endOfs &&
 			iovec.endByte >= endOfs {
@@ -439,11 +445,13 @@ func (pgs *PrefetchGlobalState) findCoveringRange(
 			break
 		}
 	}
+	if last == -1 {
+		// The IO ends after the cache.
+		last = len(pfm.cache.iovecs) - 1
+	}
 
-	check(first >= 0)
-	check(last >= 0)
 	if pgs.verboseLevel >= 2 {
-		log.Printf("findCoveringRange: first,last=(%d,%d)  IO=[%d -- %d]",
+		log.Printf("findCoverRange: first,last=(%d,%d)  IO=[%d -- %d]",
 			first, last, startOfs, endOfs)
 	}
 
@@ -556,7 +564,10 @@ func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 	startOfs int64,
 	endOfs int64) {
 	// Mark the areas in cache that this IO accessed
-	first, last := pgs.findCoveringRange(pfm, startOfs, endOfs)
+	first, last := pgs.findCoveredRange(pfm, startOfs, endOfs)
+	if first == -1 && last == -1 {
+		return
+	}
 	for i := first; i <= last; i++ {
 		markRangeInIovec(pfm.cache.iovecs[i], startOfs, endOfs)
 	}
