@@ -58,7 +58,7 @@ func Mount(
 	}
 
 	// describe the project, get some describing metadata for it
-	tmpHttpClient := NewHttpClient(false)
+	tmpHttpClient := dxda.NewHttpClient(false)
 	projDesc, err := DxDescribeProject(tmpHttpClient, &dxEnv, projectId)
 	if err != nil {
 		return err
@@ -89,7 +89,7 @@ func Mount(
 	// initialize a pool of http-clients.
 	httpClientPool := make(chan *retryablehttp.Client, HTTP_CLIENT_POOL_SIZE)
 	for i:=0; i < HTTP_CLIENT_POOL_SIZE; i++ {
-		httpClientPool <- NewHttpClient(true)
+		httpClientPool <- dxda.NewHttpClient(true)
 	}
 
 	fsys := &Filesys{
@@ -291,7 +291,7 @@ func (f *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenR
 
 	// used a shared http client
 	httpClient := <-f.Fsys.httpClientPool
-	body, err := DxAPI(httpClient, &f.Fsys.dxEnv, fmt.Sprintf("%s/download", f.FileId), payload)
+	body, err := dxda.DxAPI(httpClient, &f.Fsys.dxEnv, fmt.Sprintf("%s/download", f.FileId), payload)
 	f.Fsys.httpClientPool <- httpClient
 	if err != nil {
 		return nil, err
@@ -357,7 +357,7 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 
 	// Take an http client from the pool. Return it when done.
 	httpClient := <-fh.f.Fsys.httpClientPool
-	body,err := DxHttpRequest(httpClient, "GET", fh.url.URL, headers, []byte("{}"))
+	body,err := dxda.DxHttpRequest(httpClient, "GET", fh.url.URL, headers, []byte("{}"))
 	fh.f.Fsys.httpClientPool <- httpClient
 	if err != nil {
 		return err

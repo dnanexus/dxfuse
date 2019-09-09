@@ -14,7 +14,10 @@ from dxpy.exceptions import DXJobFailureError
 
 # The list of instance types to test on. We don't want too many, because it will be expensive.
 # We are trying to take a representative from small, medium, and large instances.
-instance_types = ["mem1_ssd1_x4", "mem1_ssd1_x16", "mem3_ssd1_x32"]
+scale = {
+    "small" : ["mem1_ssd1_x4"],
+    "large" : ["mem1_ssd1_x4", "mem1_ssd1_x16", "mem3_ssd1_x32"]
+}
 
 def lookup_applet(name, project, folder):
     wfgen = dxpy.bindings.search.find_data_objects(name= name,
@@ -64,7 +67,7 @@ def get_project(project_name):
         raise Exception('Found more than 1 project matching {0}'.format(project_name))
 
 
-def launch_and_wait(project, bench_applet):
+def launch_and_wait(project, bench_applet, instance_types):
     # Run the workflows
     jobs=[]
     print("Launching benchmark applet")
@@ -94,28 +97,42 @@ def extract_results(jobs):
             parts = line.split(",")
             print("{}, {}, {}, {}".format(i_type, parts[0], parts[1], parts[2]))
 
-def run_benchmarks(dx_proj):
+def run_benchmarks(dx_proj, instance_types):
     bench_applet = lookup_applet("dxfs2_benchmark", dx_proj, "/applets")
     jobs = launch_and_wait(dx_proj, bench_applet)
-    extract_results(jobs)
+    extract_results(jobs, instance_types)
 
-def run_correctness(dx_proj):
+def run_correctness(dx_proj, instance_types):
     applet = lookup_applet("dxfs2_correctness", dx_proj, "/applets")
-    jobs = launch_and_wait(dx_proj, applet)
+    launch_and_wait(dx_proj, applet, instance_types)
+
+def run_download(dx_proj, instance_types):
+    applet = lookup_applet("dxfs2_download_only", dx_proj, "/applets")
+    launch_and_wait(dx_proj, applet, instance_types)
 
 def main():
     argparser = argparse.ArgumentParser(description="Run benchmarks on several instance types for dxfs2")
     argparser.add_argument("--project", help="DNAnexus project",
                            default="dxfs2_test_data")
-    argparser.add_argument("--suite", help="which testing suite to run [benchmark, correctness]",
+    argparser.add_argument("--suite", help="which testing suite to run [benchmark, correctness, download]",
                            default="correctness")
+    argparser.add_argument("--scale", help="how large should the test be? [small, large]",
+                           default="small")
     args = argparser.parse_args()
+
+    if args.scale in scale.keys():
+        instance_types = scale[args.scale]
+    else:
+        print("Unknown scale value {}".format(args.scale))
+        exit(1)
 
     dx_proj = get_project(args.project)
     if args.suite == "benchmark":
-        run_benchmarks(dx_proj)
+        run_benchmarks(dx_proj, instance_types)
     elif args.suite == "correctness":
-        run_correctness(dx_proj)
+        run_correctness(dx_proj, instance_types)
+    elif args.suite == "download":
+        run_download(dx_proj, instance_types)
     else:
         print("Unknown test suite {}".format(args.suite))
         exit(1)
