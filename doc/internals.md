@@ -1,57 +1,71 @@
 # The Database Schema
 
-A sqlite3 database is used locally to store filesystem information
+A local sqlite3 database is used to store filesystem information
 discovered by querying DNAnexus. The database type system is a derivative of
 SQL.
 
-The `files` table maintains information for individual files
+The `files` table maintains information for individual files.
 
 | field name | type |  description |
 | ---        | ---  |  --          |
-| file\_id |    text | The DNAx file-id |
-| proj\_id |    text | A project id this file is in |
-| fname    |    text | file name |
-| folder   |    text | the local folder |
-| size     |    integer | size of the file in bytes |
-| inode    |    integer | local inode |
-| ctime    |    integer | creation time |
-| mtime    |    integer | modification time |
+| file\_id   | text | The DNAx file-id |
+| container\_id |	text |	A project or container id for the file |
+| inode      | int  | local filesystem i-node, cannot change |
+| size       | int  | size of the file in bytes |
+| ctime      | int  | creation time |
+| mtime      | int  | modification time |
 
-The primary key is `(folder,fname)`. It stores `stat` information on a file, and maps a file to an inode. This is a stable mapping that is not allowed to change. The local folder is generally the same as the DNAx folder.
+It stores `stat` information on a file, and maps a file to an inode,
+which is the primary key. The inode has no DNAx equivalent, however,
+it cannot change once chosen. Note that a file can be hard linked from
+multiple projects on DNAx, it may also be a member of a container,
+instead of a project. The container field is used at download time to
+inform the system which project to check for ownership. It can safely
+be omitted, at the cost of additional work on the server side.
 
-The `subdirs` table maintains information on the directory structure.
+The `namespace` table stores information on the directory structure.
 
 | field name | type | description |
 | ---        | ---  | --          |
 | proj\_id    | text | the project ID |
 | parent     | text | the parent folder |
-| dname      | text | directory name |
+| name      | text | directory/file name |
+| fullName | text | |
+| type       | int  | directory=1, file=2, potentially others |
+| inode      | int  | local filesystem i-node, cannot change |
 
-The primary key is `(parent,dname)`. For example, directory `/A/B/C` is represented with the record:
+For example, directory `/A/B/C` is represented with the record:
 ```
    proj_id : proj-xxxx
    parent : /A/B
-   dname : C
+   name : C
+   fullName : /A/B/C
+   type:  1
+   inode: 1056
 ```
 
-This table is queries when looking for all subdirectories of `/A/B`.
-
+The primary key is `(parent,dname)`, an additional index is placed on
+the `parent` field. This allows efficiently querying all members of a directory.
+The local folder (parent) is generally the same as the
+DNAx folder. The main exceptions are files with the same name, and
+files with posix disallowed characters, such as slash (`/`).
 
 The `directories` table stores information for individual directories.
 
-| field name | type  |
-| proj_id    | text  |
-| dirFullName | text |
-| inode      | integer |
-| populated | int |
+| field name | type | description |
+| ---        | ---  | --          |
+| proj\_id | text | the project ID |
+| dirFullName | text | full directory name |
+| inode | integer |  local filesystem inode |
+| populated | int |  has the directory been queried? |
 
-It maps a directory to a stable inode. The `populated` flag is zero
-the first time the directory is encounterd. It is set to one, once the
-directory is fully described. The local directory contents does not
-change after the describe calls are complete. This is even if the DNAx
-folder changes. In order to get updates, the filesystem needs to be
-unmounted and remounted.
+It maps a directory to a stable `inode`, which is the primary key. The
+populated flag is zero the first time the directory is encounterd. It
+is set to one, once the directory is fully described.
 
+The local directory contents does not change after the describe calls
+are complete. The only way to update the directory, in case of
+changes, is to unmount and remount the filesystem.
 
 # Handling files with the same name -- TODO
 
