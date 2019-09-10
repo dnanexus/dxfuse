@@ -6,30 +6,28 @@ SQL.
 
 The `files` table maintains information for individual files
 
-| field name | type |
-| ---        | ---  |
-| file\_id |    text |
-| proj\_id |    text |
-| fname    |    text |
-| folder   |    text |
-| size     |    integer |
-| inode    |    integer |
-| ctime    |    integer |
-| mtime    |    integer |
+| field name | type |  description |
+| ---        | ---  |  --          |
+| file\_id |    text | The DNAx file-id |
+| proj\_id |    text | A project id this file is in |
+| fname    |    text | file name |
+| folder   |    text | the local folder |
+| size     |    integer | size of the file in bytes |
+| inode    |    integer | local inode |
+| ctime    |    integer | creation time |
+| mtime    |    integer | modification time |
 
-The primary key is `(folder,fname)`. It stores `stat` information on a file, and maps a file to an inode. This is a stable mapping that is not allowed to change.
-
+The primary key is `(folder,fname)`. It stores `stat` information on a file, and maps a file to an inode. This is a stable mapping that is not allowed to change. The local folder is generally the same as the DNAx folder.
 
 The `subdirs` table maintains information on the directory structure.
 
-| field name | type |
-| proj_id    | text |
-| parent     | text |
-| dname      | text |
+| field name | type | description |
+| ---        | ---  | --          |
+| proj\_id    | text | the project ID |
+| parent     | text | the parent folder |
+| dname      | text | directory name |
 
-The primary key is `(parent,dname)`
-
-For example, directory `/A/B/C` is represented with the record:
+The primary key is `(parent,dname)`. For example, directory `/A/B/C` is represented with the record:
 ```
    proj_id : proj-xxxx
    parent : /A/B
