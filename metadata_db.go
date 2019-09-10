@@ -167,7 +167,7 @@ func (fsys *Filesys) directoryExists(dirFullName string) (bool, bool, error) {
 		return true, populated, nil
 	default:
 		err = fmt.Errorf(
-			"Two many values returned from db query, zero or one are expected, received %d",
+			"Too many values returned from db query, zero or one are expected, received %d",
 			numRows)
 		return true, false, err
 	}
@@ -376,7 +376,7 @@ func (fsys *Filesys) directoryReadFromDNAx(dirFullName string) error {
 		//log.Printf("dirFullNAme=%s sub=%s lastPart=%s",
 		//dirFullName, subDirName, subDirLastPart)
 
-		// TODO: the [subDirLatPart] cannot include a slash, that is a POSIX
+		// TODO: the [subDirLastPart] cannot include a slash, that is a POSIX
 		// violation.
 
 		sqlStmt := fmt.Sprintf(`
