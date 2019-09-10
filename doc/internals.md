@@ -7,6 +7,7 @@ SQL.
 The `files` table maintains information for individual files
 
 | field name | type |
+| ---        | ---  |
 | file\_id |    text |
 | proj\_id |    text |
 | fname    |    text |
