@@ -9,7 +9,7 @@ The `files` table maintains information for individual files.
 | field name | type |  description |
 | ---        | ---  |  --          |
 | file\_id   | text | The DNAx file-id |
-| container\_id |	text |	A project or container id for the file |
+| proj\_id   |	text |	A project id for the file |
 | inode      | int  | local filesystem i-node, cannot change |
 | size       | int  | size of the file in bytes |
 | ctime      | int  | creation time |
@@ -31,7 +31,7 @@ The `namespace` table stores information on the directory structure.
 | parent     | text | the parent folder |
 | name      | text | directory/file name |
 | fullName | text | |
-| type       | int  | directory=1, file=2, potentially others |
+| type       | int  | directory=1, file=2 |
 | inode      | int  | local filesystem i-node, cannot change |
 
 For example, directory `/A/B/C` is represented with the record:
