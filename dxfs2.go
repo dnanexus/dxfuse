@@ -115,7 +115,7 @@ func Mount(
 	log.Printf("mounted dxfs2")
 
 	// create the metadata database
-	if err = fsys.MetadataDbInit(); err != nil {
+	fsys.MetadataDbInit(); err != nil {
 		return err
 	}
 
