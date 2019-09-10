@@ -9,11 +9,11 @@ The `files` table maintains information for individual files.
 | field name | type |  description |
 | ---        | ---  |  --          |
 | file\_id   | text | The DNAx file-id |
-| proj\_id   |	text |	A project id for the file |
-| inode      | int  | local filesystem i-node, cannot change |
-| size       | int  | size of the file in bytes |
-| ctime      | int  | creation time |
-| mtime      | int  | modification time |
+| proj\_id   | text |	A project id for the file |
+| inode      | bigint  | local filesystem i-node, cannot change |
+| size       | bigint  | size of the file in bytes |
+| ctime      | bigint  | creation time |
+| mtime      | bigint  | modification time |
 
 It stores `stat` information on a file, and maps a file to an inode,
 which is the primary key. The inode has no DNAx equivalent, however,
@@ -27,12 +27,12 @@ The `namespace` table stores information on the directory structure.
 
 | field name | type | description |
 | ---        | ---  | --          |
-| proj\_id    | text | the project ID |
+| proj\_id   | text | the project ID |
 | parent     | text | the parent folder |
-| name      | text | directory/file name |
-| fullName | text | |
-| type       | int  | directory=1, file=2 |
-| inode      | int  | local filesystem i-node, cannot change |
+| name       | text | directory/file name |
+| fullName   | text | |
+| type       | smallint | directory=1, file=2 |
+| inode      | bigint  | local filesystem i-node, cannot change |
 
 For example, directory `/A/B/C` is represented with the record:
 ```
@@ -54,10 +54,10 @@ The `directories` table stores information for individual directories.
 
 | field name | type | description |
 | ---        | ---  | --          |
-| proj\_id | text | the project ID |
+| proj\_id   | text | the project ID |
 | dirFullName | text | full directory name |
-| inode | integer |  local filesystem inode |
-| populated | int |  has the directory been queried? |
+| inode      | bigint |  local filesystem inode |
+| populated  | smallint |  has the directory been queried? |
 
 It maps a directory to a stable `inode`, which is the primary key. The
 populated flag is zero the first time the directory is encounterd. It
