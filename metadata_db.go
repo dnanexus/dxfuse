@@ -474,13 +474,62 @@ func (fsys *Filesys) MetadataDbReadDirAll(
 	return fsys.directoryReadAllEntries(dirFullName)
 }
 
+// search for a file with a particular inode
+func (fsys *Filesys) lookupFile(
+	dirFullName string,
+	fname string,
+	inode int64) (fs.File, error) {
+	// point lookup in the files table
+	sqlStmt := fmt.Sprintf(`
+ 		        SELECT file_id,proj_id,size,ctime,mtime
+                        FROM files
+			WHERE inode = '%d';
+			`, inode)
+	rows, err := fsys.db.Query(sqlStmt)
+	if err != nil {
+		log.Printf(err.Error())
+		panic(fmt.Sprintf("could not file file inode=%d dir=%s name=%s",
+			inode, dirFullName, fname))
+	}
+
+	var f File
+	f.Fsys = fsys
+	f.Name = fname
+	f.Inode = inode
+	numRows := 0
+	for rows.Next() {
+		var ctime int64
+		var mtime int64
+		rows.Scan(&f.FileId, &f.ProjId, &f.Size, &ctime, &mtime)
+		f.Ctime = time.Unix(ctime, 0)
+		f.Mtime = time.Unix(mtime, 0)
+		numRows++
+	}
+	rows.Close()
+
+	switch numRows {
+	case 0:
+		// file not found
+		panic("File (inode=%d, dir=%s, name=%s) should exist in the files table, but doesn't exist",
+			inode, dirFullName, fname)
+	case 1:
+		// correct, there is exactly one such file
+		return &f, nil
+	default:
+		panic(fmt.Sprintf("Found %d files of the form %s/%s",
+			numRows, dirFullName, dirOrFileName))
+	}
+}
+
+// Search for a file/subdir in a directory
 func (fsys *Filesys) fastLookup(
 	dirFullName string,
 	dirOrFileName string) (fs.Node, error) {
-	// point lookup in the files table
+	// point lookup in the namespace
 	sqlStmt := fmt.Sprintf(`
- 		        SELECT file_id,proj_id,fname,size,inode,ctime,mtime FROM files
-			WHERE folder = '%s' AND fname = '%s';
+ 		        SELECT type,inode
+                        FROM namespace
+			WHERE parent = '%s' AND name = '%s';
 			`,
 		dirFullName, dirOrFileName)
 	rows, err := fsys.db.Query(sqlStmt)
@@ -489,61 +538,37 @@ func (fsys *Filesys) fastLookup(
 		return nil, err
 	}
 
-	var f File
-	f.Fsys = fsys
+	var inode int64
+	var objType int
 	numRows := 0
 	for rows.Next() {
-		var ctime int64
-		var mtime int64
-		rows.Scan(&f.FileId, &f.ProjId, &f.Name, &f.Size, &f.Inode, &ctime, &mtime)
-		f.Ctime = time.Unix(ctime, 0)
-		f.Mtime = time.Unix(mtime, 0)
+		rows.Scan(&objType, &inode)
 		numRows++
 	}
 	rows.Close()
-	if numRows == 1 {
-		return &f, nil
+	if numRows == 0 {
+		return nil, fuse.ENOENT
 	}
 	if numRows > 1 {
-		err = fmt.Errorf("Found %d files of the form %s/%s",
-			numRows, dirFullName, dirOrFileName)
-		return nil, err
+		panic(fmt.Sprintf("Found %d files of the form %s/%s",
+			numRows, dirFullName, dirOrFileName))
 	}
 
-	// do a point lookup in the directory table
-	fullPath := makeFullPath(dirFullName, dirOrFileName)
-	sqlStmt = fmt.Sprintf(`
- 		        SELECT inode FROM directories
-			WHERE dirFullName = '%s';
-			`,
-		fullPath)
-
-	rows, err = fsys.db.Query(sqlStmt)
-	if err != nil {
-		return nil, err
+	// There is exactly one answer
+	switch objType {
+	case nsDirType:
+		return &Dir{
+			Fsys : fsys,
+			Parent : dirFullName,
+			Dname : dirOrFileName,
+			FullPath : makeFullPath(dirFullName, dirOrFileName),
+			inode : inode
+		}
+	case nsFileType:
+		return fsys.lookupFile(dirFullName, dirOrFileName, inode)
+	default:
+		panic(fmt.Sprintf("Invalid object type %d", objType))
 	}
-
-	var d Dir
-	d.Fsys = fsys
-	d.Parent = dirFullName
-	d.Dname = dirOrFileName
-	d.FullPath = fullPath
-	numRows = 0
-	for rows.Next() {
-		rows.Scan(&d.Inode)
-		numRows++
-	}
-	rows.Close()
-
-	if numRows == 1 {
-		return &d, nil
-	}
-	if numRows > 1 {
-		return nil, fmt.Errorf("Found %d > 1 entries for directory %s", numRows, d.FullPath)
-	}
-
-	// no such entry
-	return nil, fuse.ENOENT
 }
 
 // Look for file [filename] in directory [parent]/[dname].
@@ -558,67 +583,28 @@ func (fsys *Filesys) MetadataDbLookupInDir(
 	dirOrFileName string) (fs.Node, error) {
 
 	retval, populated, err := fsys.directoryExists(dirFullName)
+	if err != nil {
+		// This covers the case where the directory does not exist
+		return err
+	}
 	if retval && populated {
 		// The directory exists, and has already been populated.
 		// I think this is the normal path.
 		return fsys.fastLookup(dirFullName, dirOrFileName)
 	}
 
-	// Slow path,
-	files, subdirs, err := fsys.MetadataDbReadDirAll(dirFullName)
-	if err != nil {
-		return nil, err
-	}
-
-	// Is this a file?
-	fileElem, ok := files[dirOrFileName]
-	if ok {
-		return &fileElem, nil
-	}
-
-	// Is this a directory
-	dirElem, ok := subdirs[dirOrFileName]
-	if ok {
-		return &dirElem, nil
-	}
-
-	// no such entry
-	return nil, fuse.ENOENT
+	// The directory exists, but has not been populated yet.
+	_, _, err := fsys.MetadataDbReadDirAll(dirFullName)
+	return fsys.fastLookup(dirFullName, dirOrFileName)
 }
 
 // Return the root directory
 func (fsys *Filesys) MetadataDbRoot() (*Dir, error) {
-	sqlStmt := fmt.Sprintf(`
- 		        SELECT inode FROM directories
-			WHERE dirFullName = "/";
-			`)
-	rows, err := fsys.db.Query(sqlStmt)
-	if err != nil {
-		return nil, err
-	}
-
-	var d Dir
-	d.Fsys = fsys
-	d.Parent = ""
-	d.Dname = "/"
-	d.FullPath = "/"
-	numRows := 0
-	for rows.Next() {
-		rows.Scan(&d.Inode)
-		numRows++
-	}
-	rows.Close()
-
-	if fsys.options.Verbose {
-		log.Printf("Read root dir, inode=%d", d.Inode)
-	}
-
-	switch numRows {
-	case 0:
-		return nil, fmt.Errorf("Could not find root directory")
-	case 1:
-		return &d, nil
-	default:
-		return nil, fmt.Errorf("Found more than one root directory")
+	return &Dir{
+		Fsys : fsys,
+		Parent : "",
+		Dname = "/",
+		FullPath = "/",
+		Inode : INODE_ROOT_DIR,
 	}
 }
