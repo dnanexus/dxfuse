@@ -1,6 +1,7 @@
 package dxfs2
 
 import (
+	"filepath"
 	"fmt"
 	"log"
 	"strconv"
@@ -9,96 +10,52 @@ import (
 
 // Try to fix a DNAx directory, so it will adhere to POSIX.
 //
-// 1. If several files share the same name, make the unique by adding a prefix.
-//    For example:
+// 1. If several files share the same name, make them unique by moving into an
+//    extra subdirectory. For example:
 //
 //    src name file-id      new name
 //    X.txt    file-0001    X.txt
-//    X.txt    file-0005    X_1.txt
-//    X.txt    file-0012    X_2.txt
+//    X.txt    file-0005    1/X.txt
+//    X.txt    file-0012    2/X.txt
 //
-// 2. DNAx files can include slashes. Replace these with underscores, while keeping
-//    filenames unique.
+// 2. DNAx files can include slashes. Drop these files, with a put note in the log.
 //
-// 3. A directory and a file can have the same name
-
-
-// If a file is of the form AAA.txt, return AAA_SUFF.txt.
+// 3. A directory and a file can have the same name. This is not handled right now.
 //
-// Examples:
-//    source filename     result
-//    foobar              foobar_SUFFIX
-//    foobar.gz           foobar_SUFFIX.gz
-//    foobar.tar.gz       foobar_SUFFIX.tar.gz
-func addToBasename(name string, suffix string) string {
-	parts := strings.Split(name, ".")
-	if len(parts) == 0 {
-		// The file contains only dots. Is that even possible?
-		return name + "_" + suffix
-	}
+type PosixDir struct {
+	fullName  string   // entire folder path
+	files     []DxDescribeDataObject
+	subdirs   []string
 
-	parts[0] = parts[0] + "_" + suffix
-	return strings.Join(parts, ".")
+	// additional subdirectories holding files that have multiple versions,
+	// and could not be placed in the original location.
+	fauxSubdirs map[string]([]DxDescribeDataObject)
 }
 
-func chooseUniqueName(
-	fnameOrg string,
-	used map[string]bool,
-	choiceLimit int,
-	removeSlashes bool) string {
+func makeCut(files []DxDescribeDataObject) ([]DxDescribeDataObject, []DxDescribeDataObject) {
+	used := make(map[string]bool)
+	remaining := make([]DxDescribeDataObject, 0)
+	firstTimers := make([]DxDescribeDataObject, 0)
 
-	// get rid of slashes, if there are any
-	fnameNormal := fnameOrg
-	if removeSlashes {
-		fnameNormal = strings.ReplaceAll(fnameOrg, "/", "_")
-	}
-
-	if !used[fnameNormal] {
-		return fnameNormal
-	}
-
-	// Name is already used. Try adding _NUMBER to the core
-	// name, until you find a name that isn't already used
-	cnt := 1
-	fnameUnq := fnameNormal
-	for used[fnameUnq] {
-		s := strconv.Itoa(cnt)
-		fnameUnq = addToBasename(fnameNormal, s)
-		cnt += 1
-		if cnt >= choiceLimit {
-			panic(fmt.Errorf("Too many iterations, %d > %d", cnt, choiceLimit))
+	for _, fDesc := range files {
+		_, ok := used[fDesc.Name]
+		if ok {
+			// We have already seen a file with this name
+			remaining = append(remaining, fDesc)
+		} else {
+			// first time for this file name
+			firstTimers = append(firstTimers, fDesc)
+			used[fDesc.Name] = true
 		}
 	}
-	return fnameUnq
-}
-
-// Rename files such that they are unique, and do not contain slashes.
-func fixFileNames(files map[string]string, alreadyUsed []string) map[string]string {
-	// This is really a set that keeps track
-	// of the unique names used.
-	used := make(map[string]bool)
-	for _, nm := range alreadyUsed {
-		used[nm] = true
-	}
-	totNumFiles := len(files)
-
-	// new maping from file-id to filename.
-	translation := make(map[string]string)
-
-	for fid, fname := range files {
-		fnameUnq := chooseUniqueName(fname, used, totNumFiles + 2, true)
-		used[fnameUnq] = true
-		translation[fid] = fnameUnq
-	}
-
-	return translation
+	return remaining, firstTimers
 }
 
 // main entry point
 //
 // 1. Keep directory names fixed
 // 2. Change file names to not collide with directories, or with each other.
-func PosixFixDir(fsys *Filesys, dxFolder *DxFolder) (*DxFolder, error) {
+func PosixFixDir(fsys *Filesys, dxFolder *DxFolder) (*PosixDir, error) {
 	if fsys.options.Verbose {
 		log.Printf("PosixFixDir %s #files=%d #subdirs=%d",
 			dxFolder.path,
@@ -106,46 +63,51 @@ func PosixFixDir(fsys *Filesys, dxFolder *DxFolder) (*DxFolder, error) {
 			len(dxFolder.subdirs))
 	}
 
-	// The subdirectories are specified in long paths (/A/B/C), change
-	// it to just the last part of the name
-	shortSubdirs := make([]string, 0)
+	// The subdirectories are specified in long paths ("/A/B/C"). Leave just
+	// the last part of the name ("C").
+	//
+	// Remove all subdirectories that contain a slash
+	subdirs := make([]string, 0)
 	for _, subDirName := range dxFolder.subdirs {
+		// Make SURE that the subdirectory does not contain a slash.
 		lastPart := strings.TrimPrefix(subDirName, dxFolder.path)
 		lastPart = strings.TrimPrefix(lastPart,"/")
+		if lastPart.Contains("/") {
+			log.Printf("Dropping subdirectory %s, it contains a slash", lastPart)
+			continue
+		}
+		if lastPart != filepath.Base(subDirName) {
+			log.Printf("Dropping subdirectory %s, it isn't the same as Base(d)=%s",
+				lastPart, filepath.Base(subDirName))
+			continue
+		}
 
-		shortSubdirs = append(shortSubdirs, lastPart)
+		subdirs = append(subdirs, filepath.Base(subDirName))
 	}
 	if fsys.options.Verbose {
 		log.Printf("short subdirs = %v", shortSubdirs)
 	}
 
-	// Make the filenames POSIX
+	// Take all the files that appear just once. There will be placed
+	// at the toplevel.
+	remainingFiles, topLevelFiles = makeCut(dxFolder.files)
 
-	// strip the descriptions, leaving a mapping from file-id, to file-name.
-	// Make the filenames unique, and adhering to posix.
-	filenames := make(map[string]string)
-	for fid, fDesc := range dxFolder.files {
-		filenames[fid] = fDesc.Name
-	}
-	filenameTranslation := fixFileNames(filenames, shortSubdirs)
+	// Iteratively, take unique files from the remaining files, and place them in
+	// subdirectories 1, 2, 3, ...
+	fauxDir := 1
+	fauxSubdirs := make(map[string][]FileDesc)
 
-	// Go over the per file descriptions, and rename the file names
-	posixFiles := make(map[string]DxDescribe)
-	for fid, fDesc := range dxFolder.files {
-		fnameUnq, ok := filenameTranslation[fid]
-		if !ok {
-			panic(fmt.Errorf("Sanity, could not find %s in file translations", fid))
-		}
-		// Create a new structure because we can't modify the original
-		posixDesc := fDesc
-		posixDesc.Name = fnameUnq
-		posixFiles[fid] = posixDesc
+	for len(remainingFiles) > 0 {
+		remainingFiles, uniqueFiles := makeCut(remainingFiles)
+		fauxSubdirs[fauxDir.toString] = uniqueFiles
+		fauxDir++
 	}
 
 	posixDxFolder := &DxFolder{
 		path: dxFolder.path,
-		files: posixFiles,
+		files: topLevelFiles,
 		subdirs: dxFolder.subdirs,
+		fauxSubdirs: fauxSubdirs,
 	}
 	return posixDxFolder, nil
 }

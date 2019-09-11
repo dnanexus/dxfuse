@@ -1,6 +1,7 @@
 package dxfs2
 
 import (
+	"filepath"
 	"fmt"
 	"log"
 	"strings"
@@ -14,6 +15,15 @@ import (
 const (
 	nsDirType = 1
 	nsFileType = 2
+
+	// return code from a directoryExists call
+	dirDoesNotExist = 1
+	dirExistsButNotPopulated = 2
+	dirExistAndPopulated = 3
+
+	maxDirSize     = 10 * 1000
+	inodeRootDir   = 1
+	inodeInitial   = 10
 )
 
 // Construct a local sql database that holds metadata for
@@ -59,10 +69,9 @@ func (fsys *Filesys) metadataDbInitCore(txn *sql.Tx) error {
 		proj_id text,
 		parent text,
 		name text,
-                fullName text,
                 type smallint,
                 inode bigint,
-                PRIMARY KEY (parent,dname)
+                PRIMARY KEY (parent,name)
 	);
 	`
 	if _, err := txn.Exec(sqlStmt); err != nil {
@@ -70,7 +79,7 @@ func (fsys *Filesys) metadataDbInitCore(txn *sql.Tx) error {
 	}
 
 	sqlStmt = `
-	CREATE INDEX parent_dir_lookup
+	CREATE INDEX parent_index
 	ON namespace (parent);
 	`
 	if _, err := txn.Exec(sqlStmt); err != nil {
@@ -80,7 +89,7 @@ func (fsys *Filesys) metadataDbInitCore(txn *sql.Tx) error {
 	// we need to be able to get from the files/tables, back to the namespace
 	// with an inode ID.
 	sqlStmt = `
-	CREATE INDEX inode_rev_lookup
+	CREATE INDEX inode_rev_index
 	ON namespace (inode);
 	`
 	if _, err := txn.Exec(sqlStmt); err != nil {
@@ -93,8 +102,6 @@ func (fsys *Filesys) metadataDbInitCore(txn *sql.Tx) error {
 	// If poplated is zero, we haven't described the directory yet.
 	sqlStmt = `
 	CREATE TABLE directories (
-		proj_id text,
-		dirFullName text,
                 inode bigint,
                 populated smallint,
                 PRIMARY KEY (inode)
@@ -104,24 +111,22 @@ func (fsys *Filesys) metadataDbInitCore(txn *sql.Tx) error {
 		return err
 	}
 
-	// Sometimes we want to search by full directory name.
-	sqlStmt = `
-	CREATE INDEX dirFullName_lookup
-	ON directories (dirFullName);
-	`
+	// Adding a root directory
+	sqlStmt = fmt.Sprintf(`
+ 		        INSERT INTO directories
+			VALUES ('%s', '%d', '%d');
+			`, inodeRootDir, 0)
+	if _, err := txn.Exec(sqlStmt); err != nil {
+		return err
+	}
+	sqlStmt = fmt.Sprintf(`
+ 		        INSERT INTO namespace
+			VALUES ('%s', '%s', '%s', '%s', '%d', '%d');
+			`, fsys.project.Id, "", "/", "/", nsDirType, inodeRootDir)
 	if _, err := txn.Exec(sqlStmt); err != nil {
 		return err
 	}
 
-	// Adding a root directory
-	sqlStmt = fmt.Sprintf(`
- 		        INSERT INTO directories
-			VALUES ('%s', '%s', '%d', '%d');
-			`,
-		fsys.project.Id, "/", INODE_ROOT_DIR, 0)
-	if _, err := txn.Exec(sqlStmt); err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -162,56 +167,6 @@ func allocInodeNum(fsys *Filesys) int64 {
 	return fsys.inodeCnt
 }
 
-// Three options:
-// 1. Directory has been read from DNAx
-// 2. Directory does not exist on DNAx
-//      error = ENOENT
-// 3. Directory has been fully read, and is in the database
-//     exists=true  populated=true
-func (fsys *Filesys) directoryExists(dirFullName string) (bool, bool, error) {
-	// split the directory into parent into last part:
-	// "A/B/C" ---> "A/B", "C"
-	sqlStmt := fmt.Sprintf(`
- 		        SELECT inode,populated FROM directories
-			WHERE dirFullName = '%s';
-			`, dirFullName)
-	rows, err := fsys.db.Query(sqlStmt);
-	if err != nil {
-		return false, false, err
-	}
-
-	// There could be at most one such entry
-	var inode int64
-	var populatedRawVal int
-	numRows := 0
-	for rows.Next() {
-		rows.Scan(&inode, &populatedRawVal)
-		numRows++
-	}
-	rows.Close()
-
-	// The directory has already been populated, if the flag is non zero
-	populated := populatedRawVal != 0
-
-	switch numRows {
-	case 0:
-		// The directory has not been read from from DNAx
-		return false, false, nil
-	case 1:
-		if inode == 0 {
-			// There is no such directory on the platform,
-			// we know because we queried it.
-			return true, false, fuse.ENOENT
-		}
-		// The directory exists on DNAx
-		return true, populated, nil
-	default:
-		err = fmt.Errorf(
-			"Too many values returned from db query, zero or one are expected, received %d",
-			numRows)
-		return true, false, err
-	}
-}
 
 // The directory is in the database, read it in its entirety.
 func (fsys *Filesys) directoryReadAllEntries(
@@ -284,22 +239,21 @@ func (fsys *Filesys) directoryReadAllEntries(
 }
 
 
-func (fsys *Filesys) constructDir(txn *sql.Tx, dirFullName string, dxDir *DxFolder) error {
+func (fsys *Filesys) constructDir(txn *sql.Tx, dinode int64, posixDir *PosixDir) error {
 	// Create a database entry for each file
 	if fsys.options.Verbose {
 		log.Printf("inserting files")
 	}
-	for _, f := range dxDir.files {
+	for _, f := range posixDir.files {
 		fInode := allocInodeNum(fsys)
 
 		sqlStmt := fmt.Sprintf(`
  		        INSERT INTO namespace
-			VALUES ('%s', '%s', '%s', '%s', '%d', '%d');
+			VALUES ('%s', '%s', '%s', '%d', '%d');
 			`,
 			f.ProjId,
-			dirFullNAme,
+			posixDir.path,
 			f.Name,
-			makeFullPath(f.Folder, f.Name),
 			nsFileType,
 			fInode)
 		if _, err = txn.Exec(sqlStmt); err != nil {
@@ -323,29 +277,17 @@ func (fsys *Filesys) constructDir(txn *sql.Tx, dirFullName string, dxDir *DxFold
 	if fsys.options.Verbose {
 		log.Printf("inserting subdirs")
 	}
-	for _, subDirName := range dxDir.subdirs {
-		// DNAx stores directories as full paths. For example: /A/B has
-		// as subdirectories  "A/B/C", "A/B/D", "A/B/KKK". A POSIX
-		// filesystem represents these as: "A/B", {"C", "D", "KKK"}
-		//
-		dinode := allocInodeNum(fsys)
-		subDirLastPart := strings.TrimPrefix(subDirName, dirFullName)
-		subDirLastPart = strings.TrimPrefix(subDirLastPart,"/")
-		//log.Printf("dirFullNAme=%s sub=%s lastPart=%s",
-		//dirFullName, subDirName, subDirLastPart)
+	for _, subDirName := range posixDir.subdirs {
+		subDirInode := allocInodeNum(fsys)
 
-		// TODO: the [subDirLastPart] cannot include a slash, that is a POSIX
-		// violation.
 		sqlStmt := fmt.Sprintf(`
  		        INSERT INTO namespace
-			VALUES ('%s', '%s', '%s', '%s', '%d', '%d');
-			`,
+			VALUES ('%s', '%s', '%s', '%d', '%d');`,
 			fsys.project.Id,
-			dirFullName,
-			subDirLastPart,
+			posixDir.path,
 			subDirName,
 			nsDirType,
-			dinode)
+			subDirInode)
 		if _, err = txn.Exec(sqlStmt); err != nil {
 			log.Printf(err.Error())
 			return err
@@ -356,9 +298,8 @@ func (fsys *Filesys) constructDir(txn *sql.Tx, dirFullName string, dxDir *DxFold
 		// is false.
 		sqlStmt = fmt.Sprintf(`
                        INSERT INTO directories
-                       VALUES ('%s', '%s', '%d', '%d');
-                       `,
-			fsys.project.Id, subDirName, dinode, 0)
+                       VALUES ('%d', '%d');`,
+			subDirInode, 0)
 		if _, err = fsys.db.Exec(sqlStmt); err != nil {
 			return err
 		}
@@ -370,23 +311,26 @@ func (fsys *Filesys) constructDir(txn *sql.Tx, dirFullName string, dxDir *DxFold
 
 	// Update the directory populated flag to TRUE
 	sqlStmt := fmt.Sprintf(`
-		UPDATE directories SET populated = '1'
-                WHERE dirFullName = '%s'
-                `,
-		dirFullName)
+		UPDATE directories
+                SET populated = '1'
+                WHERE inode = '%d'
+                `, dinode)
 	if _, err = txn.Exec(sqlStmt); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (fsys *Filesys) directoryReadFromDNAx(dirFullName string) error {
+// Query DNAx about a folder, and encode all the information in the database.
+//
+// assumptions:
+// 1. the directory has not been queried yet.
+// 2. the global lock is held
+func (fsys *Filesys) directoryReadFromDNAx(dinode int64, dirFullName string) error {
 	if fsys.options.Verbose {
 		log.Printf("describe folder %s", dirFullName)
 	}
 
-	// The directory has not been queried yet.
-	//
 	// describe all the files
 	httpClient := <- fsys.httpClientPool
 	dxDir, err := DxDescribeFolder(httpClient, &fsys.dxEnv, fsys.project.Id, dirFullName)
@@ -401,28 +345,21 @@ func (fsys *Filesys) directoryReadFromDNAx(dirFullName string) error {
 			len(dxDir.subdirs))
 	}
 
-	// limit the number of files
+	// limit the number of directory elements
 	numElementsInDir := len(dxDir.files) + len(dxDir.subdirs)
-	if numElementsInDir > MAX_DIR_SIZE {
+	if numElementsInDir > maxDirSize {
 		return fmt.Errorf(
 			"Too many elements (%d) in a directory, the limit is %d",
-			numElementsInDir, MAX_DIR_SIZE)
+			numElementsInDir, maxDirSize)
 	}
 
 	// The DNAx storage system does not adhere to POSIX. Try
 	// to fix the elements in the directory, so they would comply. This
 	// comes at the cost of renaming the original files, which can
 	// very well mislead the user.
-	dxDir, err = PosixFixDir(fsys, dxDir)
+	posixDir, err = PosixFixDir(fsys, dxDir)
 	if err != nil {
 		return err
-	}
-	if fsys.options.Verbose {
-		log.Printf("unique file names [")
-		for _, fDesc := range dxDir.files {
-			log.Printf("  %s", fDesc.Name)
-		}
-		log.Printf("]")
 	}
 
 	txn, err := fsys.db.Begin()
@@ -430,7 +367,7 @@ func (fsys *Filesys) directoryReadFromDNAx(dirFullName string) error {
 		return err
 	}
 
-	if err := fsys.constructDir(txn, dirFullNAme, dxDir); err != nil {
+	if err := fsys.constructDir(txn, dinode, posixDir); err != nil {
 		txn.Rollback()
 		log.Printf(err.Error())
 		return err
@@ -440,6 +377,106 @@ func (fsys *Filesys) directoryReadFromDNAx(dirFullName string) error {
 }
 
 
+// We want to check if directory D exists. Denote:
+//     P = parent(dirFullName)
+//     B = basename(dirFullName)
+//
+// For example, if the directory is "/A/B/C" then:
+//    P = "/A/B"
+//    B = "C"
+//
+// The filesystem allows accessing directory D, only if its parent
+// exists. Therefore, this method will be called only if the parent
+// exists, and is in sqlite3.
+//
+// 1. Make sure the parent directory P has been fully populated.
+// 2. Query the parent P, check if B is a member. If not, return "dirDoesNotExist".
+// 3. Having got this far, we know that D exists. Now, check if it is already fully
+//    populated.
+//
+func (fsys *Filesys) directoryExists(dirFullName string) (int, error) {
+	parentDir := filepath.Dir(dirFullName)
+	baseDir := filepath.Base(dirFullName)
+
+	// Get information on the parent
+	sqlStmt := fmt.Sprintf(`
+ 		        SELECT directories.populated
+                        FROM directories
+                        JOIN namespace
+                        ON directories.inode = namespace.inode
+			WHERE namespace.parent = '%s' AND namespace.name = '%s' AND namespace.type = '%d';`,
+		filepath.Dir(parentDir), filepath.Base(parentDir), nsDirType)
+	rows, err := fsys.db.Query(sqlStmt)
+	if err != nil {
+		panic(err)
+	}
+	// There could be at most one such entry
+	var parentPopulated int
+	numRows := 0
+	for rows.Next() {
+		rows.Scan(&parentPopulated)
+		numRows++
+	}
+	rows.Close()
+
+	switch numRows {
+	case 0:
+		panic(fmt.Sprintf(
+			"Accessing directory (%s) even though parent (%s) has not been accessed",
+			dirFullName, parentDir))
+	case 1:
+		if parentPopulated == 0 {
+			// Parent exists, but it has not been populated yet
+			if fsys.options.Verbose {
+				log.Printf("parent directory (%s) has not been populated yet", parentDir)
+			}
+			err := fsys.directoryReadFromDNAx(parentInode, parentDir)
+			if err != nil {
+				return 0, err
+			}
+		}
+	default:
+		panic(fmt.Sprintf(
+			"Too many values returned from db query, zero or one are expected, received %d",
+			numRows))
+	}
+
+	// At this point, we can check if the directory exists
+	sqlStmt := fmt.Sprintf(`
+ 		        SELECT directories.populated
+                        FROM directories
+                        JOIN namespace
+                        ON directories.inode = namespace.inode
+			WHERE namespace.parent = '%s' AND namespace.name = '%s' AND namespace.type = '%d';`,
+		parentDir, baseDir, nsDirType)
+	rows, err := fsys.db.Query(sqlStmt)
+	if err != nil {
+		panic(err)
+	}
+
+	// There could be at most one such entry
+	numRows = 0
+	for rows.Next() {
+		rows.Scan(&populated)
+		numRows++
+	}
+	rows.Close()
+
+	switch numRows {
+	case 0:
+		return dirDoesNotExist, nil
+	case 1:
+		if populated == 0 {
+			return dirExistsButNotPopulated, nil
+		}
+		return dirExistAndPopulated, nil
+	default:
+		panic(fmt.Sprintf(
+			"Too many values returned from db query, zero or one are expected, received %d",
+			numRows))
+	}
+}
+
 // Add a directory with its contents to an exisiting database
 func (fsys *Filesys) MetadataDbReadDirAll(
 	dirFullName string) (map[string]File, map[string]Dir, error) {
@@ -447,27 +484,27 @@ func (fsys *Filesys) MetadataDbReadDirAll(
 		log.Printf("MetadataDbReadDirAll %s", dirFullName)
 	}
 
-	retval, populated, err := fsys.directoryExists(dirFullName)
+	retCode, err := fsys.directoryExists(dirFullName)
 	if err != nil {
 		log.Printf("err = %s, %s", err.Error(), dirFullName)
 		return nil, nil, err
 	}
-	if retval {
+	switch retCode {
+	case dirDoesNotExist:
+		return nil, nil, fuse.ENOENT
+	case dirExistsButNotPopulated:
+		// we need to read the directory from dnanexus
+		// Get all the directory from dnanexus. This could take a while
+		// for large directories.
+		if err := fsys.directoryReadFromDNAx(dirFullName); err != nil {
+			return nil, nil, err
+		}
+	case dirExistAndPopulated:
 		if fsys.options.Verbose {
-			log.Printf("Directory %s exists in the database", dirFullName)
+			log.Printf("Directory %s is in the DB, and is populated", dirFullName)
 		}
-		// the directory already exists. read it, and return
-		// all the entries.
-		//
-		if !populated {
-			// we need to read the directory from dnanexus
-
-			// Get all the directory from dnanexus. This could take a while
-			// for large directories.
-			if err := fsys.directoryReadFromDNAx(dirFullName); err != nil {
-				return nil, nil, err
-			}
-		}
+	default:
+		panic(fmt.Sprintf("Bad return code %d",retCode))
 	}
 
 	// Now that the directory is in the database, we can read it with a local query.
@@ -483,8 +520,8 @@ func (fsys *Filesys) lookupFile(
 	sqlStmt := fmt.Sprintf(`
  		        SELECT file_id,proj_id,size,ctime,mtime
                         FROM files
-			WHERE inode = '%d';
-			`, inode)
+			WHERE inode = '%d';`,
+		inode)
 	rows, err := fsys.db.Query(sqlStmt)
 	if err != nil {
 		log.Printf(err.Error())
@@ -529,8 +566,7 @@ func (fsys *Filesys) fastLookup(
 	sqlStmt := fmt.Sprintf(`
  		        SELECT type,inode
                         FROM namespace
-			WHERE parent = '%s' AND name = '%s';
-			`,
+			WHERE parent = '%s' AND name = '%s';`,
 		dirFullName, dirOrFileName)
 	rows, err := fsys.db.Query(sqlStmt)
 	if err != nil {
@@ -538,8 +574,8 @@ func (fsys *Filesys) fastLookup(
 		return nil, err
 	}
 
-	var inode int64
 	var objType int
+	var inode int64
 	numRows := 0
 	for rows.Next() {
 		rows.Scan(&objType, &inode)
@@ -579,32 +615,40 @@ func (fsys *Filesys) fastLookup(
 //
 // Note: the file might not exist.
 func (fsys *Filesys) MetadataDbLookupInDir(
-	dirFullName string,
+	parentDir string,
 	dirOrFileName string) (fs.Node, error) {
 
-	retval, populated, err := fsys.directoryExists(dirFullName)
+	retCode, populated, err := fsys.directoryExists(parentDir)
 	if err != nil {
-		// This covers the case where the directory does not exist
-		return err
+		log.Printf("err = %s, %s", err.Error(), parentDir)
+		return nil, nil, err
 	}
-	if retval && populated {
+	switch retCode {
+	case dirDoesNotExist:
+		return nil, fuse.ENOENT
+	case dirExistsButNotPopulated:
+		// The directory exists, but has not been populated yet.
+		_, _, err := fsys.MetadataDbReadDirAll(parentDir)
+		if err != nil {
+			return nil, err
+		}
+	case dirExistAndPopulated:
 		// The directory exists, and has already been populated.
-		// I think this is the normal path.
-		return fsys.fastLookup(dirFullName, dirOrFileName)
+		// I think this is the normal path. There is nothing to do here.
+	default:
+		panic(fmt.Sprintf("Bad return code %d",retCode))
 	}
 
-	// The directory exists, but has not been populated yet.
-	_, _, err := fsys.MetadataDbReadDirAll(dirFullName)
-	return fsys.fastLookup(dirFullName, dirOrFileName)
+	return fsys.fastLookup(parentDir, dirOrFileName)
 }
 
 // Return the root directory
 func (fsys *Filesys) MetadataDbRoot() (*Dir, error) {
 	return &Dir{
 		Fsys : fsys,
-		Parent : "",
+		Parent : "/",
 		Dname = "/",
 		FullPath = "/",
-		Inode : INODE_ROOT_DIR,
+		Inode : inodeRootDir,
 	}
 }

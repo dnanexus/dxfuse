@@ -30,7 +30,6 @@ The `namespace` table stores information on the directory structure.
 | proj\_id   | text | the project ID |
 | parent     | text | the parent folder |
 | name       | text | directory/file name |
-| fullName   | text | |
 | type       | smallint | directory=1, file=2 |
 | inode      | bigint  | local filesystem i-node, cannot change |
 
@@ -44,18 +43,17 @@ For example, directory `/A/B/C` is represented with the record:
    inode: 1056
 ```
 
-The primary key is `(parent,dname)`, an additional index is placed on
-the `parent` field. This allows efficiently querying all members of a directory.
-The local folder (parent) is generally the same as the
-DNAx folder. The main exceptions are files with the same name, and
+The primary key is `(parent,name)`. An additional index is placed on
+the `parent` field, allowing an efficient query for all members of a
+directory.  The DNAx object system does not adhere to POSIX. This
+sometimes requires changes to file names, and directory structure.
+The main exceptions are files with the same name, and
 files with posix disallowed characters, such as slash (`/`).
 
 The `directories` table stores information for individual directories.
 
 | field name | type | description |
 | ---        | ---  | --          |
-| proj\_id   | text | the project ID |
-| dirFullName | text | full directory name |
 | inode      | bigint |  local filesystem inode |
 | populated  | smallint |  has the directory been queried? |
 

@@ -14,7 +14,40 @@ import (
 )
 
 // Limit on the number of objects that the bulk-describe API can take
-const MAX_NUM_OBJECTS_IN_DESCRIBE = 1000
+const (
+	maxNumObjectsInDescribe = 1000
+)
+
+// -------------------------------------------------------------------
+// Description of a DNAx data object
+type DxDescribedDataObject struct {
+	FileId    string
+	ProjId    string
+	Name      string
+	Folder    string
+	Size      uint64
+	Ctime     time.Time
+	Mtime     time.Time
+}
+
+type DxDescribePrj struct {
+	Id           string
+	Name         string
+	Region       string
+	Version      int
+	DataUsageGiB float64
+	Ctime        time.Time
+	Mtime        time.Time
+}
+
+// a DNAx directory. It holds files and sub-directories.
+type DxFolder struct {
+	path  string  // Full directory name, for example: { "/A/B/C", "foo/bar/baz" }
+	files map[string]DxDescribeDataObject
+	subdirs []string
+}
+
+// -------------------------------------------------------------------
 
 type Request struct {
 	Objects []string `json:"objects"`
@@ -52,7 +85,7 @@ func dxTimeToUnixTime(dxTime int64) time.Time {
 func submit(
 	httpClient *retryablehttp.Client,
 	dxEnv *dxda.DXEnvironment,
-	fileIds []string) (map[string]DxDescribe, error) {
+	fileIds []string) (map[string]DxDescribeDataObject, error) {
 	request := Request{
 		Objects : fileIds,
 	}
@@ -73,14 +106,14 @@ func submit(
 		return nil, err
 	}
 
-	var files = make(map[string]DxDescribe)
+	var files = make(map[string]DxDescribeDataObject)
 	for _, descRawTop := range(reply.Results) {
 		descRaw := descRawTop.Describe
 		if descRaw.State != "closed" {
 			err := errors.New("The file is not in the closed state, it is [" + descRaw.State + "]")
 			return nil, err
 		}
-		desc := DxDescribe{
+		desc := DxDescribeDataObject{
 			ProjId : descRaw.ProjId,
 			FileId : descRaw.FileId,
 			Name : descRaw.Name,
@@ -98,14 +131,14 @@ func submit(
 func DxDescribeBulkObjects(
 	httpClient *retryablehttp.Client,
 	dxEnv *dxda.DXEnvironment,
-	fileIds []string) (map[string]DxDescribe, error) {
-	var gMap = make(map[string]DxDescribe)
+	fileIds []string) (map[string]DxDescribeDataObject, error) {
+	var gMap = make(map[string]DxDescribeDataObject)
 	if len(fileIds) == 0 {
 		return gMap, nil
 	}
 
 	// split into limited batchs
-	batchSize := MAX_NUM_OBJECTS_IN_DESCRIBE
+	batchSize := maxNumObjectsInDescribe
 	var batches [][]string
 
 	for batchSize < len(fileIds) {
