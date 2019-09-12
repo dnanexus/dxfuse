@@ -29,7 +29,7 @@ The `namespace` table stores information on the directory structure.
 | ---        | ---  | --          |
 | parent     | text | the parent folder |
 | name       | text | directory/file name |
-| type       | smallint | directory=1, file=2 |
+| obj\_type  | int  | directory=1, file=2 |
 | inode      | bigint  | local filesystem i-node, cannot change |
 
 For example, directory `/A/B/C` is represented with the record:
@@ -54,7 +54,7 @@ The `directories` table stores information for individual directories.
 | field name | type | description |
 | ---        | ---  | --          |
 | inode      | bigint |  local filesystem inode |
-| populated  | smallint |  has the directory been queried? |
+| populated  | int |  has the directory been queried? |
 
 It maps a directory to a stable `inode`, which is the primary key. The
 populated flag is zero the first time the directory is encounterd. It

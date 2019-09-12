@@ -2,7 +2,6 @@ package dxfs2
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -20,7 +19,7 @@ const (
 
 // -------------------------------------------------------------------
 // Description of a DNAx data object
-type DxDescribedDataObject struct {
+type DxDescribeDataObject struct {
 	FileId    string
 	ProjId    string
 	Name      string
@@ -51,6 +50,7 @@ type DxFolder struct {
 
 type Request struct {
 	Objects []string `json:"objects"`
+	ClassDescribeOptions map[string]map[string]map[string]bool `json:"classDescribeOptions"`
 }
 
 type Reply struct {
@@ -86,8 +86,26 @@ func submit(
 	httpClient *retryablehttp.Client,
 	dxEnv *dxda.DXEnvironment,
 	fileIds []string) (map[string]DxDescribeDataObject, error) {
+
+	// Limit the number of fields returned, because by default we
+	// get too much information, which is a burden on the server side.
+	describeOptions := map[string]map[string]map[string]bool {
+		"file" : map[string]map[string]bool {
+			"fields" : map[string]bool {
+				"id" : true,
+				"project" : true,
+				"name" : true,
+				"state" : true,
+				"folder" : true,
+				"created" : true,
+				"modified" : true,
+				"size" : true,
+			},
+		},
+	}
 	request := Request{
 		Objects : fileIds,
+		ClassDescribeOptions : describeOptions,
 	}
 	var payload []byte
 	payload, err := json.Marshal(request)
@@ -110,12 +128,12 @@ func submit(
 	for _, descRawTop := range(reply.Results) {
 		descRaw := descRawTop.Describe
 		if descRaw.State != "closed" {
-			err := errors.New("The file is not in the closed state, it is [" + descRaw.State + "]")
-			return nil, err
+			log.Printf("File %s is not closed, it is [" + descRaw.State + "], dropping")
+			continue
 		}
 		desc := DxDescribeDataObject{
-			ProjId : descRaw.ProjId,
 			FileId : descRaw.FileId,
+			ProjId : descRaw.ProjId,
 			Name : descRaw.Name,
 			Folder : descRaw.Folder,
 			Size : descRaw.Size,
@@ -195,7 +213,7 @@ func listFolder(
 	request := ListFolderRequest{
 		Folder : dir,
 		Only : "all",
-		IncludeHidden : true,
+		IncludeHidden : false,
 	}
 	var payload []byte
 	payload, err := json.Marshal(request)
@@ -233,23 +251,23 @@ func DxDescribeFolder(
 	httpClient *retryablehttp.Client,
 	dxEnv *dxda.DXEnvironment,
 	projectId string,
-	dir string) (*DxFolder, error) {
+	folder string) (*DxFolder, error) {
 
 	// The listFolder API call returns a list of object ids and folders.
 	// We could describe the objects right here, but we do that separately.
-	folderInfo, err := listFolder(httpClient, dxEnv, projectId, dir)
+	folderInfo, err := listFolder(httpClient, dxEnv, projectId, folder)
 	if err != nil {
-		log.Printf("error %s", err.Error())
+		log.Printf("listFolder(%s) error %s", folder, err.Error())
 		return nil, err
 	}
 	files, err := DxDescribeBulkObjects(httpClient, dxEnv, folderInfo.fileIds)
 	if err != nil {
-		log.Printf("error %s", err.Error())
+		log.Printf("describeBulkObjects(%v) error %s", folderInfo.fileIds, err.Error())
 		return nil, err
 	}
 
 	return &DxFolder{
-		path : dir,
+		path : folder,
 		files : files,
 		subdirs : folderInfo.subdirs,
 	}, nil

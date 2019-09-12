@@ -289,9 +289,6 @@ func (pgs *PrefetchGlobalState) tableCleanupWorker() {
 	for true {
 		// sleep 60
 		time.Sleep(60 * time.Second)
-		if pgs.verbose {
-			log.Printf("prefetch: tableCleanupWorkder")
-		}
 
 		// Files that are not worth tracking
 		var toRemove [](*PrefetchFileMetadata)
@@ -303,6 +300,12 @@ func (pgs *PrefetchGlobalState) tableCleanupWorker() {
 			if !pgs.isWorthIt(pfm, now) {
 				toRemove = append(toRemove, pfm)
 			}
+		}
+
+		numUnworthy := len(toRemove)
+		if pgs.verbose && numUnworthy > 0 {
+			log.Printf("prefetch: tableCleanupWorkder removing %d unworthy streams",
+				numUnworthy)
 		}
 
 		for _, pfm := range toRemove {

@@ -1,9 +1,9 @@
 package dxfs2
 
 import (
-	"filepath"
 	"fmt"
 	"log"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -23,7 +23,7 @@ import (
 // 3. A directory and a file can have the same name. This is not handled right now.
 //
 type PosixDir struct {
-	fullName  string   // entire folder path
+	path      string   // entire directory path
 	files     []DxDescribeDataObject
 	subdirs   []string
 
@@ -72,7 +72,7 @@ func PosixFixDir(fsys *Filesys, dxFolder *DxFolder) (*PosixDir, error) {
 		// Make SURE that the subdirectory does not contain a slash.
 		lastPart := strings.TrimPrefix(subDirName, dxFolder.path)
 		lastPart = strings.TrimPrefix(lastPart,"/")
-		if lastPart.Contains("/") {
+		if strings.Contains(lastPart, "/") {
 			log.Printf("Dropping subdirectory %s, it contains a slash", lastPart)
 			continue
 		}
@@ -85,28 +85,39 @@ func PosixFixDir(fsys *Filesys, dxFolder *DxFolder) (*PosixDir, error) {
 		subdirs = append(subdirs, filepath.Base(subDirName))
 	}
 	if fsys.options.Verbose {
-		log.Printf("short subdirs = %v", shortSubdirs)
+		log.Printf("subdirs = %v", subdirs)
 	}
 
 	// Take all the files that appear just once. There will be placed
 	// at the toplevel.
-	remainingFiles, topLevelFiles = makeCut(dxFolder.files)
+	var allFiles []DxDescribeDataObject
+	for _, file := range dxFolder.files {
+		allFiles = append(allFiles, file)
+	}
+
+	var remainingFiles []DxDescribeDataObject
+	remainingFiles, topLevelFiles := makeCut(allFiles)
 
 	// Iteratively, take unique files from the remaining files, and place them in
 	// subdirectories 1, 2, 3, ...
 	fauxDir := 1
-	fauxSubdirs := make(map[string][]FileDesc)
+	var fauxSubdirs map[string][]DxDescribeDataObject
 
 	for len(remainingFiles) > 0 {
 		remainingFiles, uniqueFiles := makeCut(remainingFiles)
 		fauxSubdirs[strconv.Itoa(fauxDir)] = uniqueFiles
 		fauxDir++
+
+		if fsys.options.Verbose {
+			log.Printf(fmt.Sprintf("fauxDir=%d  len(remainingFiles)=%d  len(uniqueFiles)=%d",
+				fauxDir, len(remainingFiles), len(uniqueFiles)))
+		}
 	}
 
-	posixDxFolder := &DxFolder{
+	posixDxFolder := &PosixDir{
 		path: dxFolder.path,
 		files: topLevelFiles,
-		subdirs: dxFolder.subdirs,
+		subdirs: subdirs,
 		fauxSubdirs: fauxSubdirs,
 	}
 	return posixDxFolder, nil

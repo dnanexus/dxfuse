@@ -81,7 +81,7 @@ func Mount(
 	}
 
 	// create a connection to the database, that will be kept open
-	db, err := sql.Open("sqlite3", dbPath + "?cache=shared&mode=rwc")
+	db, err := sql.Open("sqlite3", dbPath + "?mode=rwc")
 	if err != nil {
 		return err
 	}
@@ -100,7 +100,7 @@ func Mount(
 		project : projDesc,
 		dbFullPath : dbPath,
 		mutex : sync.Mutex{},
-		inodeCnt : INODE_INITIAL,
+		inodeCnt : InodeRoot + 2,
 		db : db,
 		httpClientPool : httpClientPool,
 	}
@@ -115,7 +115,7 @@ func Mount(
 	log.Printf("mounted dxfs2")
 
 	// create the metadata database
-	fsys.MetadataDbInit(); err != nil {
+	if err := fsys.MetadataDbInit(); err != nil {
 		return err
 	}
 
@@ -204,11 +204,14 @@ func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	dir.Fsys.mutex.Lock()
 	defer dir.Fsys.mutex.Unlock()
 
+	// normalize the filename. For example, we can get "//" when reading
+	// the root directory (instead of "/").
+	fullPath := filepath.Clean(dir.FullPath)
 	if dir.Fsys.options.Verbose {
-		log.Printf("ReadDirAll dir=%s\n", dir.FullPath)
+		log.Printf("ReadDirAll dir=(%s)\n", fullPath)
 	}
 
-	files, subdirs, err := dir.Fsys.MetadataDbReadDirAll(dir.FullPath)
+	files, subdirs, err := dir.Fsys.MetadataDbReadDirAll(fullPath)
 	if err != nil {
 		return nil, err
 	}
@@ -257,7 +260,8 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 	dir.Fsys.mutex.Lock()
 	defer dir.Fsys.mutex.Unlock()
 
-	return dir.Fsys.MetadataDbLookupInDir(dir.FullPath, req.Name)
+	fullPath := filepath.Clean(dir.FullPath)
+	return dir.Fsys.MetadataDbLookupInDir(fullPath, req.Name)
 }
 
 func (f *File) Attr(ctx context.Context, a *fuse.Attr) error {

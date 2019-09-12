@@ -11,6 +11,9 @@ import (
 )
 
 const (
+	InodeInvalid   = 0
+	InodeRoot      = 1
+
 	HTTP_CLIENT_POOL_SIZE = 4
 	KiB                   = 1024
 	MiB                   = 1024 * KiB
