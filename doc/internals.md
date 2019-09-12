@@ -27,7 +27,6 @@ The `namespace` table stores information on the directory structure.
 
 | field name | type | description |
 | ---        | ---  | --          |
-| proj\_id   | text | the project ID |
 | parent     | text | the parent folder |
 | name       | text | directory/file name |
 | type       | smallint | directory=1, file=2 |
@@ -45,9 +44,9 @@ For example, directory `/A/B/C` is represented with the record:
 
 The primary key is `(parent,name)`. An additional index is placed on
 the `parent` field, allowing an efficient query for all members of a
-directory.  The DNAx object system does not adhere to POSIX. This
+directory. The DNAx object system does not adhere to POSIX. This
 sometimes requires changes to file names, and directory structure.
-The main exceptions are files with the same name, and
+The main difficulties are files with the same name, and
 files with posix disallowed characters, such as slash (`/`).
 
 The `directories` table stores information for individual directories.

@@ -99,7 +99,7 @@ func PosixFixDir(fsys *Filesys, dxFolder *DxFolder) (*PosixDir, error) {
 
 	for len(remainingFiles) > 0 {
 		remainingFiles, uniqueFiles := makeCut(remainingFiles)
-		fauxSubdirs[fauxDir.toString] = uniqueFiles
+		fauxSubdirs[strconv.Itoa(fauxDir)] = uniqueFiles
 		fauxDir++
 	}
 
