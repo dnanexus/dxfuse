@@ -32,6 +32,14 @@ type PosixDir struct {
 	fauxSubdirs map[string]([]DxDescribeDataObject)
 }
 
+func FilenameIsPosixCompliant(filename string) bool {
+	if strings.Contains(filename, "/") {
+		return false
+	}
+	return true
+}
+
+
 func makeCut(files []DxDescribeDataObject) ([]DxDescribeDataObject, []DxDescribeDataObject) {
 	used := make(map[string]bool)
 	remaining := make([]DxDescribeDataObject, 0)

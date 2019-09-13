@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"strings"
-	"time"
 
 	// The dxda package has the get-environment code
 	"github.com/dnanexus/dxda"
@@ -20,13 +19,13 @@ const (
 // -------------------------------------------------------------------
 // Description of a DNAx data object
 type DxDescribeDataObject struct {
-	FileId    string
-	ProjId    string
-	Name      string
-	Folder    string
-	Size      uint64
-	Ctime     time.Time
-	Mtime     time.Time
+	FileId     string
+	ProjId     string
+	Name       string
+	Folder     string
+	Size       uint64
+	CtimeMillisec  int64
+	MtimeMillisec  int64
 }
 
 type DxDescribePrj struct {
@@ -35,8 +34,8 @@ type DxDescribePrj struct {
 	Region       string
 	Version      int
 	DataUsageGiB float64
-	Ctime        time.Time
-	Mtime        time.Time
+	CtimeMillisec  int64
+	MtimeMillisec  int64
 }
 
 // a DNAx directory. It holds files and sub-directories.
@@ -71,15 +70,6 @@ type DxDescribeRaw struct {
 	ModifiedMillisec int64 `json:"modified"`
 	Size             uint64 `json:"size"`
 }
-
-// convert time in milliseconds since 1970, in the equivalent
-// golang structure
-func dxTimeToUnixTime(dxTime int64) time.Time {
-	sec := int64(dxTime/1000)
-	millisec := int64(dxTime % 1000)
-	return time.Unix(sec, millisec)
-}
-
 
 // Describe a large number of file-ids in one API call.
 func submit(
@@ -137,8 +127,8 @@ func submit(
 			Name : descRaw.Name,
 			Folder : descRaw.Folder,
 			Size : descRaw.Size,
-			Ctime : dxTimeToUnixTime(descRaw.CreatedMillisec),
-			Mtime : dxTimeToUnixTime(descRaw.ModifiedMillisec),
+			CtimeMillisec : descRaw.CreatedMillisec,
+			MtimeMillisec : descRaw.ModifiedMillisec,
 		}
 		//fmt.Printf("%v\n", desc)
 		files[desc.FileId] = desc
@@ -325,8 +315,8 @@ func DxDescribeProject(
 		Region :  reply.Region,
 		Version : reply.Version,
 		DataUsageGiB : reply.DataUsage,
-		Ctime : dxTimeToUnixTime(reply.CreatedMillisec),
-		Mtime : dxTimeToUnixTime(reply.ModifiedMillisec),
+		CtimeMillisec : reply.CreatedMillisec,
+		MtimeMillisec : reply.ModifiedMillisec,
 	}
 	return &prj, nil
 }

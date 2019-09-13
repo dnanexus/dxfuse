@@ -8,9 +8,9 @@ The `files` table maintains information for individual files.
 
 | field name | type |  description |
 | ---        | ---  |  --          |
+| inode      | bigint  | local filesystem i-node, cannot change |
 | file\_id   | text | The DNAx file-id |
 | proj\_id   | text |	A project id for the file |
-| inode      | bigint  | local filesystem i-node, cannot change |
 | size       | bigint  | size of the file in bytes |
 | ctime      | bigint  | creation time |
 | mtime      | bigint  | modification time |
@@ -54,11 +54,17 @@ The `directories` table stores information for individual directories.
 | field name | type | description |
 | ---        | ---  | --          |
 | inode      | bigint |  local filesystem inode |
+| proj\_id   | text | Project id the directory belongs to. Could be empty. |
 | populated  | int |  has the directory been queried? |
+| ctime      | bigint  | creation time |
+| mtime      | bigint  | modification time |
 
 It maps a directory to a stable `inode`, which is the primary key. The
 populated flag is zero the first time the directory is encounterd. It
-is set to one, once the directory is fully described.
+is set to one, once the directory is fully described. The `ctime` and `mtime`
+are approximated by using the project timestamps. All directories are
+associated with a project, except the root. The root can hold multiple directories,
+each representing a different project.
 
 The local directory contents does not change after the describe calls
 are complete. The only way to update the directory, in case of

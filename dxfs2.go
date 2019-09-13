@@ -40,7 +40,7 @@ func fileExists(filename string) bool {
 func Mount(
 	mountpoint string,
 	dxEnv dxda.DXEnvironment,
-	projectId string,
+	projectIds []string,
 	options Options) error {
 
 	// get the Unix uid and gid
@@ -57,11 +57,15 @@ func Mount(
 		return err
 	}
 
-	// describe the project, get some describing metadata for it
+	// describe the projects, retrieve metadata for them
 	tmpHttpClient := dxda.NewHttpClient(false)
-	projDesc, err := DxDescribeProject(tmpHttpClient, &dxEnv, projectId)
-	if err != nil {
-		return err
+	projDescs := make(map[string]DxDescribePrj)
+	for _, pid := range projectIds {
+		pDesc, err := DxDescribeProject(tmpHttpClient, &dxEnv, pid)
+		if err != nil {
+			return err
+		}
+		projDescs[pDesc.Id] = *pDesc
 	}
 
 	dbPath := options.MetadataDbPath + "/" + "metadata.db"
@@ -97,13 +101,14 @@ func Mount(
 		options: options,
 		uid : uint32(uid),
 		gid : uint32(gid),
-		project : projDesc,
+		projDescs : projDescs,
 		dbFullPath : dbPath,
 		mutex : sync.Mutex{},
 		inodeCnt : InodeRoot + 2,
 		db : db,
 		httpClientPool : httpClientPool,
 	}
+	log.Printf("Created Filesys")
 
 	// extra debugging information from FUSE
 	if fsys.options.DebugFuse {
@@ -112,10 +117,15 @@ func Mount(
 		}
 	}
 
-	log.Printf("mounted dxfs2")
+	log.Printf("Metadata DB init")
 
 	// create the metadata database
 	if err := fsys.MetadataDbInit(); err != nil {
+		return err
+	}
+
+	log.Printf("Populate Root")
+	if err := fsys.MetadataDbPopulateRoot(projDescs); err != nil {
 		return err
 	}
 
@@ -123,6 +133,7 @@ func Mount(
 	fsys.pgs.Init(options.VerboseLevel)
 
 	// Fuse mount
+	log.Printf("mounting dxfs2")
 	c, err := fuse.Mount(
 		mountpoint,
 		fuse.AllowOther(),
@@ -193,9 +204,9 @@ func (dir *Dir) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.BlockSize = 4 * 1024
 
 	// get the timestamps from the toplevel project
-	a.Mtime = dir.Fsys.project.Mtime
-	a.Ctime = dir.Fsys.project.Ctime
-	a.Crtime = dir.Fsys.project.Ctime
+	a.Mtime = dir.Mtime
+	a.Ctime = dir.Ctime
+	a.Crtime = dir.Ctime
 
 	return nil
 }

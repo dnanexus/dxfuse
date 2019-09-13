@@ -18,7 +18,10 @@ var progName = filepath.Base(os.Args[0])
 
 func usage() {
 	fmt.Fprintf(os.Stderr, "Usage of %s:\n", progName)
-	fmt.Fprintf(os.Stderr, "  %s MOUNTPOINT PROJECT_ID_OR_NAME\n", progName)
+	fmt.Fprintf(os.Stderr, "  %s MOUNTPOINT PROJECT1 PROJECT2 ...\n", progName)
+	fmt.Fprintf(os.Stderr, "Note:\n")
+	fmt.Fprintf(os.Stderr, "  Multiple projects can be specified\n")
+	fmt.Fprintf(os.Stderr, "  A project can be specified by its ID or name\n")
 	flag.PrintDefaults()
 }
 
@@ -48,13 +51,12 @@ func main() {
 
 	// Limit the number of spare OS threads
 	//runtime.GOMAXPROCS(64)
-
-	if flag.NArg() != 2 {
+	numArgs := flag.NArg()
+	if numArgs < 2 {
 		usage()
 		os.Exit(2)
 	}
 	mountpoint := flag.Arg(0)
-	projectIdOrName := flag.Arg(1)
 
 	options := dxfs2.Options {
 		DebugFuse: *debugFuseFlag,
@@ -69,17 +71,26 @@ func main() {
 		os.Exit(1)
 	}
 
-	projectId, err := lookupProject(&dxEnv, projectIdOrName)
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
-	}
-	if projectId == "" {
-		fmt.Printf("Error: no project with name %s\n", projectIdOrName)
-		os.Exit(1)
+	// process the project inputs, and convert to an array of verified
+	// project IDs
+	log.Printf("processing projects to mount")
+	var projectIds []string
+	for i := 1; i < numArgs; i++ {
+		projectIdOrName := flag.Arg(i)
+		projId, err := lookupProject(&dxEnv, projectIdOrName)
+		if err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+		if projId == "" {
+			fmt.Printf("Error: no project with name %s\n", projectIdOrName)
+			os.Exit(1)
+		}
+		projectIds = append(projectIds, projId)
 	}
 
-	if err := dxfs2.Mount(mountpoint, dxEnv, projectId, options); err != nil {
+	if err := dxfs2.Mount(mountpoint, dxEnv, projectIds, options); err != nil {
+		//fmt.Println(err.(*errors.Error).ErrorStack())
 		fmt.Printf(err.Error())
 	}
 }

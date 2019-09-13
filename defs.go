@@ -45,10 +45,11 @@ type Filesys struct {
 	uid uint32
 	gid uint32
 
-	// the project being mounted
-	project *DxDescribePrj
+	// Information for all the projects that are referenced from anywhere
+	// in the filesystem. The key is the project-id (not the project name).
+	projDescs map[string]DxDescribePrj
 
-	// A file holding a sqllite database with all the files and
+	// A file holding a sqlite3 database with all the files and
 	// directories collected thus far.
 	dbFullPath string
 
@@ -68,11 +69,13 @@ type Filesys struct {
 var _ fs.FS = (*Filesys)(nil)
 
 type Dir struct {
-	Fsys  *Filesys
-	Parent string  // the parent directory, used for debugging
-	Dname  string  // This is the last part of the full path
-	FullPath string // combine parent and dname, then normalize
-	Inode  int64
+	Fsys     *Filesys
+	Parent    string  // the parent directory, used for debugging
+	Dname     string  // This is the last part of the full path
+	FullPath  string // combine parent and dname, then normalize
+	Inode     int64
+	Ctime     time.Time // DNAx does not record times per directory.
+	Mtime     time.Time // we use the project creation time, and mtime as an approximation.
 }
 
 // Make sure that Dir implements the fs.Node interface
@@ -82,7 +85,7 @@ var _ fs.Node = (*Dir)(nil)
 type File struct {
 	Fsys     *Filesys
 	FileId    string  // Required to build a download URL
-	ProjId    string  // -"-
+	ProjId    string  // Note: this could be a container
 	Name      string
 	Size      int64
 	Inode     int64
