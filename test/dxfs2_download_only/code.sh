@@ -7,13 +7,15 @@ set -e -o pipefail
 ######################################################################
 ## constants
 
+projName="dxfs2_test_data"
+projId="project-FbZ25gj04J9B8FJ3Gb5fVP41"
+dxDirOnProject="correctness"
+
 baseDir="$HOME/dxfs2_test"
 dxTrgDir="${baseDir}/dxCopy"
 dxfs2TrgDir="${baseDir}/dxfs2Copy"
 mountpoint="${baseDir}/MNT"
-projId="project-FbZ25gj04J9B8FJ3Gb5fVP41"
 
-dxDirOnProject="correctness"
 
 ######################################################################
 
@@ -37,7 +39,7 @@ main() {
     sleep 1
 
     echo "copying from a dxfs2 mount point"
-    cp -r  "$mountpoint/$dxDirOnProject" $dxfs2TrgDir
+    cp -r  "$mountpoint/$projName/$dxDirOnProject" $dxfs2TrgDir
     echo "unmounting dxfs2"
     sudo umount $mountpoint
 
