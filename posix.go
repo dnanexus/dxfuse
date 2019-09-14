@@ -40,6 +40,8 @@ func FilenameIsPosixCompliant(filename string) bool {
 }
 
 
+// Choose each filename once. Return the remaining files, those that are multiply named,
+// and were not chosen.
 func makeCut(files []DxDescribeDataObject) ([]DxDescribeDataObject, []DxDescribeDataObject) {
 	used := make(map[string]bool)
 	remaining := make([]DxDescribeDataObject, 0)
@@ -103,23 +105,29 @@ func PosixFixDir(fsys *Filesys, dxFolder *DxFolder) (*PosixDir, error) {
 		allFiles = append(allFiles, file)
 	}
 
-	var remainingFiles []DxDescribeDataObject
-	remainingFiles, topLevelFiles := makeCut(allFiles)
+	nonUniqueNamedFiles, topLevelFiles := makeCut(allFiles)
 
 	// Iteratively, take unique files from the remaining files, and place them in
 	// subdirectories 1, 2, 3, ...
 	fauxDir := 1
-	var fauxSubdirs map[string][]DxDescribeDataObject
+	fauxSubdirs := make(map[string][]DxDescribeDataObject)
 
-	for len(remainingFiles) > 0 {
-		remainingFiles, uniqueFiles := makeCut(remainingFiles)
+	for remaining := nonUniqueNamedFiles; len(remaining) > 0; {
+		notChosenThisTime, uniqueFiles := makeCut(remaining)
 		fauxSubdirs[strconv.Itoa(fauxDir)] = uniqueFiles
 		fauxDir++
 
 		if fsys.options.Verbose {
 			log.Printf(fmt.Sprintf("fauxDir=%d  len(remainingFiles)=%d  len(uniqueFiles)=%d",
-				fauxDir, len(remainingFiles), len(uniqueFiles)))
+				fauxDir, len(notChosenThisTime), len(uniqueFiles)))
 		}
+
+		if len(remaining) <= len(notChosenThisTime) {
+			// The number of non unique files must drop
+			// monotonically
+			panic("not making progress")
+		}
+		remaining = notChosenThisTime
 	}
 
 	posixDxFolder := &PosixDir{

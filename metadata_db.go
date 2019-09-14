@@ -232,7 +232,7 @@ func (fsys *Filesys) directoryReadAllEntries(
 
 	// Extract information for all the subdirectories
 	sqlStmt := fmt.Sprintf(`
- 		        SELECT directories.inode, directories.proj_id, directories.ctime, directories.mtime, namespace.name
+ 		        SELECT directories.inode, directories.proj_id, namespace.name, directories.ctime, directories.mtime
                         FROM directories
                         JOIN namespace
                         ON directories.inode = namespace.inode
@@ -282,14 +282,25 @@ func (fsys *Filesys) directoryReadAllEntries(
 	// Find the files in the directory
 	files := make(map[string]File)
 	for rows.Next() {
-		var f File
+		var fileId string
+		var projId string
+		var fname string
+		var size int64
+		var inode int64
 		var ctime int64
 		var mtime int64
-		rows.Scan(&f.FileId, &f.ProjId, &f.Inode, &f.Size, &ctime, &mtime, &f.Name)
-		f.Fsys = fsys
-		f.Ctime = millisecToTime(ctime)
-		f.Mtime = millisecToTime(mtime)
-		files[f.Name] = f
+		rows.Scan(&fileId, &projId, &inode, &size, &ctime, &mtime, &fname)
+
+		files[fname] = File{
+			Fsys : fsys,
+			FileId : fileId,
+			ProjId : projId,
+			Name : fname,
+			Size : size,
+			Inode : inode,
+			Ctime : millisecToTime(ctime),
+			Mtime : millisecToTime(mtime),
+		}
 	}
 
 	//log.Printf("  #files=%d", len(files))
@@ -301,6 +312,11 @@ func (fsys *Filesys) directoryReadAllEntries(
 func (fsys *Filesys) createEmptyDir(txn *sql.Tx, projId string, dirPath string, populated bool) (int64, error) {
 	inode := fsys.allocInodeNum()
 	parentDir, basename := splitPath(dirPath)
+	if fsys.options.Verbose {
+		log.Printf("createEmptyDir %s %s populated=%t", projId, dirPath, populated)
+//		log.Printf("  parentDir=%s basename=%s", parentDir, basename)
+	}
+
 	sqlStmt := fmt.Sprintf(`
  		        INSERT INTO namespace
 			VALUES ('%s', '%s', '%d', '%d');`,
@@ -315,9 +331,7 @@ func (fsys *Filesys) createEmptyDir(txn *sql.Tx, projId string, dirPath string, 
 	sqlStmt = fmt.Sprintf(`
                        INSERT INTO directories
                        VALUES ('%d', '%s', '%d', '%d', '%d');`,
-		inode, projId, boolToInt(populated),
-		millisecToTime(ctimeMsec),
-		millisecToTime(mtimeMsec))
+		inode, projId, boolToInt(populated), ctimeMsec, mtimeMsec)
 	if _, err := txn.Exec(sqlStmt); err != nil {
 		return 0, err
 	}
@@ -372,9 +386,7 @@ func (fsys *Filesys) constructDir(
 		sqlStmt = fmt.Sprintf(`
  		        INSERT INTO files
 			VALUES ('%s', '%s', '%d', '%d', '%d', '%d');`,
-			f.FileId, f.ProjId, fInode, f.Size,
-			millisecToTime(f.CtimeMillisec),
-			millisecToTime(f.MtimeMillisec))
+			f.FileId, f.ProjId, fInode, f.Size, f.CtimeMillisec, f.MtimeMillisec)
 		if _, err := txn.Exec(sqlStmt); err != nil {
 			return err
 		}
@@ -403,19 +415,38 @@ func (fsys *Filesys) constructDir(
 	return nil
 }
 
+// The directory has the format: /PROJECT_NAME/dirpath
+//
+// strip the project name from the path.
+func (fsys *Filesys) dirPathInDxProject(dirFullName string) string {
+	if dirFullName[0] != '/' {
+		panic(fmt.Sprintf("path %s is not absolute", dirFullName))
+	}
+	parts := strings.Split(dirFullName, "/")
+	if len(parts) < 2 || parts[0] != "" {
+		panic(fmt.Sprintf("path %s doesn't split properly parts=%v, len(parts)=%d",
+			dirFullName, parts, len(parts)))
+	}
+	if len(parts) == 2 {
+		return "/"
+	}
+	return "/" + strings.Join(parts[2:], "/")
+}
+
 // Query DNAx about a folder, and encode all the information in the database.
 //
 // assumptions:
 // 1. the directory has not been queried yet.
 // 2. the global lock is held
 func (fsys *Filesys) directoryReadFromDNAx(dinode int64, projId string, dirFullName string) error {
+	dirPathInProj := fsys.dirPathInDxProject(dirFullName)
 	if fsys.options.Verbose {
-		log.Printf("describe folder %s", dirFullName)
+		log.Printf("describe folder %s:%s", projId, dirPathInProj)
 	}
 
 	// describe all the files
 	httpClient := <- fsys.httpClientPool
-	dxDir, err := DxDescribeFolder(httpClient, &fsys.dxEnv, projId, dirFullName)
+	dxDir, err := DxDescribeFolder(httpClient, &fsys.dxEnv, projId, dirPathInProj)
 	fsys.httpClientPool <- httpClient
 	if err != nil {
 		fmt.Printf("Describe error: %s", err.Error())
@@ -451,7 +482,7 @@ func (fsys *Filesys) directoryReadFromDNAx(dinode int64, projId string, dirFullN
 	}
 
 	// build the top level directory
-	err = fsys.constructDir(txn, dinode, projId, posixDir.path, posixDir.files, posixDir.subdirs)
+	err = fsys.constructDir(txn, dinode, projId, dirFullName, posixDir.files, posixDir.subdirs)
 	if err != nil {
 		txn.Rollback()
 		log.Printf(err.Error())
@@ -461,7 +492,7 @@ func (fsys *Filesys) directoryReadFromDNAx(dinode int64, projId string, dirFullN
 	// create the faux sub directories. These have no additional depth, and are fully
 	// populated. They contains all the files with multiple versions.
 	for dName, fauxFiles := range posixDir.fauxSubdirs {
-		fauxDirPath := posixDir.path + "/" + dName
+		fauxDirPath := dirFullName + "/" + dName
 
 		// create the directory in the namespace, as if it is unpopulated.
 		fauxDirInode, err := fsys.createEmptyDir(txn, projId, fauxDirPath, true)
