@@ -45,10 +45,6 @@ type Filesys struct {
 	uid uint32
 	gid uint32
 
-	// Information for all the projects that are referenced from anywhere
-	// in the filesystem. The key is the project-id (not the project name).
-	projDescs map[string]DxDescribePrj
-
 	// A file holding a sqlite3 database with all the files and
 	// directories collected thus far.
 	dbFullPath string

@@ -101,7 +101,6 @@ func Mount(
 		options: options,
 		uid : uint32(uid),
 		gid : uint32(gid),
-		projDescs : projDescs,
 		dbFullPath : dbPath,
 		mutex : sync.Mutex{},
 		inodeCnt : InodeRoot + 2,

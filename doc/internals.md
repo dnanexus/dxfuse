@@ -54,7 +54,8 @@ The `directories` table stores information for individual directories.
 | field name | type | description |
 | ---        | ---  | --          |
 | inode      | bigint |  local filesystem inode |
-| proj\_id   | text | Project id the directory belongs to. Could be empty. |
+| proj\_id   | text | Project id the directory belongs to |
+| proj\_folder | text | corresponding folder on dnanexus |
 | populated  | int |  has the directory been queried? |
 | ctime      | bigint  | creation time |
 | mtime      | bigint  | modification time |
@@ -64,7 +65,8 @@ populated flag is zero the first time the directory is encounterd. It
 is set to one, once the directory is fully described. The `ctime` and `mtime`
 are approximated by using the project timestamps. All directories are
 associated with a project, except the root. The root can hold multiple directories,
-each representing a different project.
+each representing a different project. This is why the root will have an empty `proj\_id`,
+and an empty `proj\_folder`.
 
 The local directory contents does not change after the describe calls
 are complete. The only way to update the directory, in case of
