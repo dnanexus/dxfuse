@@ -72,10 +72,28 @@ The local directory contents does not change after the describe calls
 are complete. The only way to update the directory, in case of
 changes, is to unmount and remount the filesystem.
 
-# Handling files with the same name -- TODO
+DNAx allows multiple files in a directory to have the same name. This
+violates POSIX, and cannot be presented in a FUSE filesystem. It is
+possible to resolve this, by mangling the original filenames, for
+example, by adding `_1`, `_2` suffixes. However, this can cause name
+collisions, and will certainly make it harder to understand which file
+was the original. The compromise implemented here, to use fictional
+subdirectories (`1`, `2`, `3`, ...) and place non unique files in
+them, keeping the original file names. For example, a directory can have the files:
 
-DNAx allows ...
-Expose multiple version of a file with subdirectories (1, 2, 3, ...)
+| name  | id   |
+| --    | --   |
+| X.txt | file-xxxx |
+| X.txt | file-yyyy |
+| X.txt | file-zzzz |
+
+This is presented as:
+
+| name  | id   |
+| --    | --   |
+| X.txt | file-xxxx |
+| 1/X.txt | file-yyyy |
+| 2/X.txt | file-zzzz |
 
 
 # Sequential Prefetch

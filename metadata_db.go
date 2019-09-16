@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"bazil.org/fuse"
@@ -30,6 +29,7 @@ const (
 type DirInfo struct {
 	inode int64
 	projId string
+	projFolder string
 	ctime int64
 	mtime int64
 }
@@ -39,11 +39,6 @@ type DirInfo struct {
 // a large number of dx:files. This metadata_db will be consulted
 // when performing dxfs2 operations. For example, a read-dir is
 // translated into a query for all the files inside a directory.
-
-func makeFullPath(parent string, name string) string {
-	fullPath := parent + "/" + name
-	return strings.ReplaceAll(fullPath, "//", "/")
-}
 
 // Split a path into a parent and child. For example:
 //
@@ -75,8 +70,14 @@ func millisecToTime(t int64) time.Time {
 	return time.Unix(sec, millisec)
 }
 
-
-func reportErrorSource(err error) error {
+// Print the error and the stack trace.
+//
+// This method should be used the first time we encounter an error. For example,
+// when calling the database.
+//
+func printErrorStack(err error) error {
+//	var buf []byte
+//	runtime.Stack(buf, false)
 	debug.PrintStack()
 	log.Printf(err.Error())
 	return err
@@ -99,7 +100,7 @@ func (fsys *Filesys) metadataDbInitCore(txn *sql.Tx) error {
 	);
 	`
 	if _, err := txn.Exec(sqlStmt); err != nil {
-		return reportErrorSource(err)
+		return printErrorStack(err)
 	}
 
 	// Create a table for the namespace relationships. All members of a directory
@@ -119,7 +120,7 @@ func (fsys *Filesys) metadataDbInitCore(txn *sql.Tx) error {
 	);
 	`
 	if _, err := txn.Exec(sqlStmt); err != nil {
-		return reportErrorSource(err)
+		return printErrorStack(err)
 	}
 
 	sqlStmt = `
@@ -127,7 +128,7 @@ func (fsys *Filesys) metadataDbInitCore(txn *sql.Tx) error {
 	ON namespace (parent);
 	`
 	if _, err := txn.Exec(sqlStmt); err != nil {
-		return reportErrorSource(err)
+		return printErrorStack(err)
 	}
 
 	// we need to be able to get from the files/tables, back to the namespace
@@ -137,7 +138,7 @@ func (fsys *Filesys) metadataDbInitCore(txn *sql.Tx) error {
 	ON namespace (inode);
 	`
 	if _, err := txn.Exec(sqlStmt); err != nil {
-		return reportErrorSource(err)
+		return printErrorStack(err)
 	}
 
 	// A separate table for directories.
@@ -148,6 +149,7 @@ func (fsys *Filesys) metadataDbInitCore(txn *sql.Tx) error {
 	CREATE TABLE directories (
                 inode bigint,
                 proj_id text,
+                proj_folder text,
                 populated int,
                 ctime bigint,
                 mtime bigint,
@@ -155,7 +157,7 @@ func (fsys *Filesys) metadataDbInitCore(txn *sql.Tx) error {
 	);
 	`
 	if _, err := txn.Exec(sqlStmt); err != nil {
-		return reportErrorSource(err)
+		return printErrorStack(err)
 	}
 
 	// Adding a root directory. The root directory does
@@ -164,10 +166,10 @@ func (fsys *Filesys) metadataDbInitCore(txn *sql.Tx) error {
 	// by marking the project as the empty string.
 	sqlStmt = fmt.Sprintf(`
  		        INSERT INTO directories
-			VALUES ('%d', '%s', '%d', '%d', '%d');`,
-		InodeRoot, "", boolToInt(false), time.Now(), time.Now())
+			VALUES ('%d', '%s', '%s', '%d', '%d', '%d');`,
+		InodeRoot, "", "", boolToInt(false), time.Now(), time.Now())
 	if _, err := txn.Exec(sqlStmt); err != nil {
-		return reportErrorSource(err)
+		return printErrorStack(err)
 	}
 
 	sqlStmt = fmt.Sprintf(`
@@ -175,7 +177,7 @@ func (fsys *Filesys) metadataDbInitCore(txn *sql.Tx) error {
 			VALUES ('%s', '%s', '%d', '%d');`,
 		"", "/", nsDirType, InodeRoot)
 	if _, err := txn.Exec(sqlStmt); err != nil {
-		return reportErrorSource(err)
+		return printErrorStack(err)
 	}
 
 	return nil
@@ -189,17 +191,17 @@ func (fsys *Filesys) MetadataDbInit() error {
 
 	txn, err := fsys.db.Begin()
 	if err != nil {
-		return reportErrorSource(err)
+		return printErrorStack(err)
 	}
 
 	if err := fsys.metadataDbInitCore(txn); err != nil {
 		txn.Rollback()
-		return reportErrorSource(err)
+		return printErrorStack(err)
 	}
 
 	if err := txn.Commit(); err != nil {
 		txn.Rollback()
-		return reportErrorSource(err)
+		return printErrorStack(err)
 	}
 
 	if fsys.options.Verbose {
@@ -235,7 +237,7 @@ func (fsys *Filesys) directoryReadAllEntries(
 			`, dirFullName, nsDirType)
 	rows, err := fsys.db.Query(sqlStmt)
 	if err != nil {
-		return nil, nil, reportErrorSource(err)
+		return nil, nil, printErrorStack(err)
 	}
 
 	subdirs := make(map[string]Dir)
@@ -251,7 +253,7 @@ func (fsys *Filesys) directoryReadAllEntries(
 			Fsys : fsys,
 			Parent : dirFullName,
 			Dname : dname,
-			FullPath : makeFullPath(dirFullName, dname),
+			FullPath : filepath.Join(dirFullName, dname),
 			Inode : inode,
 			Ctime : millisecToTime(ctime),
 			Mtime : millisecToTime(mtime),
@@ -269,7 +271,7 @@ func (fsys *Filesys) directoryReadAllEntries(
 			`, dirFullName, nsFileType)
 	rows, err = fsys.db.Query(sqlStmt)
 	if err != nil {
-		return nil, nil, reportErrorSource(err)
+		return nil, nil, printErrorStack(err)
 	}
 
 	// Find the files in the directory
@@ -305,6 +307,7 @@ func (fsys *Filesys) directoryReadAllEntries(
 func (fsys *Filesys) createEmptyDir(
 	txn *sql.Tx,
 	projId string,
+	projFolder string,
 	ctime int64,
 	mtime int64,
 	dirPath string,
@@ -313,8 +316,8 @@ func (fsys *Filesys) createEmptyDir(
 	inode := fsys.allocInodeNum()
 	parentDir, basename := splitPath(dirPath)
 	if fsys.options.Verbose {
-		log.Printf("createEmptyDir %s %s populated=%t", projId, dirPath, populated)
-//		log.Printf("  parentDir=%s basename=%s", parentDir, basename)
+		log.Printf("createEmptyDir %s:%s %s populated=%t",
+			projId, projFolder, dirPath, populated)
 	}
 
 	sqlStmt := fmt.Sprintf(`
@@ -322,16 +325,16 @@ func (fsys *Filesys) createEmptyDir(
 			VALUES ('%s', '%s', '%d', '%d');`,
 		parentDir, basename, nsDirType,	inode)
 	if _, err := txn.Exec(sqlStmt); err != nil {
-		return 0, reportErrorSource(err)
+		return 0, printErrorStack(err)
 	}
 
 	// Create an entry for the subdirectory
 	sqlStmt = fmt.Sprintf(`
                        INSERT INTO directories
-                       VALUES ('%d', '%s', '%d', '%d', '%d');`,
-		inode, projId, boolToInt(populated), ctime, mtime)
+                       VALUES ('%d', '%s', '%s', '%d', '%d', '%d');`,
+		inode, projId, projFolder, boolToInt(populated), ctime, mtime)
 	if _, err := txn.Exec(sqlStmt); err != nil {
-		return 0, reportErrorSource(err)
+		return 0, printErrorStack(err)
 	}
 	return inode, nil
 }
@@ -344,16 +347,17 @@ func (fsys *Filesys) setDirectoryToPopulated(txn *sql.Tx, dinode int64) error {
                 WHERE inode = '%d'`,
 		dinode)
 	if _, err := txn.Exec(sqlStmt); err != nil {
-		return reportErrorSource(err)
+		return printErrorStack(err)
 	}
 	return nil
 }
 
 // Create a directory with: an i-node, files, and empty unpopulated subdirectories.
-func (fsys *Filesys) constructDir(
+func (fsys *Filesys) populateDir(
 	txn *sql.Tx,
 	dinode int64,
 	projId string,
+	projFolder string,
 	ctime int64,
 	mtime int64,
 	dirPath string,
@@ -364,7 +368,7 @@ func (fsys *Filesys) constructDir(
 		for _, fDesc := range files {
 			fileNames = append(fileNames, fDesc.Name)
 		}
-		log.Printf("constructDir(%s)  files=%v  subdirs=%v", dirPath, fileNames, subdirs)
+		log.Printf("populateDir(%s)  files=%v  subdirs=%v", dirPath, fileNames, subdirs)
 	}
 
 	// Create a database entry for each file
@@ -389,7 +393,7 @@ func (fsys *Filesys) constructDir(
 			VALUES ('%s', '%s', '%d', '%d', '%d', '%d');`,
 			f.FileId, f.ProjId, fInode, f.Size, f.CtimeMillisec, f.MtimeMillisec)
 		if _, err := txn.Exec(sqlStmt); err != nil {
-			return reportErrorSource(err)
+			return printErrorStack(err)
 		}
 	}
 
@@ -402,9 +406,12 @@ func (fsys *Filesys) constructDir(
 		// We haven't described it yet from DNAx, so the populate flag
 		// is false.
 		_, err := fsys.createEmptyDir(
-			txn, projId, ctime, mtime, dirPath + "/" + subDirName, false)
+			txn,
+			projId, filepath.Clean(projFolder + "/" + subDirName),
+			ctime, mtime, filepath.Clean(dirPath + "/" + subDirName),
+			false)
 		if err != nil {
-			return reportErrorSource(err)
+			return printErrorStack(err)
 		}
 	}
 
@@ -417,38 +424,25 @@ func (fsys *Filesys) constructDir(
 	return nil
 }
 
-// The directory has the format: /PROJECT_NAME/dirpath
-//
-// strip the project name from the path.
-func (fsys *Filesys) dirPathInDxProject(dirFullName string) string {
-	if dirFullName[0] != '/' {
-		panic(fmt.Sprintf("path %s is not absolute", dirFullName))
-	}
-	parts := strings.Split(dirFullName, "/")
-	if len(parts) < 2 || parts[0] != "" {
-		panic(fmt.Sprintf("path %s doesn't split properly parts=%v, len(parts)=%d",
-			dirFullName, parts, len(parts)))
-	}
-	if len(parts) == 2 {
-		return "/"
-	}
-	return "/" + strings.Join(parts[2:], "/")
-}
-
 // Query DNAx about a folder, and encode all the information in the database.
 //
 // assumptions:
-// 1. the directory has not been queried yet.
-// 2. the global lock is held
-func (fsys *Filesys) directoryReadFromDNAx(dinode int64, projId string, ctime int64, mtime int64, dirFullName string) error {
-	dirPathInProj := fsys.dirPathInDxProject(dirFullName)
+// 1. An empty directory has been created on the database.
+// 1. The directory has not been queried yet.
+// 2. The global lock is held
+func (fsys *Filesys) directoryReadFromDNAx(
+	dinode int64,
+	projId string, projFolder string,
+	ctime int64, mtime int64,
+	dirFullName string) error {
+
 	if fsys.options.Verbose {
-		log.Printf("describe folder %s:%s", projId, dirPathInProj)
+		log.Printf("describe folder %s:%s", projId, projFolder)
 	}
 
 	// describe all the files
 	httpClient := <- fsys.httpClientPool
-	dxDir, err := DxDescribeFolder(httpClient, &fsys.dxEnv, projId, dirPathInProj)
+	dxDir, err := DxDescribeFolder(httpClient, &fsys.dxEnv, projId, projFolder)
 	fsys.httpClientPool <- httpClient
 	if err != nil {
 		fmt.Printf("Describe error: %s", err.Error())
@@ -490,38 +484,44 @@ func (fsys *Filesys) directoryReadFromDNAx(dinode int64, projId string, ctime in
 
 	txn, err := fsys.db.Begin()
 	if err != nil {
-		return reportErrorSource(err)
+		return printErrorStack(err)
 	}
 
 	// build the top level directory
-	err = fsys.constructDir(
-		txn, dinode, projId, ctimeApprox, mtimeApprox,
+	err = fsys.populateDir(
+		txn, dinode,
+		projId, projFolder,
+		ctimeApprox, mtimeApprox,
 		dirFullName, posixDir.files, posixDir.subdirs)
 	if err != nil {
 		txn.Rollback()
-		return reportErrorSource(err)
+		return printErrorStack(err)
 	}
 
 	// create the faux sub directories. These have no additional depth, and are fully
 	// populated. They contains all the files with multiple versions.
+	//
+	// Note: these directories DO NOT have a matching project folder.
 	for dName, fauxFiles := range posixDir.fauxSubdirs {
-		fauxDirPath := dirFullName + "/" + dName
+		fauxDirPath := filepath.Clean(dirFullName + "/" + dName)
 
 		// create the directory in the namespace, as if it is unpopulated.
 		fauxDirInode, err := fsys.createEmptyDir(
-			txn, projId, ctimeApprox, mtimeApprox, fauxDirPath, true)
+			txn, projId, "", ctimeApprox, mtimeApprox, fauxDirPath, true)
 		if err != nil {
 			txn.Rollback()
-			return reportErrorSource(err)
+			return printErrorStack(err)
 		}
 
 		var no_subdirs []string
-		err = fsys.constructDir(
-			txn, fauxDirInode, projId, ctimeApprox, mtimeApprox,
+		err = fsys.populateDir(
+			txn, fauxDirInode,
+			projId, "",
+			ctimeApprox, mtimeApprox,
 			fauxDirPath, fauxFiles, no_subdirs)
 		if err != nil {
 			txn.Rollback()
-			return reportErrorSource(err)
+			return printErrorStack(err)
 		}
 	}
 
@@ -562,7 +562,7 @@ func (fsys *Filesys) directoryLookup(dirPath string) (int, *DirInfo) {
 	// There is exactly one entry
 	// Extract the populated flag
 	sqlStmt = fmt.Sprintf(`
- 		        SELECT populated, proj_id, ctime, mtime
+ 		        SELECT populated, proj_id, proj_folder, ctime, mtime
                         FROM directories
 			WHERE inode = '%d';`, inode)
 	rows, err = fsys.db.Query(sqlStmt)
@@ -571,12 +571,11 @@ func (fsys *Filesys) directoryLookup(dirPath string) (int, *DirInfo) {
 	}
 
 	var populated int
-	var projId string
-	var ctime int64
-	var mtime int64
+	var dInfo DirInfo
+	dInfo.inode = inode
 	numRows = 0
 	for rows.Next() {
-		rows.Scan(&populated, &projId, &ctime, &mtime)
+		rows.Scan(&populated, &dInfo.projId, &dInfo.projFolder, &dInfo.ctime, &dInfo.mtime)
 		numRows++
 	}
 	rows.Close()
@@ -596,13 +595,7 @@ func (fsys *Filesys) directoryLookup(dirPath string) (int, *DirInfo) {
 	default:
 		panic(fmt.Sprintf("illegal value for populated field (%d)", populated))
 	}
-	dInfo := &DirInfo{
-		inode: inode,
-		projId: projId,
-		ctime : ctime,
-		mtime : mtime,
-	}
-	return retCode, dInfo
+	return retCode, &dInfo
 }
 
 // We want to check if directory D exists. Denote:
@@ -650,7 +643,8 @@ func (fsys *Filesys) directoryExists(dirPath string) (int, *DirInfo, error) {
 			panic("The subdirectory should not inherit ctime/mtime from root")
 		}
 		err := fsys.directoryReadFromDNAx(
-			parentDirInfo.inode, parentDirInfo.projId,
+			parentDirInfo.inode,
+			parentDirInfo.projId, parentDirInfo.projFolder,
 			parentDirInfo.ctime, parentDirInfo.mtime,
 			parentDir)
 		if err != nil {
@@ -682,7 +676,7 @@ func (fsys *Filesys) MetadataDbReadDirAll(
 		// we need to read the directory from dnanexus.
 		// This could take a while for large directories.
 		err := fsys.directoryReadFromDNAx(
-			dInfo.inode, dInfo.projId,
+			dInfo.inode, dInfo.projId, dInfo.projFolder,
 			dInfo.ctime, dInfo.mtime, dirFullName)
 		if err != nil {
 			return nil, nil, err
@@ -787,7 +781,7 @@ func (fsys *Filesys) lookupDir(
 			Fsys : fsys,
 			Parent : dirFullName,
 			Dname : dname,
-			FullPath : makeFullPath(dirFullName, dname),
+			FullPath : filepath.Join(dirFullName, dname),
 			Inode : dinode,
 			Ctime : millisecToTime(ctime),
 			Mtime : millisecToTime(mtime),
@@ -884,7 +878,7 @@ func (fsys *Filesys) MetadataDbRoot() (*Dir, error) {
 		InodeRoot)
 	rows, err := fsys.db.Query(sqlStmt)
 	if err != nil {
-		return nil, reportErrorSource(err)
+		return nil, printErrorStack(err)
 	}
 
 	numRows := 0
@@ -929,23 +923,25 @@ func (fsys *Filesys) MetadataDbPopulateRoot(projDescs map[string]DxDescribePrj) 
 
 	txn, err := fsys.db.Begin()
 	if err != nil {
-		return reportErrorSource(err)
+		return printErrorStack(err)
 	}
 
 	for _, pDesc := range projDescs {
+		// This filesystem directory matches the root folder on the project
 		_, err := fsys.createEmptyDir(
-			txn, pDesc.Id,
+			txn,
+			pDesc.Id, "/",
 			pDesc.CtimeMillisec, pDesc.MtimeMillisec, "/" + pDesc.Name, false)
 		if err != nil {
 			txn.Rollback()
-			return reportErrorSource(err)
+			return printErrorStack(err)
 		}
 	}
 
 	// set the root to be populated
 	if err := fsys.setDirectoryToPopulated(txn, InodeRoot); err != nil {
 		txn.Rollback()
-		return reportErrorSource(err)
+		return printErrorStack(err)
 	}
 
 	txn.Commit()
