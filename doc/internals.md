@@ -89,11 +89,11 @@ them, keeping the original file names. For example, a directory can have the fil
 
 This is presented as:
 
-| name  | id   |
-| --    | --   |
-| X.txt | file-xxxx |
-| 1/X.txt | file-yyyy |
-| 2/X.txt | file-zzzz |
+| name  | subdir | id   |
+| --    | --     | --   |
+| X.txt | . | file-xxxx |
+| X.txt | 1 | file-yyyy |
+| X.txt | 2 | file-zzzz |
 
 
 # Sequential Prefetch
