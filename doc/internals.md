@@ -95,6 +95,13 @@ This is presented as:
 | X.txt | 1 | file-yyyy |
 | X.txt | 2 | file-zzzz |
 
+```
+X.txt
+|_ 1
+   |_ X.txt
+|_ 2
+   |_ X.txt
+```
 
 # Sequential Prefetch
 
