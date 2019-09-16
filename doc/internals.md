@@ -117,7 +117,10 @@ is fully read, prefetch continues. If a file is not accessed for more
 than five minutes, or, access is outside the prefetched area, the process stops.
 
 
-# Manifest -- TODO
+# Manifest
 
-Add a "manifest" version invoked by dxWDL. The dxWDL compiler
-creates a manifest of the files to stream and their local locations. The filesystem then needs to support that.
+The *manifest* option specifies the initial snapshot of the filesystem
+tree as a JSON file. The database is initialized from this snapshot,
+and the filesystem starts its life from that point. This is useful
+for WDL, where we want to mount remote files and directories on a
+pre-specified tree.
