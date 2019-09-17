@@ -2,10 +2,10 @@ package dxfs2
 
 import (
 	"database/sql"
-	"runtime/debug"
 	"fmt"
 	"log"
 	"path/filepath"
+	"runtime/debug"
 	"time"
 
 	"bazil.org/fuse"
@@ -166,7 +166,8 @@ func (fsys *Filesys) metadataDbInitCore(txn *sql.Tx) error {
 	sqlStmt = fmt.Sprintf(`
  		        INSERT INTO directories
 			VALUES ('%d', '%s', '%s', '%d', '%d', '%d');`,
-		InodeRoot, "", "", boolToInt(false), time.Now(), time.Now())
+		InodeRoot, "", "", boolToInt(false),
+		time.Now().Unix(), time.Now().Unix())
 	if _, err := txn.Exec(sqlStmt); err != nil {
 		return printErrorStack(err)
 	}
@@ -303,6 +304,8 @@ func (fsys *Filesys) directoryReadAllEntries(
 }
 
 // Create an empty directory, and return the inode
+//
+// Assumption: the directory does not already exist in the database.
 func (fsys *Filesys) createEmptyDir(
 	txn *sql.Tx,
 	projId string,
@@ -311,6 +314,10 @@ func (fsys *Filesys) createEmptyDir(
 	mtime int64,
 	dirPath string,
 	populated bool) (int64, error) {
+	if dirPath[0] != '/' {
+		panic("directory must start with a slash")
+	}
+
 	// choose unused inode number. It is on stable stoage, and will not change.
 	inode := fsys.allocInodeNum()
 	parentDir, basename := splitPath(dirPath)
@@ -911,9 +918,25 @@ func (fsys *Filesys) MetadataDbRoot() (*Dir, error) {
 func (fsys *Filesys) MetadataDbPopulateRoot(manifest Manifest) error {
 	log.Printf("Populating root directory")
 
+	dirSkel := manifest.DirSkeleton()
+	log.Printf("dirSkeleton = %v", dirSkel)
+
 	txn, err := fsys.db.Begin()
 	if err != nil {
 		return printErrorStack(err)
+	}
+
+	// build the supporting directory structure
+	for _, d := range dirSkel {
+		_, err := fsys.createEmptyDir(
+			txn,
+			"", "",   // There is no backing project/folder
+			time.Now().Unix(), time.Now().Unix(),
+			d, false)
+		if err != nil {
+			txn.Rollback()
+			return printErrorStack(err)
+		}
 	}
 
 	for _, mstDir := range manifest.Directories {
@@ -921,7 +944,8 @@ func (fsys *Filesys) MetadataDbPopulateRoot(manifest Manifest) error {
 		_, err := fsys.createEmptyDir(
 			txn,
 			mstDir.ProjId, mstDir.Folder,
-			mstDir.CtimeMillisec, mstDir.MtimeMillisec, "/" + mstDir.Dirname, false)
+			mstDir.CtimeMillisec, mstDir.MtimeMillisec,
+			mstDir.Dirname, false)
 		if err != nil {
 			txn.Rollback()
 			return printErrorStack(err)
@@ -934,6 +958,5 @@ func (fsys *Filesys) MetadataDbPopulateRoot(manifest Manifest) error {
 		return printErrorStack(err)
 	}
 
-	txn.Commit()
-	return nil
+	return txn.Commit()
 }

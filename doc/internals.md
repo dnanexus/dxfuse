@@ -131,14 +131,14 @@ The `files` table describes individual files, and where to mount them.
 | field name  | JSON type | description |
 | proj\_id    | string | project ID  |
 | file\_id    | string | file ID |
-| parent      | string | local directory, placed under root |
+| parent      | string | local directory |
 | fname       | string | file name |
 
 The `directories` table maps folders in projects to local mount points.
 | field name   | JSON type | description |
 | proj\_id     | string    | project ID |
 | folder       | string    | folder on DNAx |
-| dirname      | string    | local directory, to be placed under root |
+| dirname      | string    | local directory |
 
 
 For example, the manifest:
@@ -148,12 +148,12 @@ For example, the manifest:
   {
      "proj_id" : "proj-1019001",
      "folder" : /Spade",
-     "dirname" : "CardS"
+     "dirname" : "Cards/S"
   },
   {
      "proj_id" : "proj-1087011",
      "folder" : "/Joker",
-     "dirname" : "CardJ"
+     "dirname" : "Cards/J"
   }
 }
 
@@ -161,8 +161,9 @@ will create the directory structure:
 
 ```
 /
-|_ CardS
-|_ CardJ
+|_ Cards
+      |_ S
+      |_ J
 ```
 
-Browesing through directory `CardS`, is equivalent to traversing the remote `proj-1019001:/Spade` folder.
+Browesing through directory `Cards/J`, is equivalent to traversing the remote `proj-1019001:/Joker` folder.

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/dnanexus/dxda"
@@ -34,7 +36,7 @@ type Manifest struct {
 
 func validate(manifest Manifest) error {
 	for _, d := range manifest.Directories {
-		if strings.HasPrefix(d.ProjId, "project-") {
+		if !strings.HasPrefix(d.ProjId, "project-") {
 			return fmt.Errorf("project has invalid ID %s", d.ProjId)
 		}
 		dirNameLen := len(d.Dirname)
@@ -42,8 +44,8 @@ func validate(manifest Manifest) error {
 		case 0:
 			return fmt.Errorf("the directory cannot be empty %v", d)
 		default:
-			if strings.Contains(d.Dirname, "/") {
-				return fmt.Errorf("the directory name cannot contain a slash %v", d)
+			if d.Dirname[0] != '/' {
+				return fmt.Errorf("the directory name must start with a slash %v", d)
 			}
 		}
 	}
@@ -101,7 +103,7 @@ func MakeManifestFromProjectIds(
 		mstDir := ManifestDir{
 			ProjId : pDesc.Id,
 			Folder : "/",
-			Dirname : pDesc.Name,
+			Dirname : filepath.Clean("/" + pDesc.Name),
 			CtimeMillisec : pDesc.CtimeMillisec,
 			MtimeMillisec : pDesc.MtimeMillisec,
 		}
@@ -118,4 +120,92 @@ func MakeManifestFromProjectIds(
 		return nil, err
 	}
 	return manifest, nil
+}
+
+
+// return all the parents of a directory.
+// For example:
+//   "/A/B/C"      ["/", "/A", "/A/B"]
+//   "/foo/bar"   ["/", "/foo"]
+func ancestors(p string) []string {
+	if p == "" || p == "/" {
+		return []string{"/"}
+	}
+	parent, dirname := filepath.Split(p)
+	if parent == "/" {
+		return []string{"/", p}
+	}
+	ators := ancestors(parent)
+	if len(ators) == 0 {
+		panic(fmt.Sprintf("cannot create ancestor list for path %s", p))
+	}
+	longest := ators[len(ators) - 1]
+	return append(ators, longest + "/" + dirname)
+}
+
+// We need all of this, to be able to sort the list of directories according
+// to the number of parts they have.
+// for example
+//    ["/Alpha/Beta", "/A/B/C", "/D", "/E", "/Alpha"]
+// Will be sorted into:
+//    ["/Alpha", "/D", "/E", "/Alpha/Beta", "/A/B/C"]
+
+type Dirs struct {
+	elems []*string
+}
+func (d Dirs) Len() int { return len(d.elems) }
+func (d Dirs) Swap(i, j int) { d.elems[i], d.elems[j] = d.elems[j], d.elems[i] }
+func (d Dirs) Less(i, j int) bool {
+	nI := strings.Count(*d.elems[i], "/")
+	nJ := strings.Count(*d.elems[j], "/")
+	return nI < nJ
+}
+
+
+// Figure out the directory structure needed to support
+// the leaf nodes. For example, if we need to create:
+//     ["/A/B/C", "/D", "/D/E"]
+// then the skeleton is:
+//     ["/A", "/A/B", "/D"]
+//
+func (m *Manifest) DirSkeleton() []string {
+	tree := make(map[string]bool)
+
+	// record all the parents
+	for _, file := range m.Files {
+		dirpath := file.Parent
+		for _, p := range (ancestors(dirpath)) {
+			tree[p] = true
+		}
+	}
+	for _, file := range m.Directories {
+		dirParent, _ := filepath.Split(file.Dirname)
+		for _, p := range (ancestors(dirParent)) {
+			tree[p] = true
+		}
+	}
+
+	// sort the elements from the bottom of the tree, to its branches.
+	//
+	// for example, ["/A/B/C/D", "/A/B", "/A/B/C", "/D", "/E", "/A"] ->
+	// ["/A", "/D", "/E", "/A/B", "/A/B/C", "/A/B/C/D"]
+	//
+	var emptyStringArray []*string
+	de := Dirs{
+		elems : emptyStringArray,
+	}
+	for p, _ := range tree {
+		de.elems = append(de.elems, &p)
+	}
+	sort.Sort(de)
+
+	// return plain strings, instead of pointers to strings
+	// do not include the root, because it already exists.
+	var retval []string
+	for _, e := range(de.elems) {
+		if *e != "/" {
+			retval = append(retval, *e)
+		}
+	}
+	return retval
 }
