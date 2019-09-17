@@ -40,10 +40,12 @@ func fileExists(filename string) bool {
 func Mount(
 	mountpoint string,
 	dxEnv dxda.DXEnvironment,
-	projectIds []string,
+	manifest Manifest,
 	options Options) error {
 
 	// get the Unix uid and gid
+	// TODO: this is current the root user, because the program is run under
+	// sudo privileges.
 	user, err := user.Current()
 	if err != nil {
 		return err
@@ -55,17 +57,6 @@ func Mount(
 	gid, err := strconv.Atoi(user.Gid)
 	if err != nil {
 		return err
-	}
-
-	// describe the projects, retrieve metadata for them
-	tmpHttpClient := dxda.NewHttpClient(false)
-	projDescs := make(map[string]DxDescribePrj)
-	for _, pid := range projectIds {
-		pDesc, err := DxDescribeProject(tmpHttpClient, &dxEnv, pid)
-		if err != nil {
-			return err
-		}
-		projDescs[pDesc.Id] = *pDesc
 	}
 
 	dbPath := options.MetadataDbPath + "/" + "metadata.db"
@@ -124,7 +115,7 @@ func Mount(
 	}
 
 	log.Printf("Populate Root")
-	if err := fsys.MetadataDbPopulateRoot(projDescs); err != nil {
+	if err := fsys.MetadataDbPopulateRoot(manifest); err != nil {
 		return err
 	}
 

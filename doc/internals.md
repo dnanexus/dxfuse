@@ -1,12 +1,11 @@
 # The Database Schema
 
 A local sqlite3 database is used to store filesystem information
-discovered by querying DNAnexus. The database type system is a derivative of
-SQL.
+discovered by querying DNAnexus.
 
 The `files` table maintains information for individual files.
 
-| field name | type |  description |
+| field name | SQL type |  description |
 | ---        | ---  |  --          |
 | inode      | bigint  | local filesystem i-node, cannot change |
 | file\_id   | text | The DNAx file-id |
@@ -25,7 +24,7 @@ be omitted, at the cost of additional work on the server side.
 
 The `namespace` table stores information on the directory structure.
 
-| field name | type | description |
+| field name | SQL type | description |
 | ---        | ---  | --          |
 | parent     | text | the parent folder |
 | name       | text | directory/file name |
@@ -51,7 +50,7 @@ files with posix disallowed characters, such as slash (`/`).
 
 The `directories` table stores information for individual directories.
 
-| field name | type | description |
+| field name | SQL type | description |
 | ---        | ---  | --          |
 | inode      | bigint |  local filesystem inode |
 | proj\_id   | text | Project id the directory belongs to |
@@ -124,3 +123,46 @@ tree as a JSON file. The database is initialized from this snapshot,
 and the filesystem starts its life from that point. This is useful
 for WDL, where we want to mount remote files and directories on a
 pre-specified tree.
+
+The manifest is in JSON format, and it contains two tables, one for individual files,
+the other for directories.
+
+The `files` table describes individual files, and where to mount them.
+| field name  | JSON type | description |
+| proj\_id    | string | project ID  |
+| file\_id    | string | file ID |
+| parent      | string | local directory, placed under root |
+| fname       | string | file name |
+
+The `directories` table maps folders in projects to local mount points.
+| field name   | JSON type | description |
+| proj\_id     | string    | project ID |
+| folder       | string    | folder on DNAx |
+| dirname      | string    | local directory, to be placed under root |
+
+
+For example, the manifest:
+
+```json
+{
+  {
+     "proj_id" : "proj-1019001",
+     "folder" : /Spade",
+     "dirname" : "CardS"
+  },
+  {
+     "proj_id" : "proj-1087011",
+     "folder" : "/Joker",
+     "dirname" : "CardJ"
+  }
+}
+
+will create the directory structure:
+
+```
+/
+|_ CardS
+|_ CardJ
+```
+
+Browesing through directory `CardS`, is equivalent to traversing the remote `proj-1019001:/Spade` folder.

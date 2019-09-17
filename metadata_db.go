@@ -3,7 +3,6 @@ package dxfs2
 import (
 	"database/sql"
 	"runtime/debug"
-	"errors"
 	"fmt"
 	"log"
 	"path/filepath"
@@ -909,29 +908,20 @@ func (fsys *Filesys) MetadataDbRoot() (*Dir, error) {
 }
 
 // Build a toplevel directory for each project.
-func (fsys *Filesys) MetadataDbPopulateRoot(projDescs map[string]DxDescribePrj) error {
+func (fsys *Filesys) MetadataDbPopulateRoot(manifest Manifest) error {
 	log.Printf("Populating root directory")
-
-	// validate that the projects have good names before starting the transaction
-	for _, pDesc := range projDescs {
-		if !FilenameIsPosixCompliant(pDesc.Name) {
-			return errors.New(
-				fmt.Sprintf("Project %s has a non posix compliant name (%s)",
-					pDesc.Id, pDesc.Name))
-		}
-	}
 
 	txn, err := fsys.db.Begin()
 	if err != nil {
 		return printErrorStack(err)
 	}
 
-	for _, pDesc := range projDescs {
+	for _, mstDir := range manifest.Directories {
 		// This filesystem directory matches the root folder on the project
 		_, err := fsys.createEmptyDir(
 			txn,
-			pDesc.Id, "/",
-			pDesc.CtimeMillisec, pDesc.MtimeMillisec, "/" + pDesc.Name, false)
+			mstDir.ProjId, mstDir.Folder,
+			mstDir.CtimeMillisec, mstDir.MtimeMillisec, "/" + mstDir.Dirname, false)
 		if err != nil {
 			txn.Rollback()
 			return printErrorStack(err)
