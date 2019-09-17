@@ -128,7 +128,9 @@ The manifest is in JSON format, and it contains two tables, one for individual f
 the other for directories.
 
 The `files` table describes individual files, and where to mount them.
+
 | field name  | JSON type | description |
+| ---         | ---       | --          |
 | proj\_id    | string | project ID  |
 | file\_id    | string | file ID |
 | parent      | string | local directory |
@@ -136,6 +138,7 @@ The `files` table describes individual files, and where to mount them.
 
 The `directories` table maps folders in projects to local mount points.
 | field name   | JSON type | description |
+| ---          | ---       | --          |
 | proj\_id     | string    | project ID |
 | folder       | string    | folder on DNAx |
 | dirname      | string    | local directory |
