@@ -137,6 +137,7 @@ The `files` table describes individual files, and where to mount them.
 | fname       | string | file name |
 
 The `directories` table maps folders in projects to local mount points.
+
 | field name   | JSON type | description |
 | ---          | ---       | --          |
 | proj\_id     | string    | project ID |
@@ -146,7 +147,7 @@ The `directories` table maps folders in projects to local mount points.
 
 For example, the manifest:
 
-```json
+```
 {
   {
      "proj_id" : "proj-1019001",
@@ -159,6 +160,7 @@ For example, the manifest:
      "dirname" : "Cards/J"
   }
 }
+```
 
 will create the directory structure:
 
