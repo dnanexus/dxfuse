@@ -77,6 +77,15 @@ func main() {
 		p := flag.Arg(1)
 		log.Printf("Provided with a manifest, reading from %s", p)
 		manifest, err = dxfs2.ReadManifest(p)
+		if err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+		if err := manifest.FillInMissingFields(dxEnv); err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+		log.Printf("manifest= %v", manifest)
 	} else {
 		// process the project inputs, and convert to an array of verified
 		// project IDs
@@ -97,10 +106,10 @@ func main() {
 		}
 
 		manifest, err = dxfs2.MakeManifestFromProjectIds(dxEnv, projectIds)
-	}
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		if err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
 	}
 
 	if err := dxfs2.Mount(mountpoint, dxEnv, *manifest, options); err != nil {

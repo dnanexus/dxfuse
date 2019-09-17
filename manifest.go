@@ -14,18 +14,26 @@ import (
 )
 
 type ManifestFile struct {
-	ProjId  string `json:"proj_id"`
-	FileId  string `json:"file_id"`
-	Parent  string `json:"parent"`
-	Fname   string `json:"fname"`
+	ProjId  string        `json:"proj_id"`
+	FileId  string        `json:"file_id"`
+	Parent  string        `json:"parent"`
+	Fname   string        `json:"fname"`
+
+	// These may not be provided by the user. Then, we
+	// need to query DNAx for the information.
+	Size    int64        `json:"size,omitempty"`
+	CtimeMillisec int64  `json:"ctime,omitempty"`
+	MtimeMillisec int64  `json:"mtime,omitempty"`
 }
 
 type ManifestDir struct {
 	ProjId        string `json:"proj_id"`
 	Folder        string `json:"folder"`
 	Dirname       string `json:"dirname"`
-	MtimeMillisec int64  `json:"-"`
-	CtimeMillisec int64  `json:"-"`
+
+	// These may missing.
+	CtimeMillisec int64  `json:"ctime,omitempty"`
+	MtimeMillisec int64  `json:"mtime,omitempty"`
 }
 
 type Manifest struct {
@@ -168,6 +176,7 @@ func (d Dirs) Less(i, j int) bool {
 // then the skeleton is:
 //     ["/A", "/A/B", "/D"]
 //
+// The root directory is not reported in the skeleton.
 func (m *Manifest) DirSkeleton() []string {
 	tree := make(map[string]bool)
 
@@ -178,8 +187,8 @@ func (m *Manifest) DirSkeleton() []string {
 			tree[p] = true
 		}
 	}
-	for _, file := range m.Directories {
-		dirParent, _ := filepath.Split(file.Dirname)
+	for _, d := range m.Directories {
+		dirParent, _ := filepath.Split(d.Dirname)
 		for _, p := range (ancestors(dirParent)) {
 			tree[p] = true
 		}
@@ -208,4 +217,71 @@ func (m *Manifest) DirSkeleton() []string {
 		}
 	}
 	return retval
+}
+
+
+func (m *Manifest) FillInMissingFields(dxEnv dxda.DXEnvironment) error {
+	tmpHttpClient := dxda.NewHttpClient(false)
+
+	// Make a list of all the files that are missing details
+	fileIds := make(map[string]bool)
+	for _, fl := range m.Files {
+		if fl.Size == 0 ||
+			fl.CtimeMillisec == 0 ||
+			fl.MtimeMillisec == 0 {
+			fileIds[fl.FileId] = true
+		}
+	}
+	var fileIdList []string
+	for fId, _  := range fileIds {
+		fileIdList = append(fileIdList, fId)
+	}
+	dataObjs, err := DxDescribeBulkObjects(tmpHttpClient, &dxEnv, fileIdList)
+	if err != nil {
+		return err
+	}
+
+	// fill in missing information for files
+	for i, _ := range m.Files {
+		fl := &m.Files[i]
+		fDesc, ok := dataObjs[fl.FileId]
+		if ok {
+			// This file was missing details
+			fl.Size = fDesc.Size
+			fl.CtimeMillisec = fDesc.CtimeMillisec
+			fl.MtimeMillisec = fDesc.MtimeMillisec
+		}
+	}
+
+	// Make a list of all the projects we need to query.
+	projectIds := make(map[string]bool)
+	for _, d := range m.Directories {
+		if d.CtimeMillisec == 0 ||
+			d.MtimeMillisec == 0 {
+			projectIds[d.ProjId] = true
+		}
+	}
+
+	// describe the projects, retrieve metadata for them
+	projDescs := make(map[string]DxDescribePrj)
+	for pId, _ := range projectIds {
+		pDesc, err := DxDescribeProject(tmpHttpClient, &dxEnv, pId)
+		if err != nil {
+			return err
+		}
+		projDescs[pDesc.Id] = *pDesc
+	}
+
+	// fill in missing ctime,mtime for directories
+	for i, _ := range m.Directories {
+		d := &m.Directories[i]
+		pDesc, ok := projDescs[d.ProjId]
+		if ok {
+			// This directory may have been missing fields
+			d.CtimeMillisec = pDesc.CtimeMillisec
+			d.MtimeMillisec = pDesc.MtimeMillisec
+		}
+	}
+
+	return nil
 }

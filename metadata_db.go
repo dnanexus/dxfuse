@@ -303,6 +303,42 @@ func (fsys *Filesys) directoryReadAllEntries(
 	return files, subdirs, nil
 }
 
+// Create an entry representing one remote file. This is used by
+// dxWDL as a way to stream individual files.
+func (fsys *Filesys) createRemoteFile(
+	txn *sql.Tx,
+	projId string,
+	fileId string,
+	size int64,
+	ctime int64,
+	mtime int64,
+	parentDir string,
+	fname string) (int64, error) {
+	// choose unused inode number. It is on stable stoage, and will not change.
+	inode := fsys.allocInodeNum()
+	if fsys.options.Verbose {
+		log.Printf("createRemoteFile %s:%s %s",	projId, fileId, parentDir + "/" + fname)
+	}
+
+	sqlStmt := fmt.Sprintf(`
+ 		        INSERT INTO namespace
+			VALUES ('%s', '%s', '%d', '%d');`,
+		parentDir, fname, nsFileType, inode)
+	if _, err := txn.Exec(sqlStmt); err != nil {
+		return 0, printErrorStack(err)
+	}
+
+	// Create an entry for the file
+	sqlStmt = fmt.Sprintf(`
+ 		        INSERT INTO files
+			VALUES ('%s', '%s', '%d', '%d', '%d', '%d');`,
+		fileId, projId, inode, size, ctime, mtime)
+	if _, err := txn.Exec(sqlStmt); err != nil {
+		return 0, printErrorStack(err)
+	}
+	return inode, nil
+}
+
 // Create an empty directory, and return the inode
 //
 // Assumption: the directory does not already exist in the database.
@@ -939,13 +975,26 @@ func (fsys *Filesys) MetadataDbPopulateRoot(manifest Manifest) error {
 		}
 	}
 
-	for _, mstDir := range manifest.Directories {
-		// This filesystem directory matches the root folder on the project
+	// create individual files
+	for _, fl := range manifest.Files {
+		_, err := fsys.createRemoteFile(
+			txn, fl.ProjId, fl.FileId,
+			fl.Size, fl.CtimeMillisec, fl.MtimeMillisec,
+			fl.Parent, fl.Fname)
+		if err != nil {
+			txn.Rollback()
+			return printErrorStack(err)
+		}
+	}
+
+	for _, d := range manifest.Directories {
+		// Local directory [d.Dirname] represents
+		// folder [d.Folder] on project [d.ProjId].
 		_, err := fsys.createEmptyDir(
 			txn,
-			mstDir.ProjId, mstDir.Folder,
-			mstDir.CtimeMillisec, mstDir.MtimeMillisec,
-			mstDir.Dirname, false)
+			d.ProjId, d.Folder,
+			d.CtimeMillisec, d.MtimeMillisec,
+			d.Dirname, false)
 		if err != nil {
 			txn.Rollback()
 			return printErrorStack(err)

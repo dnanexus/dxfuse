@@ -23,7 +23,7 @@ type DxDescribeDataObject struct {
 	ProjId     string
 	Name       string
 	Folder     string
-	Size       uint64
+	Size       int64
 	CtimeMillisec  int64
 	MtimeMillisec  int64
 }
@@ -68,7 +68,7 @@ type DxDescribeRaw struct {
 	Folder           string `json:"folder"`
 	CreatedMillisec  int64 `json:"created"`
 	ModifiedMillisec int64 `json:"modified"`
-	Size             uint64 `json:"size"`
+	Size             int64 `json:"size"`
 }
 
 // Describe a large number of file-ids in one API call.

@@ -1,4 +1,4 @@
-# The Database Schema
+## The Database Schema
 
 A local sqlite3 database is used to store filesystem information
 discovered by querying DNAnexus.
@@ -102,7 +102,7 @@ X.txt
    |_ X.txt
 ```
 
-# Sequential Prefetch
+## Sequential Prefetch
 
 Performing prefetch for sequential streams incurs overhead and costs
 memory. The goal of the prefetch module is: *if a file is read from start to finish, we want to be
@@ -116,7 +116,7 @@ is fully read, prefetch continues. If a file is not accessed for more
 than five minutes, or, access is outside the prefetched area, the process stops.
 
 
-# Manifest
+## Manifest
 
 The *manifest* option specifies the initial snapshot of the filesystem
 tree as a JSON file. The database is initialized from this snapshot,
@@ -171,4 +171,4 @@ will create the directory structure:
       |_ J
 ```
 
-Browesing through directory `Cards/J`, is equivalent to traversing the remote `proj-1019001:/Joker` folder.
+Browsing through directory `Cards/J`, is equivalent to traversing the remote `proj-1019001:/Joker` folder.
