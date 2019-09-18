@@ -1,0 +1,21 @@
+{
+  "files" : [
+    {
+      "proj_id" : "project-FbZ25gj04J9B8FJ3Gb5fVP41",
+      "file_id" : "file-FbZ26V804J92bj0b5bb0657P",
+      "parent" : "/regulations"
+    },
+    {
+      "proj_id" : "project-FbZ25gj04J9B8FJ3Gb5fVP41",
+      "file_id" : "file-FbZ26VQ04J93KB4BFX2V8PxG",
+      "parent" : "/regulations"
+    }
+  ],
+  "directories" : [
+    {
+      "proj_id" : "project-FbZ25gj04J9B8FJ3Gb5fVP41",
+      "folder" : "/correctness/large",
+      "dirname" : "/linuxImages/bigOnes"
+    }
+  ]
+}

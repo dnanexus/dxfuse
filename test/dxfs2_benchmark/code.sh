@@ -3,11 +3,13 @@
 ######################################################################
 ## constants
 
+projName="dxfs2_test_data"
+projId="project-FbZ25gj04J9B8FJ3Gb5fVP41"
+
 baseDir="$HOME/dxfs2_test"
 dxTrgDir="${baseDir}/dxCopy"
 dxfs2TrgDir="${baseDir}/dxfs2Copy"
 mountpoint="${baseDir}/MNT"
-projId="project-FbZ25gj04J9B8FJ3Gb5fVP41"
 
 dxDirOnProject="benchmarks"
 #dxDirOnProject="correctness/small"
@@ -39,7 +41,7 @@ main() {
     sleep 1
 
     echo "Discover the benchmark files"
-    files=$(ls $mountpoint/$dxDirOnProject)
+    files=$(ls $mountpoint/$projName/$dxDirOnProject)
     echo $files
 
     mkdir -p $HOME/out/result
@@ -59,7 +61,7 @@ main() {
 
         start=`date +%s`
         echo "copying from dxfs2"
-        cat "$mountpoint/$dxDirOnProject/$fname" > /tmp/X_dxfs2
+        cat "$mountpoint/$projName/$dxDirOnProject/$fname" > /tmp/X_dxfs2
         end=`date +%s`
         runtime2=$((end-start))
 

@@ -2,11 +2,9 @@ package dxfs2
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"strings"
-	"time"
 
 	// The dxda package has the get-environment code
 	"github.com/dnanexus/dxda"
@@ -14,10 +12,44 @@ import (
 )
 
 // Limit on the number of objects that the bulk-describe API can take
-const MAX_NUM_OBJECTS_IN_DESCRIBE = 1000
+const (
+	maxNumObjectsInDescribe = 1000
+)
+
+// -------------------------------------------------------------------
+// Description of a DNAx data object
+type DxDescribeDataObject struct {
+	FileId     string
+	ProjId     string
+	Name       string
+	Folder     string
+	Size       int64
+	CtimeMillisec  int64
+	MtimeMillisec  int64
+}
+
+type DxDescribePrj struct {
+	Id           string
+	Name         string
+	Region       string
+	Version      int
+	DataUsageGiB float64
+	CtimeMillisec  int64
+	MtimeMillisec  int64
+}
+
+// a DNAx directory. It holds files and sub-directories.
+type DxFolder struct {
+	path  string  // Full directory name, for example: { "/A/B/C", "foo/bar/baz" }
+	files map[string]DxDescribeDataObject
+	subdirs []string
+}
+
+// -------------------------------------------------------------------
 
 type Request struct {
 	Objects []string `json:"objects"`
+	ClassDescribeOptions map[string]map[string]map[string]bool `json:"classDescribeOptions"`
 }
 
 type Reply struct {
@@ -36,25 +68,34 @@ type DxDescribeRaw struct {
 	Folder           string `json:"folder"`
 	CreatedMillisec  int64 `json:"created"`
 	ModifiedMillisec int64 `json:"modified"`
-	Size             uint64 `json:"size"`
+	Size             int64 `json:"size"`
 }
-
-// convert time in milliseconds since 1970, in the equivalent
-// golang structure
-func dxTimeToUnixTime(dxTime int64) time.Time {
-	sec := int64(dxTime/1000)
-	millisec := int64(dxTime % 1000)
-	return time.Unix(sec, millisec)
-}
-
 
 // Describe a large number of file-ids in one API call.
 func submit(
 	httpClient *retryablehttp.Client,
 	dxEnv *dxda.DXEnvironment,
-	fileIds []string) (map[string]DxDescribe, error) {
+	fileIds []string) (map[string]DxDescribeDataObject, error) {
+
+	// Limit the number of fields returned, because by default we
+	// get too much information, which is a burden on the server side.
+	describeOptions := map[string]map[string]map[string]bool {
+		"file" : map[string]map[string]bool {
+			"fields" : map[string]bool {
+				"id" : true,
+				"project" : true,
+				"name" : true,
+				"state" : true,
+				"folder" : true,
+				"created" : true,
+				"modified" : true,
+				"size" : true,
+			},
+		},
+	}
 	request := Request{
 		Objects : fileIds,
+		ClassDescribeOptions : describeOptions,
 	}
 	var payload []byte
 	payload, err := json.Marshal(request)
@@ -73,21 +114,21 @@ func submit(
 		return nil, err
 	}
 
-	var files = make(map[string]DxDescribe)
+	var files = make(map[string]DxDescribeDataObject)
 	for _, descRawTop := range(reply.Results) {
 		descRaw := descRawTop.Describe
 		if descRaw.State != "closed" {
-			err := errors.New("The file is not in the closed state, it is [" + descRaw.State + "]")
-			return nil, err
+			log.Printf("File %s is not closed, it is [" + descRaw.State + "], dropping")
+			continue
 		}
-		desc := DxDescribe{
-			ProjId : descRaw.ProjId,
+		desc := DxDescribeDataObject{
 			FileId : descRaw.FileId,
+			ProjId : descRaw.ProjId,
 			Name : descRaw.Name,
 			Folder : descRaw.Folder,
 			Size : descRaw.Size,
-			Ctime : dxTimeToUnixTime(descRaw.CreatedMillisec),
-			Mtime : dxTimeToUnixTime(descRaw.ModifiedMillisec),
+			CtimeMillisec : descRaw.CreatedMillisec,
+			MtimeMillisec : descRaw.ModifiedMillisec,
 		}
 		//fmt.Printf("%v\n", desc)
 		files[desc.FileId] = desc
@@ -98,14 +139,14 @@ func submit(
 func DxDescribeBulkObjects(
 	httpClient *retryablehttp.Client,
 	dxEnv *dxda.DXEnvironment,
-	fileIds []string) (map[string]DxDescribe, error) {
-	var gMap = make(map[string]DxDescribe)
+	fileIds []string) (map[string]DxDescribeDataObject, error) {
+	var gMap = make(map[string]DxDescribeDataObject)
 	if len(fileIds) == 0 {
 		return gMap, nil
 	}
 
 	// split into limited batchs
-	batchSize := MAX_NUM_OBJECTS_IN_DESCRIBE
+	batchSize := maxNumObjectsInDescribe
 	var batches [][]string
 
 	for batchSize < len(fileIds) {
@@ -162,7 +203,7 @@ func listFolder(
 	request := ListFolderRequest{
 		Folder : dir,
 		Only : "all",
-		IncludeHidden : true,
+		IncludeHidden : false,
 	}
 	var payload []byte
 	payload, err := json.Marshal(request)
@@ -200,23 +241,23 @@ func DxDescribeFolder(
 	httpClient *retryablehttp.Client,
 	dxEnv *dxda.DXEnvironment,
 	projectId string,
-	dir string) (*DxFolder, error) {
+	folder string) (*DxFolder, error) {
 
 	// The listFolder API call returns a list of object ids and folders.
 	// We could describe the objects right here, but we do that separately.
-	folderInfo, err := listFolder(httpClient, dxEnv, projectId, dir)
+	folderInfo, err := listFolder(httpClient, dxEnv, projectId, folder)
 	if err != nil {
-		log.Printf("error %s", err.Error())
+		log.Printf("listFolder(%s) error %s", folder, err.Error())
 		return nil, err
 	}
 	files, err := DxDescribeBulkObjects(httpClient, dxEnv, folderInfo.fileIds)
 	if err != nil {
-		log.Printf("error %s", err.Error())
+		log.Printf("describeBulkObjects(%v) error %s", folderInfo.fileIds, err.Error())
 		return nil, err
 	}
 
 	return &DxFolder{
-		path : dir,
+		path : folder,
 		files : files,
 		subdirs : folderInfo.subdirs,
 	}, nil
@@ -274,8 +315,8 @@ func DxDescribeProject(
 		Region :  reply.Region,
 		Version : reply.Version,
 		DataUsageGiB : reply.DataUsage,
-		Ctime : dxTimeToUnixTime(reply.CreatedMillisec),
-		Mtime : dxTimeToUnixTime(reply.ModifiedMillisec),
+		CtimeMillisec : reply.CreatedMillisec,
+		MtimeMillisec : reply.ModifiedMillisec,
 	}
 	return &prj, nil
 }

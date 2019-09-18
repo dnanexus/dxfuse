@@ -11,9 +11,9 @@ import (
 )
 
 const (
-	MAX_DIR_SIZE int      = 10 * 1000
-	INODE_ROOT_DIR int64  = 1
-	INODE_INITIAL int64   = 10
+	InodeInvalid   = 0
+	InodeRoot      = 1
+
 	HTTP_CLIENT_POOL_SIZE = 4
 	KiB                   = 1024
 	MiB                   = 1024 * KiB
@@ -26,35 +26,6 @@ type DxDownloadURL struct {
 	URL     string            `json:"url"`
 	Headers map[string]string `json:"headers"`
 }
-
-// Description of a DNAx data object
-type DxDescribe struct {
-	FileId    string
-	ProjId    string
-	Name      string
-	Folder    string
-	Size      uint64
-	Ctime     time.Time
-	Mtime     time.Time
-}
-
-type DxDescribePrj struct {
-	Id           string
-	Name         string
-	Region       string
-	Version      int
-	DataUsageGiB float64
-	Ctime        time.Time
-	Mtime        time.Time
-}
-
-// a DNAx directory. It holds files and sub-directories.
-type DxFolder struct {
-	path  string  // Full directory name, for example: { "/A/B/C", "foo/bar/baz" }
-	files map[string]DxDescribe
-	subdirs []string
-}
-
 
 type Options struct {
 	DebugFuse      bool
@@ -74,10 +45,7 @@ type Filesys struct {
 	uid uint32
 	gid uint32
 
-	// the project being mounted
-	project *DxDescribePrj
-
-	// A file holding a sqllite database with all the files and
+	// A file holding a sqlite3 database with all the files and
 	// directories collected thus far.
 	dbFullPath string
 
@@ -97,11 +65,13 @@ type Filesys struct {
 var _ fs.FS = (*Filesys)(nil)
 
 type Dir struct {
-	Fsys  *Filesys
-	Parent string  // the parent directory, used for debugging
-	Dname  string  // This is the last part of the full path
-	FullPath string // combine parent and dname, then normalize
-	Inode  int64
+	Fsys     *Filesys
+	Parent    string  // the parent directory, used for debugging
+	Dname     string  // This is the last part of the full path
+	FullPath  string // combine parent and dname, then normalize
+	Inode     int64
+	Ctime     time.Time // DNAx does not record times per directory.
+	Mtime     time.Time // we use the project creation time, and mtime as an approximation.
 }
 
 // Make sure that Dir implements the fs.Node interface
@@ -111,7 +81,7 @@ var _ fs.Node = (*Dir)(nil)
 type File struct {
 	Fsys     *Filesys
 	FileId    string  // Required to build a download URL
-	ProjId    string  // -"-
+	ProjId    string  // Note: this could be a container
 	Name      string
 	Size      int64
 	Inode     int64

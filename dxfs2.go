@@ -40,10 +40,12 @@ func fileExists(filename string) bool {
 func Mount(
 	mountpoint string,
 	dxEnv dxda.DXEnvironment,
-	projectId string,
+	manifest Manifest,
 	options Options) error {
 
 	// get the Unix uid and gid
+	// TODO: this is current the root user, because the program is run under
+	// sudo privileges.
 	user, err := user.Current()
 	if err != nil {
 		return err
@@ -53,13 +55,6 @@ func Mount(
 		return err
 	}
 	gid, err := strconv.Atoi(user.Gid)
-	if err != nil {
-		return err
-	}
-
-	// describe the project, get some describing metadata for it
-	tmpHttpClient := dxda.NewHttpClient(false)
-	projDesc, err := DxDescribeProject(tmpHttpClient, &dxEnv, projectId)
 	if err != nil {
 		return err
 	}
@@ -81,7 +76,7 @@ func Mount(
 	}
 
 	// create a connection to the database, that will be kept open
-	db, err := sql.Open("sqlite3", dbPath + "?cache=shared&mode=rwc")
+	db, err := sql.Open("sqlite3", dbPath + "?mode=rwc")
 	if err != nil {
 		return err
 	}
@@ -97,10 +92,9 @@ func Mount(
 		options: options,
 		uid : uint32(uid),
 		gid : uint32(gid),
-		project : projDesc,
 		dbFullPath : dbPath,
 		mutex : sync.Mutex{},
-		inodeCnt : INODE_INITIAL,
+		inodeCnt : InodeRoot + 2,
 		db : db,
 		httpClientPool : httpClientPool,
 	}
@@ -112,10 +106,12 @@ func Mount(
 		}
 	}
 
-	log.Printf("mounted dxfs2")
-
 	// create the metadata database
-	if err = fsys.MetadataDbInit(); err != nil {
+	if err := fsys.MetadataDbInit(); err != nil {
+		return err
+	}
+
+	if err := fsys.MetadataDbPopulateRoot(manifest); err != nil {
 		return err
 	}
 
@@ -123,6 +119,7 @@ func Mount(
 	fsys.pgs.Init(options.VerboseLevel)
 
 	// Fuse mount
+	log.Printf("mounting dxfs2")
 	c, err := fuse.Mount(
 		mountpoint,
 		fuse.AllowOther(),
@@ -193,9 +190,9 @@ func (dir *Dir) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.BlockSize = 4 * 1024
 
 	// get the timestamps from the toplevel project
-	a.Mtime = dir.Fsys.project.Mtime
-	a.Ctime = dir.Fsys.project.Ctime
-	a.Crtime = dir.Fsys.project.Ctime
+	a.Mtime = dir.Mtime
+	a.Ctime = dir.Ctime
+	a.Crtime = dir.Ctime
 
 	return nil
 }
@@ -204,11 +201,14 @@ func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	dir.Fsys.mutex.Lock()
 	defer dir.Fsys.mutex.Unlock()
 
+	// normalize the filename. For example, we can get "//" when reading
+	// the root directory (instead of "/").
+	fullPath := filepath.Clean(dir.FullPath)
 	if dir.Fsys.options.Verbose {
-		log.Printf("ReadDirAll dir=%s\n", dir.FullPath)
+		log.Printf("ReadDirAll dir=(%s)\n", fullPath)
 	}
 
-	files, subdirs, err := dir.Fsys.MetadataDbReadDirAll(dir.FullPath)
+	files, subdirs, err := dir.Fsys.MetadataDbReadDirAll(fullPath)
 	if err != nil {
 		return nil, err
 	}
@@ -257,7 +257,8 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 	dir.Fsys.mutex.Lock()
 	defer dir.Fsys.mutex.Unlock()
 
-	return dir.Fsys.MetadataDbLookupInDir(dir.FullPath, req.Name)
+	fullPath := filepath.Clean(dir.FullPath)
+	return dir.Fsys.MetadataDbLookupInDir(fullPath, req.Name)
 }
 
 func (f *File) Attr(ctx context.Context, a *fuse.Attr) error {

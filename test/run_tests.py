@@ -98,9 +98,9 @@ def extract_results(jobs):
             print("{}, {}, {}, {}".format(i_type, parts[0], parts[1], parts[2]))
 
 def run_benchmarks(dx_proj, instance_types):
-    bench_applet = lookup_applet("dxfs2_benchmark", dx_proj, "/applets")
-    jobs = launch_and_wait(dx_proj, bench_applet)
-    extract_results(jobs, instance_types)
+    applet = lookup_applet("dxfs2_benchmark", dx_proj, "/applets")
+    jobs = launch_and_wait(dx_proj, applet, instance_types)
+    extract_results(jobs)
 
 def run_correctness(dx_proj, instance_types):
     applet = lookup_applet("dxfs2_correctness", dx_proj, "/applets")
