@@ -17,10 +17,10 @@ type ManifestFile struct {
 	ProjId  string        `json:"proj_id"`
 	FileId  string        `json:"file_id"`
 	Parent  string        `json:"parent"`
-	Fname   string        `json:"fname"`
 
 	// These may not be provided by the user. Then, we
 	// need to query DNAx for the information.
+	Fname   string       `json:"fname,omitempty"`
 	Size    int64        `json:"size,omitempty"`
 	CtimeMillisec int64  `json:"ctime,omitempty"`
 	MtimeMillisec int64  `json:"mtime,omitempty"`
@@ -42,23 +42,53 @@ type Manifest struct {
 }
 
 
-func validate(manifest Manifest) error {
-	for _, d := range manifest.Directories {
+func validateDirName(p string) error {
+	dirNameLen := len(p)
+	switch dirNameLen {
+	case 0:
+		return fmt.Errorf("the directory cannot be empty %s", p)
+	default:
+		if p[0] != '/' {
+			return fmt.Errorf("the directory name must start with a slash %s", p)
+		}
+	}
+	return nil
+}
+
+func (m *Manifest)Validate() error {
+	for _, fl := range m.Files {
+		if !strings.HasPrefix(fl.ProjId, "project-") {
+			return fmt.Errorf("project has invalid ID %s", fl.ProjId)
+		}
+		if !strings.HasPrefix(fl.FileId, "file-") {
+			return fmt.Errorf("file has invalid ID %s", fl.FileId)
+		}
+		if err := validateDirName(fl.Parent); err != nil {
+			return err
+		}
+	}
+
+	for _, d := range m.Directories {
 		if !strings.HasPrefix(d.ProjId, "project-") {
 			return fmt.Errorf("project has invalid ID %s", d.ProjId)
 		}
-		dirNameLen := len(d.Dirname)
-		switch dirNameLen {
-		case 0:
-			return fmt.Errorf("the directory cannot be empty %v", d)
-		default:
-			if d.Dirname[0] != '/' {
-				return fmt.Errorf("the directory name must start with a slash %v", d)
-			}
+		if err := validateDirName(d.Dirname); err != nil {
+			return err
 		}
 	}
 
 	return nil
+}
+
+func (m *Manifest) Clean() {
+	for i, _ := range m.Files {
+		fl := &m.Files[i]
+		fl.Parent = filepath.Clean(fl.Parent)
+	}
+	for i, _ := range m.Directories {
+		d := &m.Directories[i]
+		d.Dirname = filepath.Clean(d.Dirname)
+	}
 }
 
 // read the manifest from a file into a memory structure
@@ -73,12 +103,16 @@ func ReadManifest(fname string) (*Manifest, error) {
 		panic(err)
 	}
 
-	var m Manifest
-	json.Unmarshal(data, &m)
-	if err := validate(m); err != nil {
+	var mRaw Manifest
+	if err := json.Unmarshal(data, &mRaw); err != nil {
 		return nil, err
 	}
-	return &m, nil
+	m := &mRaw
+	if err := m.Validate(); err != nil {
+		return nil, err
+	}
+	m.Clean()
+	return m, nil
 }
 
 
@@ -124,7 +158,7 @@ func MakeManifestFromProjectIds(
 		Directories : dirs,
 	}
 
-	if err := validate(*manifest); err != nil {
+	if err := manifest.Validate(); err != nil {
 		return nil, err
 	}
 	return manifest, nil
@@ -139,16 +173,12 @@ func ancestors(p string) []string {
 	if p == "" || p == "/" {
 		return []string{"/"}
 	}
-	parent, dirname := filepath.Split(p)
-	if parent == "/" {
-		return []string{"/", p}
-	}
+	parent := filepath.Dir(p)
 	ators := ancestors(parent)
 	if len(ators) == 0 {
 		panic(fmt.Sprintf("cannot create ancestor list for path %s", p))
 	}
-	longest := ators[len(ators) - 1]
-	return append(ators, longest + "/" + dirname)
+	return append(ators, filepath.Clean(p))
 }
 
 // We need all of this, to be able to sort the list of directories according
@@ -159,13 +189,13 @@ func ancestors(p string) []string {
 //    ["/Alpha", "/D", "/E", "/Alpha/Beta", "/A/B/C"]
 
 type Dirs struct {
-	elems []*string
+	elems []string
 }
 func (d Dirs) Len() int { return len(d.elems) }
 func (d Dirs) Swap(i, j int) { d.elems[i], d.elems[j] = d.elems[j], d.elems[i] }
 func (d Dirs) Less(i, j int) bool {
-	nI := strings.Count(*d.elems[i], "/")
-	nJ := strings.Count(*d.elems[j], "/")
+	nI := strings.Count(d.elems[i], "/")
+	nJ := strings.Count(d.elems[j], "/")
 	return nI < nJ
 }
 
@@ -199,12 +229,12 @@ func (m *Manifest) DirSkeleton() []string {
 	// for example, ["/A/B/C/D", "/A/B", "/A/B/C", "/D", "/E", "/A"] ->
 	// ["/A", "/D", "/E", "/A/B", "/A/B/C", "/A/B/C/D"]
 	//
-	var emptyStringArray []*string
-	de := Dirs{
-		elems : emptyStringArray,
-	}
+	var elements []string
 	for p, _ := range tree {
-		de.elems = append(de.elems, &p)
+		elements = append(elements, p)
+	}
+	de := Dirs{
+		elems : elements,
 	}
 	sort.Sort(de)
 
@@ -212,13 +242,12 @@ func (m *Manifest) DirSkeleton() []string {
 	// do not include the root, because it already exists.
 	var retval []string
 	for _, e := range(de.elems) {
-		if *e != "/" {
-			retval = append(retval, *e)
+		if e != "/" {
+			retval = append(retval, e)
 		}
 	}
 	return retval
 }
-
 
 func (m *Manifest) FillInMissingFields(dxEnv dxda.DXEnvironment) error {
 	tmpHttpClient := dxda.NewHttpClient(false)
@@ -226,7 +255,8 @@ func (m *Manifest) FillInMissingFields(dxEnv dxda.DXEnvironment) error {
 	// Make a list of all the files that are missing details
 	fileIds := make(map[string]bool)
 	for _, fl := range m.Files {
-		if fl.Size == 0 ||
+		if fl.Fname == "" ||
+			fl.Size == 0 ||
 			fl.CtimeMillisec == 0 ||
 			fl.MtimeMillisec == 0 {
 			fileIds[fl.FileId] = true
@@ -247,6 +277,9 @@ func (m *Manifest) FillInMissingFields(dxEnv dxda.DXEnvironment) error {
 		fDesc, ok := dataObjs[fl.FileId]
 		if ok {
 			// This file was missing details
+			if fl.Fname == "" {
+				fl.Fname = fDesc.Name
+			}
 			fl.Size = fDesc.Size
 			fl.CtimeMillisec = fDesc.CtimeMillisec
 			fl.MtimeMillisec = fDesc.MtimeMillisec

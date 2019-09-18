@@ -98,7 +98,6 @@ func Mount(
 		db : db,
 		httpClientPool : httpClientPool,
 	}
-	log.Printf("Created Filesys")
 
 	// extra debugging information from FUSE
 	if fsys.options.DebugFuse {
@@ -107,14 +106,11 @@ func Mount(
 		}
 	}
 
-	log.Printf("Metadata DB init")
-
 	// create the metadata database
 	if err := fsys.MetadataDbInit(); err != nil {
 		return err
 	}
 
-	log.Printf("Populate Root")
 	if err := fsys.MetadataDbPopulateRoot(manifest); err != nil {
 		return err
 	}

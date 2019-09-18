@@ -85,7 +85,6 @@ func main() {
 			fmt.Println(err)
 			os.Exit(1)
 		}
-		log.Printf("manifest= %v", manifest)
 	} else {
 		// process the project inputs, and convert to an array of verified
 		// project IDs

@@ -317,7 +317,8 @@ func (fsys *Filesys) createRemoteFile(
 	// choose unused inode number. It is on stable stoage, and will not change.
 	inode := fsys.allocInodeNum()
 	if fsys.options.Verbose {
-		log.Printf("createRemoteFile %s:%s %s",	projId, fileId, parentDir + "/" + fname)
+		log.Printf("createRemoteFile %s:%s %s",	projId, fileId,
+			filepath.Clean(parentDir + "/" + fname))
 	}
 
 	sqlStmt := fmt.Sprintf(`
@@ -955,20 +956,24 @@ func (fsys *Filesys) MetadataDbPopulateRoot(manifest Manifest) error {
 	log.Printf("Populating root directory")
 
 	dirSkel := manifest.DirSkeleton()
-	log.Printf("dirSkeleton = %v", dirSkel)
+	if fsys.options.Verbose {
+		log.Printf("dirSkeleton = %v", dirSkel)
+	}
 
 	txn, err := fsys.db.Begin()
 	if err != nil {
 		return printErrorStack(err)
 	}
 
-	// build the supporting directory structure
+	// build the supporting directory structure.
+	// We mark each directory as populated, so that the platform would not
+	// be queries.
 	for _, d := range dirSkel {
 		_, err := fsys.createEmptyDir(
 			txn,
 			"", "",   // There is no backing project/folder
 			time.Now().Unix(), time.Now().Unix(),
-			d, false)
+			d, true)
 		if err != nil {
 			txn.Rollback()
 			return printErrorStack(err)
