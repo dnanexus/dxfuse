@@ -55,9 +55,19 @@ func validateDirName(p string) error {
 	return nil
 }
 
+func validProject(pId string) bool {
+	if strings.HasPrefix(pId, "project-") {
+		return true
+	}
+	if strings.HasPrefix(pId, "container-") {
+		return true
+	}
+	return false
+}
+
 func (m *Manifest)Validate() error {
 	for _, fl := range m.Files {
-		if !strings.HasPrefix(fl.ProjId, "project-") {
+		if !validProject(fl.ProjId) {
 			return fmt.Errorf("project has invalid ID %s", fl.ProjId)
 		}
 		if !strings.HasPrefix(fl.FileId, "file-") {
@@ -69,7 +79,7 @@ func (m *Manifest)Validate() error {
 	}
 
 	for _, d := range m.Directories {
-		if !strings.HasPrefix(d.ProjId, "project-") {
+		if !validProject(d.ProjId) {
 			return fmt.Errorf("project has invalid ID %s", d.ProjId)
 		}
 		if err := validateDirName(d.Dirname); err != nil {
