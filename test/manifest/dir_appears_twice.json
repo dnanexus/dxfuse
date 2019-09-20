@@ -1,0 +1,14 @@
+{
+  "directories" : [
+    {
+      "proj_id" : "project-FbZ25gj04J9B8FJ3Gb5fVP41",
+      "folder" : "/correctness/large",
+      "dirname" : "/linuxImages/X"
+    },
+    {
+      "proj_id" : "project-FbZ25gj04J9B8FJ3Gb5fVP41",
+      "folder" : "/foo",
+      "dirname" : "/linuxImages/X"
+    }
+  ]
+}

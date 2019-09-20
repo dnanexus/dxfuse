@@ -43,20 +43,32 @@ func Mount(
 	manifest Manifest,
 	options Options) error {
 
-	// get the Unix uid and gid
-	// TODO: this is current the root user, because the program is run under
-	// sudo privileges.
+	// This is current the root user, because the program is run under
+	// sudo privileges. The "user" variable is used only if we don't
+	// get command line uid/gid.
 	user, err := user.Current()
 	if err != nil {
 		return err
 	}
-	uid, err := strconv.Atoi(user.Uid)
-	if err != nil {
-		return err
+
+	// get the user ID
+	uid := options.Uid
+	if uid == -1 {
+		var err error
+		uid, err = strconv.Atoi(user.Uid)
+		if err != nil {
+			return err
+		}
 	}
-	gid, err := strconv.Atoi(user.Gid)
-	if err != nil {
-		return err
+
+	// get the group ID
+	gid := options.Gid
+	if gid == -1 {
+		var err error
+		gid, err = strconv.Atoi(user.Gid)
+		if err != nil {
+			return err
+		}
 	}
 
 	dbPath := options.MetadataDbPath + "/" + "metadata.db"
