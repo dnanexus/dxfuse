@@ -955,7 +955,10 @@ func (fsys *Filesys) MetadataDbRoot() (*Dir, error) {
 func (fsys *Filesys) MetadataDbPopulateRoot(manifest Manifest) error {
 	log.Printf("Populating root directory")
 
-	dirSkel := manifest.DirSkeleton()
+	dirSkel, err := manifest.DirSkeleton()
+	if err != nil {
+		return err
+	}
 	if fsys.options.Verbose {
 		log.Printf("dirSkeleton = %v", dirSkel)
 	}

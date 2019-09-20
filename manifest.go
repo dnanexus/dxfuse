@@ -217,7 +217,7 @@ func (d Dirs) Less(i, j int) bool {
 //     ["/A", "/A/B", "/D"]
 //
 // The root directory is not reported in the skeleton.
-func (m *Manifest) DirSkeleton() []string {
+func (m *Manifest) DirSkeleton() ([]string, error) {
 	tree := make(map[string]bool)
 
 	// record all the parents
@@ -227,17 +227,28 @@ func (m *Manifest) DirSkeleton() []string {
 			tree[p] = true
 		}
 	}
+
+	// record all the directory parents, because we'll need to build them.
+	// check that a directory is not used twice.
+	allDirs := make(map[string]bool)
 	for _, d := range m.Directories {
 		dirParent, _ := filepath.Split(d.Dirname)
 		for _, p := range (ancestors(dirParent)) {
 			tree[p] = true
 		}
+		if _, ok := allDirs[d.Dirname] ; ok {
+			return nil, fmt.Errorf("manifest error: directory %s is used twice", d.Dirname)
+		}
+		allDirs[d.Dirname] = true
 	}
 
 	// sort the elements from the bottom of the tree, to its branches.
+	// We will need to create these directories from the bottom up.
 	//
 	// for example, ["/A/B/C/D", "/A/B", "/A/B/C", "/D", "/E", "/A"] ->
 	// ["/A", "/D", "/E", "/A/B", "/A/B/C", "/A/B/C/D"]
+	//
+	// To create "/A/B", you first have to create "/A".
 	//
 	var elements []string
 	for p, _ := range tree {
@@ -256,7 +267,20 @@ func (m *Manifest) DirSkeleton() []string {
 			retval = append(retval, e)
 		}
 	}
-	return retval
+
+	// make sure that the directories are all leaves on the skeleton.
+	for _, d := range m.Directories {
+		_, ok := tree[d.Dirname]
+		if ok {
+			return nil, fmt.Errorf(`
+manifest error: %s is a not leaf on the directory scaffolding (%v).
+It is a node in the middle, which is illegal.
+`,
+				d.Dirname, de.elems)
+		}
+	}
+
+	return retval, nil
 }
 
 func (m *Manifest) FillInMissingFields(dxEnv dxda.DXEnvironment) error {

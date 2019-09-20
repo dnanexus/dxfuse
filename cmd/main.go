@@ -18,17 +18,21 @@ var progName = filepath.Base(os.Args[0])
 
 func usage() {
 	fmt.Fprintf(os.Stderr, "Usage of %s:\n", progName)
-	fmt.Fprintf(os.Stderr, "  %s MOUNTPOINT PROJECT1 PROJECT2 ...\n", progName)
-	fmt.Fprintf(os.Stderr, "  %s MOUNTPOINT manifest.json\n", progName)
+	fmt.Fprintf(os.Stderr, "    %s MOUNTPOINT PROJECT1 PROJECT2 ...\n", progName)
+	fmt.Fprintf(os.Stderr, "    %s MOUNTPOINT manifest.json\n", progName)
+	flag.PrintDefaults()
+	fmt.Fprintf(os.Stderr, "\n")
 	fmt.Fprintf(os.Stderr, "A project can be specified by its ID or name. The manifest is a JSON\n")
 	fmt.Fprintf(os.Stderr, "file describing the initial filesystem structure.\n")
-	flag.PrintDefaults()
 }
 
 var (
 	debugFuseFlag = flag.Bool("debugFuse", false, "Tap into FUSE debugging information")
 	metadataDbPath = flag.String("dbPath", "/var/dxfs2", "Directory where to place metadata database")
 	verbose = flag.Int("verbose", 0, "Enable verbose debugging")
+	uid = flag.Int("uid", -1, "User id (uid)")
+	gid = flag.Int("gid", -1, "User group id (gid)")
+	risky = flag.Bool("risky", false, "Do not use this flag")
 )
 
 func lookupProject(dxEnv *dxda.DXEnvironment, projectIdOrName string) (string, error) {
@@ -63,12 +67,23 @@ func main() {
 		MetadataDbPath: *metadataDbPath,
 		Verbose : *verbose > 0,
 		VerboseLevel : *verbose,
+		Uid : *uid,
+		Gid : *gid,
 	}
 
 	dxEnv, _, err := dxda.GetDxEnvironment()
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
+	}
+
+	if dxEnv.DxJobId == "" {
+		if !(*risky) {
+			fmt.Println(`
+Running outside a worker. Dxfs2 was designed to operate inside a cloud worker.
+It is not supported on other configurations, and may exhibit unpredictable behavior.`)
+			os.Exit(1)
+		}
 	}
 
 	// distinguish between the case of a manifest, and a list of projects.
@@ -112,6 +127,6 @@ func main() {
 	}
 
 	if err := dxfs2.Mount(mountpoint, dxEnv, *manifest, options); err != nil {
-		fmt.Printf(err.Error())
+		fmt.Println("Error: " + err.Error())
 	}
 }

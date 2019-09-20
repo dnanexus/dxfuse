@@ -32,6 +32,8 @@ type Options struct {
 	MetadataDbPath string
 	Verbose        bool
 	VerboseLevel   int
+	Uid            int
+	Gid            int
 }
 
 
