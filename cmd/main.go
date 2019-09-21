@@ -17,9 +17,10 @@ import (
 var progName = filepath.Base(os.Args[0])
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "Usage of %s:\n", progName)
-	fmt.Fprintf(os.Stderr, "    %s MOUNTPOINT PROJECT1 PROJECT2 ...\n", progName)
-	fmt.Fprintf(os.Stderr, "    %s MOUNTPOINT manifest.json\n", progName)
+	fmt.Fprintf(os.Stderr, "usage:\n")
+	fmt.Fprintf(os.Stderr, "    %s MOUNTPOINT [options] PROJECT1 PROJECT2 ...\n", progName)
+	fmt.Fprintf(os.Stderr, "    %s MOUNTPOINT [options] manifest.json\n", progName)
+	fmt.Fprintf(os.Stderr, "options:\n")
 	flag.PrintDefaults()
 	fmt.Fprintf(os.Stderr, "\n")
 	fmt.Fprintf(os.Stderr, "A project can be specified by its ID or name. The manifest is a JSON\n")
