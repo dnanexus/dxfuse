@@ -48,13 +48,13 @@ const (
 
 // A request that one of the IO-threads will pick up
 type IoReq struct {
-	fileId     string
-	url        DxDownloadURL
+	fh         *FileHandle
+	url         DxDownloadURL
 
-	ioSize     int64   // The io size
-	startByte  int64   // start byte, counting from the beginning of the file.
-	endByte    int64
-	data       []byte
+	ioSize      int64   // The io size
+	startByte   int64   // start byte, counting from the beginning of the file.
+	endByte     int64
+	data        []byte
 }
 
 type Iovec struct {
@@ -108,7 +108,7 @@ type PrefetchGlobalState struct {
 	verbose      bool
 	verboseLevel int
 	mutex        sync.Mutex  // Lock used to control the files table
-	files        map[string](*PrefetchFileMetadata) // tracking state per file-id
+	files        map[*FileHandle](*PrefetchFileMetadata) // tracking state per file-id
 	ioQueue      chan IoReq    // queue of IOs to prefetch
 }
 
@@ -116,7 +116,7 @@ func (pgs *PrefetchGlobalState) Init(verboseLevel int) {
 	pgs.verbose = verboseLevel >= 1
 	pgs.verboseLevel = verboseLevel
 
-	pgs.files = make(map[string](*PrefetchFileMetadata))
+	pgs.files = make(map[*FileHandle](*PrefetchFileMetadata))
 	pgs.ioQueue = make(chan IoReq)
 
 	// limit the number of prefetch IOs
@@ -195,8 +195,8 @@ func findIovecIndex(pfm *PrefetchFileMetadata, ioReq IoReq) int {
 // Wake up waiting IOs, if any.
 func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq IoReq) {
 	if pfm.state == PFM_IO_ERROR {
-		log.Printf("Dropping prefetch IO, file has encountered an error (%s)",
-			ioReq.fileId)
+		log.Printf("Dropping prefetch IO, file has encountered an error (%s, %s)",
+			ioReq.fh.f.FileId, ioReq.fh.f.Name)
 		return
 	}
 
@@ -244,10 +244,10 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 
 		pgs.mutex.Lock()
 		// Find the file this IO belongs to
-		pfm, ok := pgs.files[ioReq.fileId]
+		pfm, ok := pgs.files[ioReq.fh]
 		if !ok {
 			// file is not tracked anymore
-			log.Printf("Dropping prefetch IO, file is no longer tracked (%s)", ioReq.fileId)
+			log.Printf("Dropping prefetch IO, file is no longer tracked (%s)", ioReq.fh.f.FileId)
 		} else {
 			if err != nil {
 				log.Printf("Prefetch error ofs=%d len=%d error=%s",
@@ -311,7 +311,7 @@ func (pgs *PrefetchGlobalState) tableCleanupWorker() {
 		for _, pfm := range toRemove {
 			// wake up any pending IOs
 			pfm.cond.Broadcast()
-			delete(pgs.files, pfm.fh.f.FileId)
+			delete(pgs.files, pfm.fh)
 		}
 		pgs.mutex.Unlock()
 	}
@@ -369,15 +369,14 @@ func (pgs *PrefetchGlobalState) CreateFileEntry(fh *FileHandle) {
 	if pgs.verbose {
 		log.Printf("prefetch: CreateFileEntry %s", fh.f.Name)
 	}
-	pgs.files[fh.f.FileId] = pgs.newPrefetchFileMetadata(fh)
+	pgs.files[fh] = pgs.newPrefetchFileMetadata(fh)
 }
 
 func (pgs *PrefetchGlobalState) RemoveFileEntry(fh *FileHandle) {
 	pgs.mutex.Lock()
 	defer pgs.mutex.Unlock()
 
-	fileId := fh.f.FileId
-	if pfm, ok := pgs.files[fileId]; ok {
+	if pfm, ok := pgs.files[fh]; ok {
 		if pgs.verbose {
 			log.Printf("prefetch: RemoveFileEntry %s", fh.f.Name)
 		}
@@ -386,7 +385,7 @@ func (pgs *PrefetchGlobalState) RemoveFileEntry(fh *FileHandle) {
 		pfm.cond.Broadcast()
 
 		// remove from the table
-		delete(pgs.files, fileId)
+		delete(pgs.files, fh)
 	}
 }
 
@@ -551,7 +550,7 @@ func (pgs *PrefetchGlobalState) submitIoForHoles(pfm *PrefetchFileMetadata) {
 	for _, chunk := range(pfm.cache.iovecs) {
 		if chunk.shouldPrefetch && !chunk.submitted {
 			pgs.ioQueue <- IoReq{
-				fileId : pfm.fh.f.FileId,
+				fh : pfm.fh,
 				url : pfm.fh.url,
 				ioSize : chunk.ioSize,
 				startByte : chunk.startByte,
@@ -655,10 +654,10 @@ func (pgs *PrefetchGlobalState) getDataFromCache(
 // This is done on behalf of a user read request, check if this range is cached of prefetched
 // and return the data if so. Otherwise, return nil.
 //
-func (pgs *PrefetchGlobalState) cacheLookup1(fileId string, startOfs int64, endOfs int64) ([]byte, int) {
+func (pgs *PrefetchGlobalState) cacheLookup1(fh *FileHandle, startOfs int64, endOfs int64) ([]byte, int) {
 	pgs.mutex.Lock()
 	defer pgs.mutex.Unlock()
-	pfm, ok := pgs.files[fileId]
+	pfm, ok := pgs.files[fh]
 	if !ok {
 		// file is not tracked, no prefetch data is available
 		return nil, DATA_OUTSIDE_CACHE
@@ -730,8 +729,8 @@ func (pgs *PrefetchGlobalState) cacheLookup1(fileId string, startOfs int64, endO
 	}
 }
 
-func (pgs *PrefetchGlobalState) CacheLookup(fileId string, startOfs int64, endOfs int64) []byte {
-	data, retval := pgs.cacheLookup1(fileId, startOfs, endOfs)
+func (pgs *PrefetchGlobalState) CacheLookup(fh *FileHandle, startOfs int64, endOfs int64) []byte {
+	data, retval := pgs.cacheLookup1(fh, startOfs, endOfs)
 	switch retval {
 	case DATA_IN_CACHE:
 		// note, the data may be nil here, but that is ok,
@@ -744,7 +743,7 @@ func (pgs *PrefetchGlobalState) CacheLookup(fileId string, startOfs int64, endOf
 	case DATA_ACCESSED_NON_SEQUENTIALLY:
 		// file is accessed non-sequentially, remove it from the table.
 		pgs.mutex.Lock()
-		pfm := pgs.files[fileId]
+		pfm := pgs.files[fh]
 		pgs.mutex.Unlock()
 		if pfm != nil {
 			pgs.RemoveFileEntry(pfm.fh)
