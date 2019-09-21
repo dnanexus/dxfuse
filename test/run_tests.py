@@ -114,7 +114,7 @@ def main():
     argparser = argparse.ArgumentParser(description="Run benchmarks on several instance types for dxfs2")
     argparser.add_argument("--project", help="DNAnexus project",
                            default="dxfs2_test_data")
-    argparser.add_argument("--suite", help="which testing suite to run [benchmark, correctness, download]",
+    argparser.add_argument("--test", help="which testing suite to run [benchmark, correctness, download]",
                            default="correctness")
     argparser.add_argument("--scale", help="how large should the test be? [small, large]",
                            default="small")
@@ -127,14 +127,14 @@ def main():
         exit(1)
 
     dx_proj = get_project(args.project)
-    if args.suite == "benchmark":
+    if args.test == "benchmark":
         run_benchmarks(dx_proj, instance_types)
-    elif args.suite == "correctness":
+    elif args.test == "correctness":
         run_correctness(dx_proj, instance_types)
-    elif args.suite == "download":
+    elif args.test == "download":
         run_download(dx_proj, instance_types)
     else:
-        print("Unknown test suite {}".format(args.suite))
+        print("Unknown test {}".format(args.test))
         exit(1)
 
 if __name__ == '__main__':

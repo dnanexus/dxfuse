@@ -347,7 +347,7 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 
 	// See if the data has already been prefetched.
 	// This call will wait, if a prefetch IO is in progress.
-	prefetchData := fh.f.Fsys.pgs.CacheLookup(fh.f.FileId, req.Offset, endOfs)
+	prefetchData := fh.f.Fsys.pgs.CacheLookup(fh, req.Offset, endOfs)
 	if prefetchData != nil {
 		resp.Data = prefetchData
 		return nil

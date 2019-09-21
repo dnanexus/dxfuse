@@ -52,16 +52,10 @@ requests.
 
 ## Performance
 
-Bandwidth when streaming a file is lower than `dx cat`, or `dx
-download`. This is because the Linux kernel currently limits FUSE IOs
-to 128KB. This restriction has been lifted in
-[kernel 4.20](https://github.com/torvalds/linux/commit/5da784cce4308ae10a79e3c8c41b13fb9568e4e0#diff-e3d21d11c912d0845d7a8fc1f678d4a6), which is still far away from running on workers.
-
-On a cloud workstation, downloading a 200MB file is 15x faster with
-`dx download`, as compared to dxfs2. In order to achieve good
-performance for streaming, work is ongoing to perform readahead in
-dxfs2 itself. The initial design is describe
-[here](doc/sequential_prefetch.md).
+Bandwidth when streaming a file is close to `dx cat`, but
+may be a little bit lower. The benchmark was the time it takes to streaming a file
+from the cloud to a local file. If you perform actual CPU calculation
+when processing the data, performance differences should be unnoticeable.
 
 ## Special considerations
 
@@ -70,39 +64,6 @@ server has been temporarily shut down (503 mode). For an
 interactive filesystem, this would be a big problem, because it would
 freeze, causing the entire OS to freeze with it. However, in this
 case, it is used for batch jobs, so we can afford to wait.
-
-The code cannot use the `panic` function, because it is effectively
-inside the kernel. It must methodically propagate all error codes, and
-handle all error conditions.
-
-
-# Variants
-
-## One project
-
-The **one project** variant mounts a single platform project. It
-describes directories as the user browses them, and maintains them in
-memory. The assumption is that they will not change. As such, it is appropriate for
-reference data, not so much for data that changes often.
-
-
-## Fixed (in progress)
-
-The **fixed** variant is intended for streaming files in WDL. It
-represents all the dx:files as `/file-id/filename`. For example:
-
-```
-MOUNTPOINT/
-           file-xxxx/foo.gz
-           file-yyyy/bar.vcf
-           file-zzzz/mouse.fasta
-           ...
-```
-
-The directory hierarchy is two levels deep. Each subdirectory holds
-one file, where the file name remains unchanged, and the directory is
-the file-id.
-
 
 
 # Usage
@@ -122,32 +83,34 @@ sudo dxfs2 -debug MOUNT-POINT PROJECT-NAME
 Project ids can be used instead of project names.
 
 
+To mount several projects, say, `mammals`, `fish`, and `birds`, do:
+```
+sudo dxfs2 /home/jonas/foo mammals fish birds
+```
+
+This will create the directory hierarchy:
+```
+/home/jonas/foo
+              |_ mammals
+              |_ fish
+              |_ birds
+```
+Note that files that are hard linked from several projects, will appear as seperate inodes.
+
+
 # Further exploration
 
-1. Use POSIX [extended attributes](https://en.wikipedia.org/wiki/Extended_file_attributes) to
+* Use POSIX [extended attributes](https://en.wikipedia.org/wiki/Extended_file_attributes) to
 represent DNAx file tags and properties. The
 [xattr](http://man7.org/linux/man-pages/man7/xattr.7.html) command
 line tool can be used.
 
-2. Add the ability to create new files in an existing project. This
+* Add the ability to create new files in an existing project. This
    strictly excludes renaming/deleting files, or modifying the
    existing directory structure. The UPLOAD applet permission is similar,
    although, it is slightly strongly.
 
-3. Mounting several projects, not just one. A key challenge is that
-   files can be linked from multiple projects. This should translate
-   into hard links on a POSIX filesystem.
-
-4. Present applets/workflows/records/databases as special entities. We want them to look visualy different from files/folders with standard bash tools like `ls`.
-
-
-# TODO
-
-1. Allow interrupts to work when reading a directory from DNAx. This
-   is important when directories are large, and the network part could
-   take a long time. Safety is assured because the transaction
-   modifying the metadata database only starts when the read is
-   complete.
+* Present applets/workflows/records/databases as special entities. We want them to look visualy different from files/folders with standard bash tools like `ls`.
 
 
 # Related projects

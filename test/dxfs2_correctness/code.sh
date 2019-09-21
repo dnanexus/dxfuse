@@ -97,6 +97,36 @@ function check_cmd_line_utils {
     done
 }
 
+function check_find {
+    find $dxfs2Dir -type f -name "*.conf" > 1.txt
+    find $dxpyDir -type f -name "*.conf" > 2.txt
+
+    # each line starts with the directory name. those are different, so we normliaze them
+    sed -i 's/MNT/dxCopy/g' 1.txt
+
+    diff 1.txt 2.txt > D.txt || true
+    if [[ -s D.txt ]]; then
+        echo "find, when looking for files *.conf, doesn't produce the same results"
+        cat D.txt
+        exit 1
+    fi
+}
+
+function check_grep {
+    grep --directories=skip -R "stream" $dxfs2Dir/dxWDL_source_code/src > 1.txt
+    grep --directories=skip -R "stream" $dxpyDir/dxWDL_source_code/src > 2.txt
+
+    # each line starts with the directory name. those are different, so we normliaze them
+    sed -i 's/MNT/dxCopy/g' 1.txt
+
+    diff 1.txt 2.txt > D.txt || true
+    if [[ -s D.txt ]]; then
+        echo "grep -R 'stream' doesn't produce the same results"
+        cat D.txt
+        exit 1
+    fi
+}
+
 main() {
     # Get all the DX environment variables, so that dxfs2 can use them
     echo "loading the dx environment"
@@ -127,19 +157,25 @@ main() {
         exit 1
     fi
 
+    # find
+    echo "find"
+    check_find
+
+    # grep
+    echo "grep"
+    check_grep
+
     # tree
-    echo "Check the tree command"
+    echo "tree"
     check_tree
 
     # ls
-    echo "Checking ls -R"
+    echo "ls -R"
     check_ls
 
     # find
-    echo "Checking head, tail, wc"
+    echo "head, tail, wc"
     check_cmd_line_utils
-
-    # stat
 
     echo "unmounting dxfs2"
     sudo umount $mountpoint
