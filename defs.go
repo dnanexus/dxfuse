@@ -89,6 +89,7 @@ type File struct {
 	Inode     int64
 	Ctime     time.Time
 	Mtime     time.Time
+	Nlink     int
 }
 
 // Make sure that File implements the fs.Node interface
