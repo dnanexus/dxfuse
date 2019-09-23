@@ -49,7 +49,6 @@ DNAx API servers and the cloud object system. It should use bulk calls
 to describe data objects, and limit the number of parallel IO
 requests.
 
-
 ## Performance
 
 Bandwidth when streaming a file is close to `dx cat`, but
@@ -80,10 +79,7 @@ will be written to stdout.
 sudo dxfs2 -debug MOUNT-POINT PROJECT-NAME
 ```
 
-Project ids can be used instead of project names.
-
-
-To mount several projects, say, `mammals`, `fish`, and `birds`, do:
+Project ids can be used instead of project names. To mount several projects, say, `mammals`, `fish`, and `birds`, do:
 ```
 sudo dxfs2 /home/jonas/foo mammals fish birds
 ```
@@ -97,8 +93,7 @@ This will create the directory hierarchy:
 ```
 
 Note that files may be hard linked from several projects. These will appear as a single inode with
-a link count greater than one.
-
+a link count greater than one. The filesystem logs are written to `/var/log/dxfs2.log`. To get more information in the log, use the `-verbose` flag.
 
 # Further exploration
 
