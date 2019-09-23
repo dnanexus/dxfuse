@@ -104,7 +104,6 @@ It is not supported on other configurations, and may exhibit unpredictable behav
 	} else {
 		// process the project inputs, and convert to an array of verified
 		// project IDs
-		log.Printf("processing projects to mount")
 		var projectIds []string
 		for i := 1; i < numArgs; i++ {
 			projectIdOrName := flag.Arg(i)

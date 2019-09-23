@@ -42,6 +42,13 @@ func Mount(
 	dxEnv dxda.DXEnvironment,
 	manifest Manifest,
 	options Options) error {
+	// Redirect the log output to /var/log/dxfs2.log.
+	f, err := os.OpenFile("/var/log/dxfs2.log", os.O_RDWR | os.O_CREATE | os.O_APPEND, 0666)
+	if err != nil {
+		log.Fatalf("error opening file: %v", err)
+	}
+	log.SetOutput(f)
+	defer f.Close()
 
 	// This is current the root user, because the program is run under
 	// sudo privileges. The "user" variable is used only if we don't
