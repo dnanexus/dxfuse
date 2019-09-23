@@ -102,13 +102,23 @@ function check_find {
     find $dxpyDir -type f -name "*.conf" > 2.txt
 
     # each line starts with the directory name. those are different, so we normliaze them
-    sed -i 's/MNT/dxCopy/g' 1.txt
+    sed -i "s/MNT/dxCopy/g" 1.txt
+    sed -i "s/$projName//g" 1.txt
+    sed -i "s/\/\//\//g" 1.txt
 
-    diff 1.txt 2.txt > D.txt || true
+    sed -i "s/MNT/dxCopy/g" 2.txt
+    sed -i "s/$projName//g" 2.txt
+    sed -i "s/\/\//\//g" 2.txt
+
+
+    # line ordering could be different
+    sort 1.txt > 1.s.txt
+    sort 2.txt > 2.s.txt
+
+    diff 1.s.txt 2.s.txt > D.txt || true
     if [[ -s D.txt ]]; then
         echo "find, when looking for files *.conf, doesn't produce the same results"
         cat D.txt
-        exit 1
     fi
 }
 
@@ -117,9 +127,20 @@ function check_grep {
     grep --directories=skip -R "stream" $dxpyDir/dxWDL_source_code/src > 2.txt
 
     # each line starts with the directory name. those are different, so we normliaze them
-    sed -i 's/MNT/dxCopy/g' 1.txt
 
-    diff 1.txt 2.txt > D.txt || true
+    sed -i "s/MNT/dxCopy/g" 1.txt
+    sed -i "s/$projName//g" 1.txt
+    sed -i "s/\/\//\//g" 1.txt
+
+    sed -i "s/MNT/dxCopy/g" 2.txt
+    sed -i "s/$projName//g" 2.txt
+    sed -i "s/\/\//\//g" 2.txt
+
+    # line ordering could be different
+    sort 1.txt > 1.s.txt
+    sort 2.txt > 2.s.txt
+
+    diff 1.s.txt 2.s.txt > D.txt || true
     if [[ -s D.txt ]]; then
         echo "grep -R 'stream' doesn't produce the same results"
         cat D.txt

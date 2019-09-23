@@ -95,12 +95,22 @@ func (fsys *Filesys) metadataDbInitCore(txn *sql.Tx) error {
 		size bigint,
                 ctime bigint,
                 mtime bigint,
+                nlink int,
                 PRIMARY KEY (inode)
 	);
 	`
 	if _, err := txn.Exec(sqlStmt); err != nil {
 		return printErrorStack(err)
 	}
+
+	sqlStmt = `
+	CREATE INDEX file_id_index
+	ON files (file_id);
+	`
+	if _, err := txn.Exec(sqlStmt); err != nil {
+		return printErrorStack(err)
+	}
+
 
 	// Create a table for the namespace relationships. All members of a directory
 	// are listed here under their parent. Linking all the tables are the inode numbers.
@@ -219,6 +229,88 @@ func (fsys *Filesys) allocInodeNum() int64 {
 	return fsys.inodeCnt
 }
 
+// search for a file by Id. If the file exists, return its inode and link-count. Otherwise,
+// return 0, 0.
+func (fsys *Filesys) lookupFileInodeById(txn *sql.Tx, fId string) (int64, int, error) {
+	// point lookup in the files table
+	sqlStmt := fmt.Sprintf(`
+ 		        SELECT inode,nlink
+                        FROM files
+			WHERE file_id = '%s';`,
+		fId)
+	rows, err := txn.Query(sqlStmt)
+	if err != nil {
+		return InodeInvalid, 0, printErrorStack(err)
+	}
+
+	var nlink int
+	var inode int64
+	numRows := 0
+	for rows.Next() {
+		rows.Scan(&inode, &nlink)
+		numRows++
+	}
+	rows.Close()
+
+	switch numRows {
+	case 0:
+		// this file doesn't exist in the database
+		return InodeInvalid, 0, nil
+	case 1:
+		// correct, there is exactly one such file
+		return inode, nlink, nil
+	default:
+		panic(fmt.Sprintf("Found %d files with Id %s", fId))
+	}
+}
+
+// search for a file with a particular inode
+func (fsys *Filesys) lookupFileShouldExist(
+	dirFullName string,
+	fname string,
+	inode int64) (*File, error) {
+	// point lookup in the files table
+	sqlStmt := fmt.Sprintf(`
+ 		        SELECT file_id,proj_id,size,ctime,mtime,nlink
+                        FROM files
+			WHERE inode = '%d';`,
+		inode)
+	rows, err := fsys.db.Query(sqlStmt)
+	if err != nil {
+		log.Printf(err.Error())
+		panic(fmt.Sprintf("could not file file inode=%d dir=%s name=%s",
+			inode, dirFullName, fname))
+	}
+
+	var f File
+	f.Fsys = fsys
+	f.Name = fname
+	f.Inode = inode
+	numRows := 0
+	for rows.Next() {
+		var ctime int64
+		var mtime int64
+		rows.Scan(&f.FileId, &f.ProjId, &f.Size, &ctime, &mtime, &f.Nlink)
+		f.Ctime = millisecToTime(ctime)
+		f.Mtime = millisecToTime(mtime)
+		numRows++
+	}
+	rows.Close()
+
+	switch numRows {
+	case 0:
+		// file not found
+		panic(fmt.Sprintf(
+			"File (inode=%d, dir=%s, name=%s) should exist in the files table, but doesn't exist",
+			inode, dirFullName, fname))
+	case 1:
+		// correct, there is exactly one such file
+		return &f, nil
+	default:
+		panic(fmt.Sprintf("Found %d files of the form %s/%s",
+			numRows, dirFullName, fname))
+	}
+}
 
 // The directory is in the database, read it in its entirety.
 func (fsys *Filesys) directoryReadAllEntries(
@@ -263,7 +355,7 @@ func (fsys *Filesys) directoryReadAllEntries(
 
 	// Extract information for all the files
 	sqlStmt = fmt.Sprintf(`
- 		        SELECT files.file_id,files.proj_id,files.inode,files.size,files.ctime,files.mtime,namespace.name
+ 		        SELECT files.file_id,files.proj_id,files.inode,files.size,files.ctime,files.mtime,files.nlink,namespace.name
                         FROM files
                         JOIN namespace
                         ON files.inode = namespace.inode
@@ -277,25 +369,16 @@ func (fsys *Filesys) directoryReadAllEntries(
 	// Find the files in the directory
 	files := make(map[string]File)
 	for rows.Next() {
-		var fileId string
-		var projId string
-		var fname string
-		var size int64
-		var inode int64
+		var f File
+		f.Fsys = fsys
+
 		var ctime int64
 		var mtime int64
-		rows.Scan(&fileId, &projId, &inode, &size, &ctime, &mtime, &fname)
+		rows.Scan(&f.FileId, &f.ProjId, &f.Inode, &f.Size, &ctime, &mtime, &f.Nlink, &f.Name)
+		f.Ctime = millisecToTime(ctime)
+		f.Mtime = millisecToTime(mtime)
 
-		files[fname] = File{
-			Fsys : fsys,
-			FileId : fileId,
-			ProjId : projId,
-			Name : fname,
-			Size : size,
-			Inode : inode,
-			Ctime : millisecToTime(ctime),
-			Mtime : millisecToTime(mtime),
-		}
+		files[f.Name] = f
 	}
 
 	//log.Printf("  #files=%d", len(files))
@@ -305,7 +388,7 @@ func (fsys *Filesys) directoryReadAllEntries(
 
 // Create an entry representing one remote file. This is used by
 // dxWDL as a way to stream individual files.
-func (fsys *Filesys) createRemoteFile(
+func (fsys *Filesys) createFile(
 	txn *sql.Tx,
 	projId string,
 	fileId string,
@@ -314,11 +397,39 @@ func (fsys *Filesys) createRemoteFile(
 	mtime int64,
 	parentDir string,
 	fname string) (int64, error) {
-	// choose unused inode number. It is on stable stoage, and will not change.
-	inode := fsys.allocInodeNum()
 	if fsys.options.Verbose {
-		log.Printf("createRemoteFile %s:%s %s",	projId, fileId,
+		log.Printf("createFile %s:%s %s", projId, fileId,
 			filepath.Clean(parentDir + "/" + fname))
+	}
+
+	inode, nlink, err := fsys.lookupFileInodeById(txn, fileId)
+	if err != nil {
+		return InodeInvalid, err
+	}
+
+	if inode == InodeInvalid {
+		// File doesn't exist, we need to choose a new inode number.
+		// NOte: it is on stable storage, and will not change.
+		inode = fsys.allocInodeNum()
+
+		// Create an entry for the file
+		sqlStmt := fmt.Sprintf(`
+ 		        INSERT INTO files
+			VALUES ('%s', '%s', '%d', '%d', '%d', '%d', '%d');`,
+			fileId, projId, inode, size, ctime, mtime, 1)
+		if _, err := txn.Exec(sqlStmt); err != nil {
+			return 0, printErrorStack(err)
+		}
+	} else {
+		// File already exists, we need to increase the link count
+		sqlStmt := fmt.Sprintf(`
+ 		        UPDATE files
+                        SET nlink = '%d'
+			WHERE file_id = '%s';`,
+			nlink + 1, fileId)
+		if _, err := txn.Exec(sqlStmt); err != nil {
+			return 0, printErrorStack(err)
+		}
 	}
 
 	sqlStmt := fmt.Sprintf(`
@@ -329,14 +440,6 @@ func (fsys *Filesys) createRemoteFile(
 		return 0, printErrorStack(err)
 	}
 
-	// Create an entry for the file
-	sqlStmt = fmt.Sprintf(`
- 		        INSERT INTO files
-			VALUES ('%s', '%s', '%d', '%d', '%d', '%d');`,
-		fileId, projId, inode, size, ctime, mtime)
-	if _, err := txn.Exec(sqlStmt); err != nil {
-		return 0, printErrorStack(err)
-	}
 	return inode, nil
 }
 
@@ -420,23 +523,16 @@ func (fsys *Filesys) populateDir(
 	}
 
 	for _, f := range files {
-		fInode := fsys.allocInodeNum()
-
-		sqlStmt := fmt.Sprintf(`
- 		        INSERT INTO namespace
-			VALUES ('%s', '%s', '%d', '%d');`,
-			dirPath, f.Name, nsFileType, fInode)
-		if _, err := txn.Exec(sqlStmt); err != nil {
+		_, err := fsys.createFile(txn,
+			f.ProjId,
+			f.FileId,
+			f.Size,
+			f.CtimeMillisec,
+			f.MtimeMillisec,
+			dirPath,
+			f.Name)
+		if err != nil {
 			return err
-		}
-
-		//log.Printf("fInode = %d", fInode)
-		sqlStmt = fmt.Sprintf(`
- 		        INSERT INTO files
-			VALUES ('%s', '%s', '%d', '%d', '%d', '%d');`,
-			f.FileId, f.ProjId, fInode, f.Size, f.CtimeMillisec, f.MtimeMillisec)
-		if _, err := txn.Exec(sqlStmt); err != nil {
-			return printErrorStack(err)
 		}
 	}
 
@@ -736,55 +832,6 @@ func (fsys *Filesys) MetadataDbReadDirAll(
 	return fsys.directoryReadAllEntries(dirFullName)
 }
 
-// search for a file with a particular inode
-func (fsys *Filesys) lookupFile(
-	dirFullName string,
-	fname string,
-	inode int64) (*File, error) {
-	// point lookup in the files table
-	sqlStmt := fmt.Sprintf(`
- 		        SELECT file_id,proj_id,size,ctime,mtime
-                        FROM files
-			WHERE inode = '%d';`,
-		inode)
-	rows, err := fsys.db.Query(sqlStmt)
-	if err != nil {
-		log.Printf(err.Error())
-		panic(fmt.Sprintf("could not file file inode=%d dir=%s name=%s",
-			inode, dirFullName, fname))
-	}
-
-	var f File
-	f.Fsys = fsys
-	f.Name = fname
-	f.Inode = inode
-	numRows := 0
-	for rows.Next() {
-		var ctime int64
-		var mtime int64
-		rows.Scan(&f.FileId, &f.ProjId, &f.Size, &ctime, &mtime)
-		f.Ctime = millisecToTime(ctime)
-		f.Mtime = millisecToTime(mtime)
-		numRows++
-	}
-	rows.Close()
-
-	switch numRows {
-	case 0:
-		// file not found
-		panic(fmt.Sprintf(
-			"File (inode=%d, dir=%s, name=%s) should exist in the files table, but doesn't exist",
-			inode, dirFullName, fname))
-	case 1:
-		// correct, there is exactly one such file
-		return &f, nil
-	default:
-		panic(fmt.Sprintf("Found %d files of the form %s/%s",
-			numRows, dirFullName, fname))
-	}
-}
-
-
 // search for a directory with a particular inode
 func (fsys *Filesys) lookupDir(
 	dirFullName string,
@@ -871,7 +918,7 @@ func (fsys *Filesys) fastLookup(
 	case nsDirType:
 		return fsys.lookupDir(dirFullName, dirOrFileName, inode)
 	case nsFileType:
-		return fsys.lookupFile(dirFullName, dirOrFileName, inode)
+		return fsys.lookupFileShouldExist(dirFullName, dirOrFileName, inode)
 	default:
 		panic(fmt.Sprintf("Invalid object type %d", objType))
 	}
@@ -985,7 +1032,7 @@ func (fsys *Filesys) MetadataDbPopulateRoot(manifest Manifest) error {
 
 	// create individual files
 	for _, fl := range manifest.Files {
-		_, err := fsys.createRemoteFile(
+		_, err := fsys.createFile(
 			txn, fl.ProjId, fl.FileId,
 			fl.Size, fl.CtimeMillisec, fl.MtimeMillisec,
 			fl.Parent, fl.Fname)

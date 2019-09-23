@@ -276,13 +276,11 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 func (f *File) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.Size = uint64(f.Size)
 
-	// because the platform has only immutable files, these
-	// timestamps are all the same
 	a.Mtime = f.Mtime
 	a.Ctime = f.Ctime
 	a.Crtime = f.Ctime
 	a.Mode = 0400 // read only access
-	a.Nlink = 1
+	a.Nlink = uint32(f.Nlink)
 	a.Uid = f.Fsys.uid
 	a.Gid = f.Fsys.gid
 	//a.BlockSize = 1024 * 1024

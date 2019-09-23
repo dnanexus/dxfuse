@@ -13,6 +13,7 @@ The `files` table maintains information for individual files.
 | size       | bigint  | size of the file in bytes |
 | ctime      | bigint  | creation time |
 | mtime      | bigint  | modification time |
+| nlink      | int     | number of hard links to this file |
 
 It stores `stat` information on a file, and maps a file to an inode,
 which is the primary key. The inode has no DNAx equivalent, however,

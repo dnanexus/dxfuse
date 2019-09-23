@@ -116,14 +116,14 @@ def main():
                            default="dxfs2_test_data")
     argparser.add_argument("--test", help="which testing suite to run [benchmark, correctness, download]",
                            default="correctness")
-    argparser.add_argument("--scale", help="how large should the test be? [small, large]",
+    argparser.add_argument("--size", help="how large should the test be? [small, large]",
                            default="small")
     args = argparser.parse_args()
 
-    if args.scale in scale.keys():
-        instance_types = scale[args.scale]
+    if args.size in scale.keys():
+        instance_types = scale[args.size]
     else:
-        print("Unknown scale value {}".format(args.scale))
+        print("Unknown size value {}".format(args.scale))
         exit(1)
 
     dx_proj = get_project(args.project)
