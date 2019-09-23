@@ -127,6 +127,7 @@ function check_grep {
     grep --directories=skip -R "stream" $dxpyDir/dxWDL_source_code/src > 2.txt
 
     # each line starts with the directory name. those are different, so we normliaze them
+
     sed -i "s/MNT/dxCopy/g" 1.txt
     sed -i "s/$projName//g" 1.txt
     sed -i "s/\/\//\//g" 1.txt

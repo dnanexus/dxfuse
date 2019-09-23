@@ -95,6 +95,7 @@ This will create the directory hierarchy:
               |_ fish
               |_ birds
 ```
+
 Note that files may be hard linked from several projects. These will appear as a single inode with
 a link count greater than one.
 
