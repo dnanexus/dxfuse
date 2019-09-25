@@ -196,7 +196,7 @@ func findIovecIndex(pfm *PrefetchFileMetadata, ioReq IoReq) int {
 func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq IoReq) {
 	if pfm.state == PFM_IO_ERROR {
 		log.Printf("Dropping prefetch IO, file has encountered an error (%s, %s)",
-			ioReq.fh.f.FileId, ioReq.fh.f.Name)
+			ioReq.fh.f.Id, ioReq.fh.f.Name)
 		return
 	}
 
@@ -247,7 +247,7 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 		pfm, ok := pgs.files[ioReq.fh]
 		if !ok {
 			// file is not tracked anymore
-			log.Printf("Dropping prefetch IO, file is no longer tracked (%s)", ioReq.fh.f.FileId)
+			log.Printf("Dropping prefetch IO, file is no longer tracked (%s)", ioReq.fh.f.Id)
 		} else {
 			if err != nil {
 				log.Printf("Prefetch error ofs=%d len=%d error=%s",
@@ -725,7 +725,7 @@ func (pgs *PrefetchGlobalState) cacheLookup1(fh *FileHandle, startOfs int64, end
 		return data, DATA_IN_CACHE
 
 	default:
-		panic(fmt.Sprintf("bad state %d for fileId=%s", pfm.state, pfm.fh.f.FileId))
+		panic(fmt.Sprintf("bad state %d for fileId=%s", pfm.state, pfm.fh.f.Id))
 	}
 }
 

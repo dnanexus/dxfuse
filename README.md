@@ -75,19 +75,21 @@ go build -o /go/bin/dxfs2 /go/src/github.com/dnanexus/cmd/main.go
 
 To mount a dnanexus project `mammals` on local directory `/home/jonas/foo` do:
 ```
-sudo dxfs2 /home/jonas/foo mammals
+sudo dxfs2 /home/jonas/foo mammals &
 ```
 
-To get debugging outputs, add the `debug` flag. Debugging output
-will be written to stdout.
+The bootstrap process has some asynchrony, so it could take it a
+second two to start up. To get more information, use the `verbose`
+flag. Debugging output is written to the log, which is placed in
+`/var/log/dxfs2.log`. The maximal verbosity level is 2.
 
 ```
-sudo dxfs2 -debug MOUNT-POINT PROJECT-NAME
+sudo dxfs2 -verbose 1 MOUNT-POINT PROJECT-NAME &
 ```
 
 Project ids can be used instead of project names. To mount several projects, say, `mammals`, `fish`, and `birds`, do:
 ```
-sudo dxfs2 /home/jonas/foo mammals fish birds
+sudo dxfs2 /home/jonas/foo mammals fish birds &
 ```
 
 This will create the directory hierarchy:
@@ -99,8 +101,12 @@ This will create the directory hierarchy:
 ```
 
 Note that files may be hard linked from several projects. These will appear as a single inode with
-a link count greater than one. The filesystem logs are written to `/var/log/dxfs2.log`. To get more information in the log, use the `-verbose` flag.
+a link count greater than one.
 
+
+# Common problems
+
+If a project appears empty, or is missing files, it could be that the dnanexus token does not have permissions for it. Try to see if you can do `dx ls YOUR_PROJECT:`.
 
 # Related projects
 

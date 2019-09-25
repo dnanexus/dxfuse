@@ -3,25 +3,26 @@
 A local sqlite3 database is used to store filesystem information
 discovered by querying DNAnexus.
 
-The `files` table maintains information for individual files.
+The `data_objects` table maintains information for files, applets, workflows, and other data objects.
 
 | field name | SQL type |  description |
 | ---        | ---  |  --          |
 | inode      | bigint  | local filesystem i-node, cannot change |
-| file\_id   | text | The DNAx file-id |
+| id         | text | The DNAx object-id |
 | proj\_id   | text |	A project id for the file |
 | size       | bigint  | size of the file in bytes |
 | ctime      | bigint  | creation time |
 | mtime      | bigint  | modification time |
 | nlink      | int     | number of hard links to this file |
 
-It stores `stat` information on a file, and maps a file to an inode,
-which is the primary key. The inode has no DNAx equivalent, however,
-it cannot change once chosen. Note that a file can be hard linked from
-multiple projects on DNAx, it may also be a member of a container,
-instead of a project. The container field is used at download time to
-inform the system which project to check for ownership. It can safely
-be omitted, at the cost of additional work on the server side.
+It stores `stat` information on a data object, and maps it to an
+inode.  The inode is the primary key, and it cannot change once
+chosen; it has no DNAx equivalent. Note that a data object can be hard
+linked from multiple projects on DNAx, it may also be a member of a
+container, instead of a project. The container field is used at
+download time to inform the system which project to check for
+ownership. It can safely be omitted, at the cost of additional work on
+the server side.
 
 The `namespace` table stores information on the directory structure.
 
@@ -29,7 +30,7 @@ The `namespace` table stores information on the directory structure.
 | ---        | ---  | --          |
 | parent     | text | the parent folder |
 | name       | text | directory/file name |
-| obj\_type  | int  | directory=1, file=2 |
+| obj\_type  | int  | directory=1, data-object=2 |
 | inode      | bigint  | local filesystem i-node, cannot change |
 
 For example, directory `/A/B/C` is represented with the record:
@@ -72,14 +73,14 @@ The local directory contents does not change after the describe calls
 are complete. The only way to update the directory, in case of
 changes, is to unmount and remount the filesystem.
 
-DNAx allows multiple files in a directory to have the same name. This
+DNAx allows multiple data objects in a directory to have the same name. This
 violates POSIX, and cannot be presented in a FUSE filesystem. It is
 possible to resolve this, by mangling the original filenames, for
 example, by adding `_1`, `_2` suffixes. However, this can cause name
 collisions, and will certainly make it harder to understand which file
 was the original. The compromise implemented here, to use fictional
-subdirectories (`1`, `2`, `3`, ...) and place non unique files in
-them, keeping the original file names. For example, a directory can have the files:
+subdirectories (`1`, `2`, `3`, ...) and place non unique data objects in
+them, keeping the original names intact. For example, a directory can have the files:
 
 | name  | id   |
 | --    | --   |

@@ -11,12 +11,15 @@ import (
 )
 
 const (
+	DatabaseFile       = "/var/dxfs2/metadata.db"
 	HttpClientPoolSize = 4
-	InodeInvalid   = 0
-	InodeRoot      = 1
-	MaxDirSize     = 10 * 1000
+	LogFile            = "/var/log/dxfs2.log"
+	MaxDirSize         = 10 * 1000
 )
-
+const (
+	InodeInvalid       = 0
+	InodeRoot          = 1
+)
 const (
 	KiB                   = 1024
 	MiB                   = 1024 * KiB
@@ -32,7 +35,6 @@ type DxDownloadURL struct {
 
 type Options struct {
 	DebugFuse      bool
-	MetadataDbPath string
 	Verbose        bool
 	VerboseLevel   int
 	Uid            int
@@ -83,9 +85,11 @@ type Dir struct {
 var _ fs.Node = (*Dir)(nil)
 
 
+// A Unix file can stand for any DNAx data object. For example, it could be a workflow or an applet.
+// We distinguish between them based on the Id (file-xxxx, applet-xxxx, workflow-xxxx, ...).
 type File struct {
 	Fsys     *Filesys
-	FileId    string  // Required to build a download URL
+	Id        string  // Required to build a download URL
 	ProjId    string  // Note: this could be a container
 	Name      string
 	Size      int64

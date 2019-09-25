@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -24,14 +25,45 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-// fileExists checks if a file exists and is not a directory before we
-// try using it to prevent further errors.
-func fileExists(filename string) bool {
-    info, err := os.Stat(filename)
-    if os.IsNotExist(err) {
-        return false
-    }
-    return !info.IsDir()
+func initLog() *os.File {
+	// Redirect the log output to a file
+	f, err := os.OpenFile(LogFile, os.O_RDWR | os.O_CREATE | os.O_APPEND | os.O_TRUNC, 0666)
+	if err != nil {
+		log.Fatalf("error opening file: %v", err)
+	}
+	log.SetOutput(f)
+	return f
+}
+
+func initUid(options Options) (int,int) {
+	// This is current the root user, because the program is run under
+	// sudo privileges. The "user" variable is used only if we don't
+	// get command line uid/gid.
+	user, err := user.Current()
+	if err != nil {
+		panic(err)
+	}
+
+	// get the user ID
+	uid := options.Uid
+	if uid == -1 {
+		var err error
+		uid, err = strconv.Atoi(user.Uid)
+		if err != nil {
+			panic(err)
+		}
+	}
+
+	// get the group ID
+	gid := options.Gid
+	if gid == -1 {
+		var err error
+		gid, err = strconv.Atoi(user.Gid)
+		if err != nil {
+			panic(err)
+		}
+	}
+	return uid,gid
 }
 
 // Mount the filesystem:
@@ -42,60 +74,24 @@ func Mount(
 	dxEnv dxda.DXEnvironment,
 	manifest Manifest,
 	options Options) error {
-	// Redirect the log output to /var/log/dxfs2.log.
-	f, err := os.OpenFile("/var/log/dxfs2.log", os.O_RDWR | os.O_CREATE | os.O_APPEND, 0666)
-	if err != nil {
-		log.Fatalf("error opening file: %v", err)
-	}
-	log.SetOutput(f)
+	// Set the log file
+	f := initLog()
 	defer f.Close()
 
-	// This is current the root user, because the program is run under
-	// sudo privileges. The "user" variable is used only if we don't
-	// get command line uid/gid.
-	user, err := user.Current()
-	if err != nil {
-		return err
-	}
-
-	// get the user ID
-	uid := options.Uid
-	if uid == -1 {
-		var err error
-		uid, err = strconv.Atoi(user.Uid)
-		if err != nil {
-			return err
-		}
-	}
-
-	// get the group ID
-	gid := options.Gid
-	if gid == -1 {
-		var err error
-		gid, err = strconv.Atoi(user.Gid)
-		if err != nil {
-			return err
-		}
-	}
-
-	dbPath := options.MetadataDbPath + "/" + "metadata.db"
+	uid,gid := initUid(options)
 
 	// Create a fresh SQL database
-	dbParentFolder := filepath.Dir(dbPath)
+	dbParentFolder := filepath.Dir(DatabaseFile)
 	if _, err := os.Stat(dbParentFolder); os.IsNotExist(err) {
 		os.Mkdir(dbParentFolder, 0755)
 	}
-	if fileExists(dbPath) {
-		log.Printf("Removing old version of the database (%s)", dbPath)
-		err2 := os.Remove(dbPath)
-		if err2 != nil {
-			log.Printf("error (%s) removing old database", err2.Error())
-			os.Exit(1)
-		}
+	log.Printf("Removing old version of the database (%s)", DatabaseFile)
+	if err := os.RemoveAll(DatabaseFile); err != nil {
+		log.Fatalf("error removing old database %b", err)
 	}
 
 	// create a connection to the database, that will be kept open
-	db, err := sql.Open("sqlite3", dbPath + "?mode=rwc")
+	db, err := sql.Open("sqlite3", DatabaseFile + "?mode=rwc")
 	if err != nil {
 		return err
 	}
@@ -111,7 +107,7 @@ func Mount(
 		options: options,
 		uid : uint32(uid),
 		gid : uint32(gid),
-		dbFullPath : dbPath,
+		dbFullPath : DatabaseFile,
 		mutex : sync.Mutex{},
 		inodeCnt : InodeRoot + 2,
 		db : db,
@@ -227,23 +223,32 @@ func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 		log.Printf("ReadDirAll dir=(%s)\n", fullPath)
 	}
 
-	files, subdirs, err := dir.Fsys.MetadataDbReadDirAll(fullPath)
+	dxObjs, subdirs, err := dir.Fsys.MetadataDbReadDirAll(fullPath)
 	if err != nil {
 		return nil, err
 	}
 
 	if dir.Fsys.options.Verbose {
-		log.Printf("%d files, %d subdirs\n", len(files), len(subdirs))
+		log.Printf("%d data objects, %d subdirs\n", len(dxObjs), len(subdirs))
 	}
 
 	var dEntries []fuse.Dirent
 
-	// Add entries for files
-	for filename, fDesc := range files {
+	// Add entries for Unix files, representing DNAx data objects
+	for oname, oDesc := range dxObjs {
+		var dType fuse.DirentType
+		if strings.HasPrefix(oDesc.Id, "file-") {
+			dType = fuse.DT_File
+		} else {
+			// There is no good way to represent these
+			// in the filesystem.
+			dType = fuse.DT_Block
+		}
+
 		dEntries = append(dEntries, fuse.Dirent{
-			Inode : uint64(fDesc.Inode),
-			Type : fuse.DT_File,
-			Name : filename,
+			Inode : uint64(oDesc.Inode),
+			Type : dType,
+			Name : oname,
 		})
 	}
 
@@ -301,6 +306,10 @@ func (f *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenR
 	if !req.Flags.IsReadOnly() {
 		return nil, fuse.Errno(syscall.EACCES)
 	}
+	if !strings.HasPrefix(f.Id, "file-") {
+		// can only open files. Not allowed to "open" applet, workflows, etc.
+		return nil, fuse.Errno(syscall.EPERM)
+	}
 
 	// create a download URL for this file
 	const secondsInYear int = 60 * 60 * 24 * 365
@@ -309,7 +318,7 @@ func (f *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenR
 
 	// used a shared http client
 	httpClient := <-f.Fsys.httpClientPool
-	body, err := dxda.DxAPI(httpClient, &f.Fsys.dxEnv, fmt.Sprintf("%s/download", f.FileId), payload)
+	body, err := dxda.DxAPI(httpClient, &f.Fsys.dxEnv, fmt.Sprintf("%s/download", f.Id), payload)
 	f.Fsys.httpClientPool <- httpClient
 	if err != nil {
 		return nil, err

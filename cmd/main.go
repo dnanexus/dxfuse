@@ -1,3 +1,5 @@
+
+
 package main
 
 import (
@@ -29,11 +31,9 @@ func usage() {
 
 var (
 	debugFuseFlag = flag.Bool("debugFuse", false, "Tap into FUSE debugging information")
-	metadataDbPath = flag.String("dbPath", "/var/dxfs2", "Directory where to place metadata database")
 	verbose = flag.Int("verbose", 0, "Enable verbose debugging")
 	uid = flag.Int("uid", -1, "User id (uid)")
 	gid = flag.Int("gid", -1, "User group id (gid)")
-	risky = flag.Bool("risky", false, "Do not use this flag")
 )
 
 func lookupProject(dxEnv *dxda.DXEnvironment, projectIdOrName string) (string, error) {
@@ -65,7 +65,6 @@ func main() {
 
 	options := dxfs2.Options {
 		DebugFuse: *debugFuseFlag,
-		MetadataDbPath: *metadataDbPath,
 		Verbose : *verbose > 0,
 		VerboseLevel : *verbose,
 		Uid : *uid,
@@ -79,12 +78,13 @@ func main() {
 	}
 
 	if dxEnv.DxJobId == "" {
-		if !(*risky) {
-			fmt.Println(`
-Running outside a worker. Dxfs2 was designed to operate inside a cloud worker.
-It is not supported on other configurations, and may exhibit unpredictable behavior.`)
-			os.Exit(1)
-		}
+		fmt.Println(`
+Warning: running outside a worker. Dxfs2 is currently engineered to
+operate inside a cloud worker. The system depends on a good network
+connection to the DNAnexus servers, and to the backing store, which is
+S3 or Azure. Without such connectivity, some operations may take a
+long time, causing operating system timeouts to expire. This can
+result in the filesystem freezing, or being unmounted.`)
 	}
 
 	// distinguish between the case of a manifest, and a list of projects.
