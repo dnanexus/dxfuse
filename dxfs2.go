@@ -25,16 +25,6 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-func initLog() *os.File {
-	// Redirect the log output to a file
-	f, err := os.OpenFile(LogFile, os.O_RDWR | os.O_CREATE | os.O_APPEND | os.O_TRUNC, 0666)
-	if err != nil {
-		log.Fatalf("error opening file: %v", err)
-	}
-	log.SetOutput(f)
-	return f
-}
-
 func initUid(options Options) (int,int) {
 	// This is current the root user, because the program is run under
 	// sudo privileges. The "user" variable is used only if we don't
@@ -74,10 +64,6 @@ func Mount(
 	dxEnv dxda.DXEnvironment,
 	manifest Manifest,
 	options Options) error {
-	// Set the log file
-	f := initLog()
-	defer f.Close()
-
 	uid,gid := initUid(options)
 
 	// Create a fresh SQL database

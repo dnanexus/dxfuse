@@ -15,6 +15,7 @@ const (
 	HttpClientPoolSize = 4
 	LogFile            = "/var/log/dxfs2.log"
 	MaxDirSize         = 10 * 1000
+	Version            = "v0.1"
 )
 const (
 	InodeInvalid       = 0
