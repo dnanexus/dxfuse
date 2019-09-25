@@ -11,10 +11,13 @@ import (
 )
 
 const (
+	HttpClientPoolSize = 4
 	InodeInvalid   = 0
 	InodeRoot      = 1
+	MaxDirSize     = 10 * 1000
+)
 
-	HTTP_CLIENT_POOL_SIZE = 4
+const (
 	KiB                   = 1024
 	MiB                   = 1024 * KiB
 	GiB                   = 1024 * MiB

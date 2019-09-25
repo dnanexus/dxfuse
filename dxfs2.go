@@ -101,8 +101,8 @@ func Mount(
 	}
 
 	// initialize a pool of http-clients.
-	httpClientPool := make(chan *retryablehttp.Client, HTTP_CLIENT_POOL_SIZE)
-	for i:=0; i < HTTP_CLIENT_POOL_SIZE; i++ {
+	httpClientPool := make(chan *retryablehttp.Client, HttpClientPoolSize)
+	for i:=0; i < HttpClientPoolSize; i++ {
 		httpClientPool <- dxda.NewHttpClient(true)
 	}
 

@@ -21,8 +21,6 @@ const (
 	dirDoesNotExist = 1
 	dirExistsButNotPopulated = 2
 	dirExistAndPopulated = 3
-
-	maxDirSize     = 10 * 1000
 )
 
 type DirInfo struct {
@@ -592,14 +590,6 @@ func (fsys *Filesys) directoryReadFromDNAx(
 		log.Printf("read dir from DNAx #files=%d #subdirs=%d",
 			len(dxDir.files),
 			len(dxDir.subdirs))
-	}
-
-	// limit the number of directory elements
-	numElementsInDir := len(dxDir.files) + len(dxDir.subdirs)
-	if numElementsInDir > maxDirSize {
-		return fmt.Errorf(
-			"Too many elements (%d) in a directory, the limit is %d",
-			numElementsInDir, maxDirSize)
 	}
 
 	// Approximate the ctime/mtime using the file timestamps.

@@ -41,7 +41,8 @@ type DxDescribePrj struct {
 // a DNAx directory. It holds files and sub-directories.
 type DxFolder struct {
 	path  string  // Full directory name, for example: { "/A/B/C", "foo/bar/baz" }
-	files map[string]DxDescribeDataObject
+	files  map[string]DxDescribeDataObject
+	others map[string]DxDescribeDataObject
 	subdirs []string
 }
 
@@ -80,7 +81,7 @@ func submit(
 	// Limit the number of fields returned, because by default we
 	// get too much information, which is a burden on the server side.
 	describeOptions := map[string]map[string]map[string]bool {
-		"file" : map[string]map[string]bool {
+		"*" : map[string]map[string]bool {
 			"fields" : map[string]bool {
 				"id" : true,
 				"project" : true,
@@ -255,10 +256,24 @@ func DxDescribeFolder(
 		log.Printf("describeBulkObjects(%v) error %s", folderInfo.fileIds, err.Error())
 		return nil, err
 	}
+	others, err := DxDescribeBulkObjects(httpClient, dxEnv, folderInfo.otherIds)
+	if err != nil {
+		log.Printf("describeBulkObjects(%v) error %s", folderInfo.otherIds, err.Error())
+		return nil, err
+	}
+
+	// limit the number of directory elements
+	numElementsInDir := len(files) + len(others)
+	if numElementsInDir > MaxDirSize {
+		return nil, fmt.Errorf(
+			"Too many elements (%d) in a directory, the limit is %d",
+			numElementsInDir, MaxDirSize)
+	}
 
 	return &DxFolder{
 		path : folder,
 		files : files,
+		others: others,
 		subdirs : folderInfo.subdirs,
 	}, nil
 }
