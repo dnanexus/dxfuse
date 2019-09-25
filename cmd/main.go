@@ -31,9 +31,10 @@ func usage() {
 
 var (
 	debugFuseFlag = flag.Bool("debugFuse", false, "Tap into FUSE debugging information")
-	verbose = flag.Int("verbose", 0, "Enable verbose debugging")
-	uid = flag.Int("uid", -1, "User id (uid)")
 	gid = flag.Int("gid", -1, "User group id (gid)")
+	uid = flag.Int("uid", -1, "User id (uid)")
+	verbose = flag.Int("verbose", 0, "Enable verbose debugging")
+	version = flag.Bool("version", false, "Print the version and exit")
 )
 
 func lookupProject(dxEnv *dxda.DXEnvironment, projectIdOrName string) (string, error) {
@@ -47,12 +48,28 @@ func lookupProject(dxEnv *dxda.DXEnvironment, projectIdOrName string) (string, e
 	return dxfs2.DxFindProject(dxEnv, projectIdOrName)
 }
 
-func main() {
+func initLog() *os.File {
+	// Redirect the log output to a file
+	f, err := os.OpenFile(dxfs2.LogFile, os.O_RDWR | os.O_CREATE | os.O_APPEND | os.O_TRUNC, 0666)
+	if err != nil {
+		log.Fatalf("error opening file: %v", err)
+	}
+	log.SetOutput(f)
 	log.SetFlags(0)
 	log.SetPrefix(progName + ": ")
 
+	return f
+}
+
+func main() {
 	flag.Usage = usage
 	flag.Parse()
+
+	if *version {
+		// print the version and exit
+		fmt.Println(dxfs2.Version)
+		os.Exit(0)
+	}
 
 	// Limit the number of spare OS threads
 	//runtime.GOMAXPROCS(64)
@@ -86,6 +103,10 @@ S3 or Azure. Without such connectivity, some operations may take a
 long time, causing operating system timeouts to expire. This can
 result in the filesystem freezing, or being unmounted.`)
 	}
+
+	// initialize the log file
+	logf := initLog()
+	defer logf.Close()
 
 	// distinguish between the case of a manifest, and a list of projects.
 	var manifest *dxfs2.Manifest
