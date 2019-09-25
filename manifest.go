@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -132,9 +133,10 @@ func MakeManifestFromProjectIds(
 	// describe the projects, retrieve metadata for them
 	tmpHttpClient := dxda.NewHttpClient(false)
 	projDescs := make(map[string]DxDescribePrj)
-	for _, pid := range projectIds {
-		pDesc, err := DxDescribeProject(tmpHttpClient, &dxEnv, pid)
+	for _, pId := range projectIds {
+		pDesc, err := DxDescribeProject(tmpHttpClient, &dxEnv, pId)
 		if err != nil {
+			log.Printf("Could not describe project %s, check permissions", pId)
 			return nil, err
 		}
 		projDescs[pDesc.Id] = *pDesc
@@ -334,6 +336,7 @@ func (m *Manifest) FillInMissingFields(dxEnv dxda.DXEnvironment) error {
 	for pId, _ := range projectIds {
 		pDesc, err := DxDescribeProject(tmpHttpClient, &dxEnv, pId)
 		if err != nil {
+			log.Printf("Could not describe project %s, check permissions", pId)
 			return err
 		}
 		projDescs[pDesc.Id] = *pDesc

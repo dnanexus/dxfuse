@@ -23,13 +23,13 @@ import (
 // 3. A directory and a file can have the same name. This is not handled right now.
 //
 type PosixDir struct {
-	path      string   // entire directory path
-	files     []DxDescribeDataObject
-	subdirs   []string
+	path          string   // entire directory path
+	dataObjects []DxDescribeDataObject
+	subdirs     []string
 
 	// additional subdirectories holding files that have multiple versions,
 	// and could not be placed in the original location.
-	fauxSubdirs map[string]([]DxDescribeDataObject)
+	fauxSubdirs  map[string]([]DxDescribeDataObject)
 }
 
 func FilenameIsPosixCompliant(filename string) bool {
@@ -39,23 +39,48 @@ func FilenameIsPosixCompliant(filename string) bool {
 	return true
 }
 
+// Slashes cannot be included in a posix filename. Replace them with a triple underscore.
+func filenameNormalize(filename string) string {
+	return strings.ReplaceAll(filename, "/", "___")
+}
 
-// Choose each filename once. Return the remaining files, those that are multiply named,
+// Choose a directory name that is unused.
+func chooseFauxDirName(usedNames map[string]bool, counter *int) string {
+	var maxNumIter = len(usedNames)
+
+	for i := 0; i < maxNumIter; i++ {
+		tentativeName := strconv.Itoa(*counter)
+		_, ok := usedNames[tentativeName]
+		if !ok {
+			// name has not been used yet
+			usedNames[tentativeName] = true
+			return tentativeName
+		}
+
+		// already used, we need another name
+		*counter++
+	}
+
+	panic(fmt.Sprintf("could not choose a directory name after %d iterations", maxNumIter))
+}
+
+
+// Choose each name once. Return the remaining data-objects, those that are multiply named,
 // and were not chosen.
-func makeCut(files []DxDescribeDataObject) ([]DxDescribeDataObject, []DxDescribeDataObject) {
+func makeCut(dxObjs []DxDescribeDataObject) ([]DxDescribeDataObject, []DxDescribeDataObject) {
 	used := make(map[string]bool)
 	remaining := make([]DxDescribeDataObject, 0)
 	firstTimers := make([]DxDescribeDataObject, 0)
 
-	for _, fDesc := range files {
-		_, ok := used[fDesc.Name]
+	for _, oDesc := range dxObjs {
+		_, ok := used[oDesc.Name]
 		if ok {
 			// We have already seen a file with this name
-			remaining = append(remaining, fDesc)
+			remaining = append(remaining, oDesc)
 		} else {
 			// first time for this file name
-			firstTimers = append(firstTimers, fDesc)
-			used[fDesc.Name] = true
+			firstTimers = append(firstTimers, oDesc)
+			used[oDesc.Name] = true
 		}
 	}
 	return remaining, firstTimers
@@ -67,9 +92,9 @@ func makeCut(files []DxDescribeDataObject) ([]DxDescribeDataObject, []DxDescribe
 // 2. Change file names to not collide with directories, or with each other.
 func PosixFixDir(fsys *Filesys, dxFolder *DxFolder) (*PosixDir, error) {
 	if fsys.options.Verbose {
-		log.Printf("PosixFixDir %s #files=%d #subdirs=%d",
+		log.Printf("PosixFixDir %s #objects=%d #subdirs=%d",
 			dxFolder.path,
-			len(dxFolder.files),
+			len(dxFolder.dataObjects),
 			len(dxFolder.subdirs))
 	}
 
@@ -98,32 +123,43 @@ func PosixFixDir(fsys *Filesys, dxFolder *DxFolder) (*PosixDir, error) {
 		log.Printf("subdirs = %v", subdirs)
 	}
 
-	// Take all the files that appear just once. There will be placed
-	// at the toplevel.
-	var allFiles []DxDescribeDataObject
-	for _, file := range dxFolder.files {
-		allFiles = append(allFiles, file)
+	// convert the map into an array. Normalize any non Posix names.
+	var allDxObjs []DxDescribeDataObject
+	for _, dxObj := range dxFolder.dataObjects {
+		var objNorm DxDescribeDataObject = dxObj
+
+		if !FilenameIsPosixCompliant(objNorm.Name) {
+			// we need to normalize the name
+			objNorm.Name = filenameNormalize(objNorm.Name)
+		}
+		allDxObjs = append(allDxObjs, objNorm)
 	}
 
-	nonUniqueNamedFiles, topLevelFiles := makeCut(allFiles)
+	// Take all the data-objects that appear just once. There will be placed
+	// at the toplevel.
+	nonUniqueNamedObjs, topLevelObjs := makeCut(allDxObjs)
 
-	// Iteratively, take unique files from the remaining files, and place them in
-	// subdirectories 1, 2, 3, ...
-	fauxDir := 1
+	// Iteratively, take unique files from the remaining objects, and place them in
+	// subdirectories 1, 2, 3, ... Be careful to create unused directory names
+	fauxDirCounter := 1
 	fauxSubdirs := make(map[string][]DxDescribeDataObject)
+	usedSubdirNames := make(map[string]bool)
+	for _, dname := range subdirs {
+		usedSubdirNames[dname] = true
+	}
 
-	for remaining := nonUniqueNamedFiles; len(remaining) > 0; {
-		notChosenThisTime, uniqueFiles := makeCut(remaining)
-		fauxSubdirs[strconv.Itoa(fauxDir)] = uniqueFiles
-		fauxDir++
+	for remaining := nonUniqueNamedObjs; len(remaining) > 0; {
+		notChosenThisTime, uniqueObjs := makeCut(remaining)
+		fauxDir := chooseFauxDirName(usedSubdirNames, &fauxDirCounter)
+		fauxSubdirs[fauxDir] = uniqueObjs
 
 		if fsys.options.Verbose {
-			log.Printf(fmt.Sprintf("fauxDir=%d  len(remainingFiles)=%d  len(uniqueFiles)=%d",
-				fauxDir, len(notChosenThisTime), len(uniqueFiles)))
+			log.Printf(fmt.Sprintf("fauxDir=%s  len(remainingObjs)=%d  len(uniqueObjs)=%d",
+				fauxDir, len(notChosenThisTime), len(uniqueObjs)))
 		}
 
 		if len(remaining) <= len(notChosenThisTime) {
-			// The number of non unique files must drop
+			// The number of non unique objects must drop
 			// monotonically
 			panic("not making progress")
 		}
@@ -132,7 +168,7 @@ func PosixFixDir(fsys *Filesys, dxFolder *DxFolder) (*PosixDir, error) {
 
 	posixDxFolder := &PosixDir{
 		path: dxFolder.path,
-		files: topLevelFiles,
+		dataObjects: topLevelObjs,
 		subdirs: subdirs,
 		fauxSubdirs: fauxSubdirs,
 	}

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"strings"
 
 	// The dxda package has the get-environment code
 	"github.com/dnanexus/dxda"
@@ -19,7 +18,7 @@ const (
 // -------------------------------------------------------------------
 // Description of a DNAx data object
 type DxDescribeDataObject struct {
-	FileId     string
+	Id         string
 	ProjId     string
 	Name       string
 	Folder     string
@@ -41,7 +40,7 @@ type DxDescribePrj struct {
 // a DNAx directory. It holds files and sub-directories.
 type DxFolder struct {
 	path  string  // Full directory name, for example: { "/A/B/C", "foo/bar/baz" }
-	files map[string]DxDescribeDataObject
+	dataObjects  map[string]DxDescribeDataObject
 	subdirs []string
 }
 
@@ -61,7 +60,7 @@ type DxDescribeRawTop struct {
 }
 
 type DxDescribeRaw struct {
-	FileId           string `json:"id"`
+	Id               string `json:"id"`
 	ProjId           string `json:"project"`
 	Name             string `json:"name"`
 	State            string `json:"state"`
@@ -80,7 +79,7 @@ func submit(
 	// Limit the number of fields returned, because by default we
 	// get too much information, which is a burden on the server side.
 	describeOptions := map[string]map[string]map[string]bool {
-		"file" : map[string]map[string]bool {
+		"*" : map[string]map[string]bool {
 			"fields" : map[string]bool {
 				"id" : true,
 				"project" : true,
@@ -122,7 +121,7 @@ func submit(
 			continue
 		}
 		desc := DxDescribeDataObject{
-			FileId : descRaw.FileId,
+			Id :  descRaw.Id,
 			ProjId : descRaw.ProjId,
 			Name : descRaw.Name,
 			Folder : descRaw.Folder,
@@ -131,7 +130,7 @@ func submit(
 			MtimeMillisec : descRaw.ModifiedMillisec,
 		}
 		//fmt.Printf("%v\n", desc)
-		files[desc.FileId] = desc
+		files[desc.Id] = desc
 	}
 	return files, nil
 }
@@ -139,9 +138,9 @@ func submit(
 func DxDescribeBulkObjects(
 	httpClient *retryablehttp.Client,
 	dxEnv *dxda.DXEnvironment,
-	fileIds []string) (map[string]DxDescribeDataObject, error) {
+	objIds []string) (map[string]DxDescribeDataObject, error) {
 	var gMap = make(map[string]DxDescribeDataObject)
-	if len(fileIds) == 0 {
+	if len(objIds) == 0 {
 		return gMap, nil
 	}
 
@@ -149,16 +148,16 @@ func DxDescribeBulkObjects(
 	batchSize := maxNumObjectsInDescribe
 	var batches [][]string
 
-	for batchSize < len(fileIds) {
-		head := fileIds[0:batchSize:batchSize]
-		fileIds = fileIds[batchSize:]
+	for batchSize < len(objIds) {
+		head := objIds[0:batchSize:batchSize]
+		objIds = objIds[batchSize:]
 		batches = append(batches, head)
 	}
 	// Don't forget the tail of the requests, that is smaller than the batch size
-	batches = append(batches, fileIds)
+	batches = append(batches, objIds)
 
-	for _, fileIdBatch := range(batches) {
-		m, err := submit(httpClient, dxEnv, fileIdBatch)
+	for _, objIdBatch := range(batches) {
+		m, err := submit(httpClient, dxEnv, objIdBatch)
 		if err != nil {
 			return nil, err
 		}
@@ -187,8 +186,7 @@ type ObjInfo struct {
 }
 
 type DxListFolder struct {
-	fileIds  []string
-	otherIds []string
+	objIds  []string
 	subdirs  []string
 }
 
@@ -219,18 +217,12 @@ func listFolder(
 	if err := json.Unmarshal(repJs, &reply); err != nil {
 		return nil, err
 	}
-	var objectIds []string
-	var otherIds []string
+	var objIds []string
 	for _, objInfo := range reply.Objects {
-		if strings.HasPrefix(objInfo.Id, "file-") {
-			objectIds = append(objectIds, objInfo.Id)
-		} else {
-			otherIds = append(otherIds, objInfo.Id)
-		}
+		objIds = append(objIds, objInfo.Id)
 	}
 	retval := DxListFolder{
-		fileIds : objectIds,
-		otherIds : otherIds,
+		objIds : objIds,
 		subdirs : reply.Folders,
 	}
 	return &retval, nil
@@ -250,15 +242,27 @@ func DxDescribeFolder(
 		log.Printf("listFolder(%s) error %s", folder, err.Error())
 		return nil, err
 	}
-	files, err := DxDescribeBulkObjects(httpClient, dxEnv, folderInfo.fileIds)
+	// limit the number of directory elements
+	numElementsInDir := len(folderInfo.objIds)
+	if numElementsInDir > MaxDirSize {
+		return nil, fmt.Errorf(
+			"Too many elements (%d) in a directory, the limit is %d",
+			numElementsInDir, MaxDirSize)
+	}
+
+	dxObjs, err := DxDescribeBulkObjects(httpClient, dxEnv, folderInfo.objIds)
 	if err != nil {
-		log.Printf("describeBulkObjects(%v) error %s", folderInfo.fileIds, err.Error())
+		log.Printf("describeBulkObjects(%v) error %s", folderInfo.objIds, err.Error())
 		return nil, err
 	}
 
+	dataObjects := make(map[string]DxDescribeDataObject)
+	for _,oDesc := range dxObjs {
+		dataObjects[oDesc.Id] = oDesc
+	}
 	return &DxFolder{
 		path : folder,
-		files : files,
+		dataObjects : dataObjects,
 		subdirs : folderInfo.subdirs,
 	}, nil
 }
