@@ -40,7 +40,7 @@ dxfuse approximates a normal POSIX filesystem, but does not always have the same
 3. Files are immutable
 
 There are several limitations currently:
-- Assumes a Linux operating system
+- Primarily intended for Linux, but can be used on OSX
 - Intended to operate on platform workers
 - Mounted read only
 - Limits directories to 10,000 elements
@@ -133,6 +133,10 @@ This will create the directory hierarchy:
 Note that files may be hard linked from several projects. These will appear as a single inode with
 a link count greater than one.
 
+## Mac OS (OSX)
+
+For OSX you will need to install [OSXFUSE](http://osxfuse.github.com/). This is a requirement of
+[bazil.org/fuse](https://godoc.org/bazil.org/fuse).
 
 # Common problems
 
