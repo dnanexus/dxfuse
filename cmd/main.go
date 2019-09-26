@@ -30,6 +30,7 @@ func usage() {
 var (
 	debugFuseFlag = flag.Bool("debugFuse", false, "Tap into FUSE debugging information")
 	gid = flag.Int("gid", -1, "User group id (gid)")
+	help = flag.Bool("help", false, "display program options")
 	uid = flag.Int("uid", -1, "User id (uid)")
 	verbose = flag.Int("verbose", 0, "Enable verbose debugging")
 	version = flag.Bool("version", false, "Print the version and exit")
@@ -68,9 +69,11 @@ func main() {
 		fmt.Println(dxfuse.Version)
 		os.Exit(0)
 	}
+	if *help {
+		usage()
+		os.Exit(0)
+	}
 
-	// Limit the number of spare OS threads
-	//runtime.GOMAXPROCS(64)
 	numArgs := flag.NArg()
 	if numArgs < 2 {
 		usage()

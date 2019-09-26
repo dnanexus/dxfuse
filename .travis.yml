@@ -1,20 +1,19 @@
 language: go
 sudo: false
 dist: bionic
-
 go:
-  - 1.13.x
+- 1.13.x
 
-# Start a build on for changes to master, or for pull requests
 branches:
   only:
-    - master
+  - master
+  - develop
 
-#env:
-#  global:
-    # Set environment variables for Go
-#    - PATH="/usr/local/go/bin:${PATH}"
-#    - GOPATH=/tmp/ci_tests/go
+env:
+  global:
+    # DX_API_TOKEN
+    - secure: E7c2IJ5W3moph8mqqGzolVAYtrSl/wijwpHK8onyGlsJCDlizrH0qAqROtFLqrx2o1TSodhkOURznFcjtwMY6ePAT9NDAdHd1nNhs4sMskTCR3uVKsG2rmmHHLPDTvOVNEXjgjUQ+rof+7wt+TcBlcfS8gNR0k3rzHBnQPaPDdDfXMmFnQLXw6QD84sxPzmoAWMC8OVMDlBuHDK/dKI6cQNKJnBi2Iz1W6c3zbo4yk46ZiKr1LtEaLRQV42qoGqpXsFsBRHxXjeisKVvU7r16C7lyuSNEeUiKItm6tq102bZPv1JDhLj6lwnuEaPG3r2DH5iD83y1+KVXjOk//B5ca+w3ch1HPq9minYVuMljj+AkMCfTI+g3UZIs2F9Qn23YlAqG0vQxl1lw6c5eNTXJCXOmqRpYhQ34B9WwKxBuecmRVUbFvjHrASnnSv4zLHQxhOkUFnZXBdujxvy/Oi6ASnJcBSG9LcKNRkwfT4beVmQyMqJNk+zeKSuJk2mvIUelB/gXlyHNGFswDIKXlESJ110/ghmYl8xZw582JH3IG9Oh+CuoCH+pu/Dm7mRyB7Phg5Go1gOzzGxNQLtmko7CSKYlGqk628Vlj2pQDXhFnLgaIgpyw8bfj8UN/opayr0y4z5I/k9ZSlXAnk83Qf7qoY3q6kEucLXG2YuhYOgkmE=
+    - DX_APISERVER_HOST="stagingapi.dnanexus.com"
 
 addons:
   apt:
@@ -25,14 +24,22 @@ addons:
     - tree
 
 install:
-  # Install Go packages
-  - go get github.com/google/subcommands
-  - go get golang.org/x/sync/semaphore
-  - go install github.com/google/subcommands
-  - go get github.com/dnanexus/dxda
-  - go install github.com/dnanexus/dxda
-  - go install github.com/dnanexus/dxda/cmd/dx-download-agent
-  - go get bazil.org/fuse
-  - go get golang.org/x/net/context
-  - go get github.com/dnanexus/dxfuse
-  - go install github.com/dnanexus/dxfuse
+- go get github.com/google/subcommands
+- go get golang.org/x/sync/semaphore
+- go install github.com/google/subcommands
+- go get github.com/dnanexus/dxda
+- go install github.com/dnanexus/dxda
+- go install github.com/dnanexus/dxda/cmd/dx-download-agent
+- go get bazil.org/fuse
+- go get golang.org/x/net/context
+- go get github.com/dnanexus/dxfuse
+- go install github.com/dnanexus/dxfuse
+- go build -o $GOPATH/bin/dxfuse $GOPATH/src/github.com/dnanexus/dxfuse/cmd/main.go
+
+script:
+  - $GOPATH/bin/dxfuse --help
+  - mkdir /tmp/mount
+  - sudo $GOPATH/bin/dxfuse /tmp/mount project-FbZ25gj04J9B8FJ3Gb5fVP41 &
+  - sleep 2
+  - tree /tmp/mount
+  - sudo umount /tmp/mount
