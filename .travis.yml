@@ -2,16 +2,19 @@ language: go
 sudo: false
 dist: bionic
 
+go:
+  - 1.13.x
+
 # Start a build on for changes to master, or for pull requests
 branches:
   only:
     - master
 
-env:
-  global:
+#env:
+#  global:
     # Set environment variables for Go
-    - PATH="/usr/local/go/bin:${PATH}"
-    - GOPATH=/tmp/ci_tests/go
+#    - PATH="/usr/local/go/bin:${PATH}"
+#    - GOPATH=/tmp/ci_tests/go
 
 addons:
   apt:
@@ -21,19 +24,7 @@ addons:
     - git
     - tree
 
-before_install:
-  - mkdir -p /tmp/ci_tests
-  - cd /tmp/ci_tests
-  - mkdir -p /tmp/ci_tests/go
-
 install:
-  - pwd
-
-  # install golang
-  - wget https://dl.google.com/go/go1.13.1.linux-amd64.tar.gz
-  - tar -C /usr/local -xzf go1.13.1.linux-amd64.tar.gz
-  - rm -f go1.13.1.linux-amd64.tar.gz
-
   # Install Go packages
   - go get github.com/google/subcommands
   - go get golang.org/x/sync/semaphore
@@ -43,6 +34,5 @@ install:
   - go install github.com/dnanexus/dxda/cmd/dx-download-agent
   - go get bazil.org/fuse
   - go get golang.org/x/net/context
-
   - go get github.com/dnanexus/dxfuse
   - go install github.com/dnanexus/dxfuse
