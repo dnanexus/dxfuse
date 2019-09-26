@@ -8,9 +8,10 @@ branches:
     - master
 
 env:
-  # Set environment variables for Go
-  - PATH="/usr/local/go/bin:${PATH}"
-  - GOPATH="/go"
+  global:
+    # Set environment variables for Go
+    - PATH="/usr/local/go/bin:${PATH}"
+    - GOPATH=/tmp/ci_tests/go
 
 addons:
   apt:
@@ -21,10 +22,9 @@ addons:
     - tree
 
 before_install:
-  - mkdir -p /go
-  - chmod 755 /go
   - mkdir -p /tmp/ci_tests
   - cd /tmp/ci_tests
+  - mkdir -p /tmp/ci_tests/go
 
 install:
   - pwd
