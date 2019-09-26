@@ -9,12 +9,13 @@ go:
 branches:
   only:
     - master
+    - develop
 
-#env:
-#  global:
+env:
+  global:
     # Set environment variables for Go
 #    - PATH="/usr/local/go/bin:${PATH}"
-#    - GOPATH=/tmp/ci_tests/go
+    - GOPATH=/tmp/ci_tests/go
 
 addons:
   apt:
@@ -36,3 +37,5 @@ install:
   - go get golang.org/x/net/context
   - go get github.com/dnanexus/dxfuse
   - go install github.com/dnanexus/dxfuse
+
+  - go build -o $GOPATH/bin/dxfuse $GOPATH/src/github.com/dnanexus/dxfuse/cmd/main.go
