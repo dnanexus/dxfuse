@@ -258,7 +258,7 @@ func (fsys *Filesys) lookupDataObjectInodeById(txn *sql.Tx, fId string) (int64, 
 		// correct, there is exactly one such file
 		return inode, nlink, nil
 	default:
-		panic(fmt.Sprintf("Found %d data-objects with Id %s", fId))
+		panic(fmt.Sprintf("Found %d data-objects with Id %s", numRows, fId))
 	}
 }
 

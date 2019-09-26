@@ -15,7 +15,7 @@ env:
   global:
     # Set environment variables for Go
 #    - PATH="/usr/local/go/bin:${PATH}"
-    - GOPATH=/tmp/ci_tests/go
+#    - GOPATH=/tmp/ci_tests/go
 
 addons:
   apt:
