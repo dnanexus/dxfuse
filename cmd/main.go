@@ -1,5 +1,3 @@
-
-
 package main
 
 import (
@@ -13,7 +11,7 @@ import (
 
 	// The dxda package has the get-environment code
 	"github.com/dnanexus/dxda"
-	"github.com/dnanexus/dxfs2"
+	"github.com/dnanexus/dxfuse"
 )
 
 var progName = filepath.Base(os.Args[0])
@@ -45,12 +43,12 @@ func lookupProject(dxEnv *dxda.DXEnvironment, projectIdOrName string) (string, e
 
 	// This is a project name, describe it, and
 	// return the project-id.
-	return dxfs2.DxFindProject(dxEnv, projectIdOrName)
+	return dxfuse.DxFindProject(dxEnv, projectIdOrName)
 }
 
 func initLog() *os.File {
 	// Redirect the log output to a file
-	f, err := os.OpenFile(dxfs2.LogFile, os.O_RDWR | os.O_CREATE | os.O_APPEND | os.O_TRUNC, 0666)
+	f, err := os.OpenFile(dxfuse.LogFile, os.O_RDWR | os.O_CREATE | os.O_APPEND | os.O_TRUNC, 0666)
 	if err != nil {
 		log.Fatalf("error opening file: %v", err)
 	}
@@ -67,7 +65,7 @@ func main() {
 
 	if *version {
 		// print the version and exit
-		fmt.Println(dxfs2.Version)
+		fmt.Println(dxfuse.Version)
 		os.Exit(0)
 	}
 
@@ -80,7 +78,7 @@ func main() {
 	}
 	mountpoint := flag.Arg(0)
 
-	options := dxfs2.Options {
+	options := dxfuse.Options {
 		DebugFuse: *debugFuseFlag,
 		Verbose : *verbose > 0,
 		VerboseLevel : *verbose,
@@ -96,7 +94,7 @@ func main() {
 
 	if dxEnv.DxJobId == "" {
 		fmt.Println(`
-Warning: running outside a worker. Dxfs2 is currently engineered to
+Warning: running outside a worker. Dxfuse is currently engineered to
 operate inside a cloud worker. The system depends on a good network
 connection to the DNAnexus servers, and to the backing store, which is
 S3 or Azure. Without such connectivity, some operations may take a
@@ -109,11 +107,11 @@ result in the filesystem freezing, or being unmounted.`)
 	defer logf.Close()
 
 	// distinguish between the case of a manifest, and a list of projects.
-	var manifest *dxfs2.Manifest
+	var manifest *dxfuse.Manifest
 	if numArgs == 2 && strings.HasSuffix(flag.Arg(1), ".json") {
 		p := flag.Arg(1)
 		log.Printf("Provided with a manifest, reading from %s", p)
-		manifest, err = dxfs2.ReadManifest(p)
+		manifest, err = dxfuse.ReadManifest(p)
 		if err != nil {
 			fmt.Println(err)
 			os.Exit(1)
@@ -140,14 +138,14 @@ result in the filesystem freezing, or being unmounted.`)
 			projectIds = append(projectIds, projId)
 		}
 
-		manifest, err = dxfs2.MakeManifestFromProjectIds(dxEnv, projectIds)
+		manifest, err = dxfuse.MakeManifestFromProjectIds(dxEnv, projectIds)
 		if err != nil {
 			fmt.Println(err)
 			os.Exit(1)
 		}
 	}
 
-	if err := dxfs2.Mount(mountpoint, dxEnv, *manifest, options); err != nil {
+	if err := dxfuse.Mount(mountpoint, dxEnv, *manifest, options); err != nil {
 		fmt.Println("Error: " + err.Error())
 	}
 }

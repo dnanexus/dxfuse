@@ -2,3 +2,5 @@ SRC = dx_describe.go dx_find.go dxfuse.go dxfuse_test.go manifest.go metadata_db
 
 all : ${SRC}
 	go build -o /go/bin/dxfuse /go/src/github.com/dnanexus/dxfuse/cmd/main.go
+
+#GOOS=darwin GOARCH=amd64 go build -o dxfuse-osx /go/src/github.com/dnanexus/dxfuse/cmd/main.go
