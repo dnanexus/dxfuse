@@ -1,23 +1,23 @@
-package dxfs2_test
+package dxfuse_test
 
 import (
 	"fmt"
 	"testing"
 
-	"github.com/dnanexus/dxfs2"
+	"github.com/dnanexus/dxfuse"
 )
 
 func TestDirSkel(t *testing.T) {
 	t.Log("starting test")
 	fmt.Fprintln(os.Stdout, "hello")
 
-	mf1 := dxfs2.ManifestFile{
+	mf1 := dxfuse.ManifestFile{
 		ProjId  : "project-1000",
 		FileId  : "file-1000",
 		Parent  : "/A/B/C",
 		Fname   : "foo.txt",
 	}
-	mf2 := dxfs2.ManifestFile{
+	mf2 := dxfuse.ManifestFile{
 		ProjId  : "project-1000",
 		FileId  : "file-1000",
 		Parent  : "/Cards/Poker",

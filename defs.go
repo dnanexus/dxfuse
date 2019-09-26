@@ -1,4 +1,4 @@
-package dxfs2
+package dxfuse
 
 import (
 	"database/sql"
@@ -11,9 +11,9 @@ import (
 )
 
 const (
-	DatabaseFile       = "/var/dxfs2/metadata.db"
+	DatabaseFile       = "/var/dxfuse/metadata.db"
 	HttpClientPoolSize = 4
-	LogFile            = "/var/log/dxfs2.log"
+	LogFile            = "/var/log/dxfuse.log"
 	MaxDirSize         = 10 * 1000
 	Version            = "v0.1"
 )

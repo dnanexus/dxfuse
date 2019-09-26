@@ -1,4 +1,4 @@
-package dxfs2
+package dxfuse
 
 import (
 	"database/sql"
@@ -120,7 +120,7 @@ func Mount(
 	fsys.pgs.Init(options.VerboseLevel)
 
 	// Fuse mount
-	log.Printf("mounting dxfs2")
+	log.Printf("mounting dxfuse")
 	c, err := fuse.Mount(
 		mountpoint,
 		fuse.AllowOther(),
@@ -156,7 +156,7 @@ func unmount(fsys *Filesys, dirname string) error {
 	// to do with it.
 	//
 	// We do not remove the metadata database file, so it could be inspected offline.
-	log.Printf("unmounting dxfs2 from %s\n", dirname)
+	log.Printf("unmounting dxfuse from %s\n", dirname)
 
 	if err := fsys.db.Close(); err != nil {
 		log.Printf("Error closing the sqlite database %s, err=%s",

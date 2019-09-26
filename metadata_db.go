@@ -1,4 +1,4 @@
-package dxfs2
+package dxfuse
 
 import (
 	"database/sql"
@@ -34,7 +34,7 @@ type DirInfo struct {
 
 // Construct a local sql database that holds metadata for
 // a large number of dx:files. This metadata_db will be consulted
-// when performing dxfs2 operations. For example, a read-dir is
+// when performing dxfuse operations. For example, a read-dir is
 // translated into a query for all the files inside a directory.
 
 // Split a path into a parent and child. For example:

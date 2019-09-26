@@ -1,4 +1,4 @@
-package dxfs2
+package dxfuse
 
 import (
 	"bytes"

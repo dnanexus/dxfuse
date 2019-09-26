@@ -1,4 +1,4 @@
-package dxfs2
+package dxfuse
 
 // When a file is opened, it is added to the global prefetch map. Once removed,
 // it can never return. This means that to check if a file is being streamed, all
