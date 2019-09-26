@@ -1,0 +1,48 @@
+language: go
+sudo: false
+dist: bionic
+
+# Start a build on for changes to master, or for pull requests
+branches:
+  only:
+    - master
+
+env:
+  # Set environment variables for Go
+  - PATH="/usr/local/go/bin:${PATH}"
+  - GOPATH="/go"
+
+addons:
+  apt:
+    packages:
+    - apt-transport-https
+    - wget
+    - git
+    - tree
+
+before_install:
+  - mkdir -p /go
+  - chmod 755 /go
+  - mkdir -p /tmp/ci_tests
+  - cd /tmp/ci_tests
+
+install:
+  - pwd
+
+  # install golang
+  - wget https://dl.google.com/go/go1.13.1.linux-amd64.tar.gz
+  - tar -C /usr/local -xzf go1.13.1.linux-amd64.tar.gz
+  - rm -f go1.13.1.linux-amd64.tar.gz
+
+  # Install Go packages
+  - go get github.com/google/subcommands
+  - go get golang.org/x/sync/semaphore
+  - go install github.com/google/subcommands
+  - go get github.com/dnanexus/dxda
+  - go install github.com/dnanexus/dxda
+  - go install github.com/dnanexus/dxda/cmd/dx-download-agent
+  - go get bazil.org/fuse
+  - go get golang.org/x/net/context
+
+  - go get github.com/dnanexus/dxfuse
+  - go install github.com/dnanexus/dxfuse
