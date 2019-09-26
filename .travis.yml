@@ -36,3 +36,8 @@ install:
 
 script:
   - $GOPATH/bin/dxfuse --help
+  - mkdir /tmp/mount
+  - sudo $GOPATH/bin/dxfuse /tmp/mount dxfs2_test_data &
+  - sleep 2
+  - tree /tmp/mount
+  - sudo umount /tmp/mount
