@@ -1,6 +1,6 @@
 {
-  "name": "dxfs2_correctness",
-  "summary": "check that various Unix commands work corrects on a dxfs2 mounted volume",
+  "name": "dxfuse_benchmark",
+  "summary": "streaming benchmark for dxfuse",
   "dxapi": "1.0.0",
   "version": "0.0.1",
   "inputSpec": [
@@ -11,14 +11,15 @@
     }
   ],
   "outputSpec": [
+    {
+      "name": "result",
+      "class": "array:string"
+    }
   ],
   "runSpec": {
     "interpreter": "bash",
     "file": "code.sh",
     "distribution": "Ubuntu",
-    "release": "16.04",
-    "execDepends" : [
-      {"name" : "tree", "package_manager" : "apt"}
-    ]
+    "release": "16.04"
   }
 }

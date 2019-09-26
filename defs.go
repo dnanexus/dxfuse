@@ -15,7 +15,7 @@ const (
 	HttpClientPoolSize = 4
 	LogFile            = "/var/log/dxfuse.log"
 	MaxDirSize         = 10 * 1000
-	Version            = "v0.1"
+	Version            = "v0.11"
 )
 const (
 	InodeInvalid       = 0

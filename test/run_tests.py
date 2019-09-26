@@ -98,20 +98,20 @@ def extract_results(jobs):
             print("{}, {}, {}, {}".format(i_type, parts[0], parts[1], parts[2]))
 
 def run_benchmarks(dx_proj, instance_types):
-    applet = lookup_applet("dxfs2_benchmark", dx_proj, "/applets")
+    applet = lookup_applet("dxfuse_benchmark", dx_proj, "/applets")
     jobs = launch_and_wait(dx_proj, applet, instance_types)
     extract_results(jobs)
 
 def run_correctness(dx_proj, instance_types):
-    applet = lookup_applet("dxfs2_correctness", dx_proj, "/applets")
+    applet = lookup_applet("dxfuse_correctness", dx_proj, "/applets")
     launch_and_wait(dx_proj, applet, instance_types)
 
 def run_download(dx_proj, instance_types):
-    applet = lookup_applet("dxfs2_download_only", dx_proj, "/applets")
+    applet = lookup_applet("dxfuse_download_only", dx_proj, "/applets")
     launch_and_wait(dx_proj, applet, instance_types)
 
 def main():
-    argparser = argparse.ArgumentParser(description="Run benchmarks on several instance types for dxfs2")
+    argparser = argparse.ArgumentParser(description="Run benchmarks on several instance types for dxfuse")
     argparser.add_argument("--project", help="DNAnexus project",
                            default="dxfs2_test_data")
     argparser.add_argument("--test", help="which testing suite to run [benchmark, correctness, download]",
