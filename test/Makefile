@@ -1,7 +1,13 @@
-all : dxfuse copy_all
-	dx build dxfuse_benchmark -f --destination dxfs2_test_data:/applets/dxfuse_benchmark
-	dx build dxfuse_correctness -f --destination dxfs2_test_data:/applets/dxfuse_correctness
-	dx build dxfuse_download_only -f --destination dxfs2_test_data:/applets/dxfuse_download_only
+all : aws azure
+
+aws : dxfuse copy_all
+	dx build dxfuse_benchmark -f --destination dxfuse_test_data:/applets/dxfuse_benchmark
+	dx build dxfuse_correctness -f --destination dxfuse_test_data:/applets/dxfuse_correctness
+	dx build dxfuse_download_only -f --destination dxfuse_test_data:/applets/dxfuse_download_only
+
+azure: dxfuse copy_all
+	dx build dxfuse_benchmark -f --destination dxfuse_azure_westus:/applets/dxfuse_benchmark
+	dx build dxfuse_correctness -f --destination dxfuse_azure_westus:/applets/dxfuse_correctness
 
 dxfuse : ../*.go
 	go build -o dxfuse /go/src/github.com/dnanexus/dxfuse/cmd/main.go
@@ -16,4 +22,5 @@ copy_all : dxfuse
 
 clean :
 	rm -f dxfuse
-	dx rm -f dxfs2_test_data:/applets/dxfuse_* || true
+	dx rm -f dxfuse_test_data:/applets/dxfuse_* || true
+	dx rm -f dxfuse_azure_westus:/applets/dxfuse_* || true

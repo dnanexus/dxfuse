@@ -6,6 +6,7 @@ import (
 	"log"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"bazil.org/fuse"
@@ -87,6 +88,7 @@ func (fsys *Filesys) metadataDbInitCore(txn *sql.Tx) error {
 	// (Unix time).
 	sqlStmt := `
 	CREATE TABLE data_objects (
+                kind int,
 		id text,
 		proj_id text,
                 inode bigint,
@@ -94,6 +96,7 @@ func (fsys *Filesys) metadataDbInitCore(txn *sql.Tx) error {
                 ctime bigint,
                 mtime bigint,
                 nlink int,
+                inline_data  string,
                 PRIMARY KEY (inode)
 	);
 	`
@@ -269,7 +272,7 @@ func (fsys *Filesys) lookupDataObjectShouldExist(
 	inode int64) (*File, error) {
 	// point lookup in the files table
 	sqlStmt := fmt.Sprintf(`
- 		        SELECT id,proj_id,size,ctime,mtime,nlink
+ 		        SELECT kind,id,proj_id,size,ctime,mtime,nlink,inline_data
                         FROM data_objects
 			WHERE inode = '%d';`,
 		inode)
@@ -288,7 +291,7 @@ func (fsys *Filesys) lookupDataObjectShouldExist(
 	for rows.Next() {
 		var ctime int64
 		var mtime int64
-		rows.Scan(&f.Id, &f.ProjId, &f.Size, &ctime, &mtime, &f.Nlink)
+		rows.Scan(&f.Kind,&f.Id, &f.ProjId, &f.Size, &ctime, &mtime, &f.Nlink, &f.InlineData)
 		f.Ctime = millisecToTime(ctime)
 		f.Mtime = millisecToTime(mtime)
 		numRows++
@@ -353,7 +356,7 @@ func (fsys *Filesys) directoryReadAllEntries(
 
 	// Extract information for all the files
 	sqlStmt = fmt.Sprintf(`
- 		        SELECT data_objects.id,data_objects.proj_id,data_objects.inode,data_objects.size,data_objects.ctime,data_objects.mtime,data_objects.nlink,namespace.name
+ 		        SELECT data_objects.kind,data_objects.id,data_objects.proj_id,data_objects.inode,data_objects.size,data_objects.ctime,data_objects.mtime,data_objects.nlink,data_objects.inline_data,namespace.name
                         FROM data_objects
                         JOIN namespace
                         ON data_objects.inode = namespace.inode
@@ -372,7 +375,7 @@ func (fsys *Filesys) directoryReadAllEntries(
 
 		var ctime int64
 		var mtime int64
-		rows.Scan(&f.Id, &f.ProjId, &f.Inode, &f.Size, &ctime, &mtime, &f.Nlink, &f.Name)
+		rows.Scan(&f.Kind,&f.Id, &f.ProjId, &f.Inode, &f.Size, &ctime, &mtime, &f.Nlink, &f.InlineData,&f.Name)
 		f.Ctime = millisecToTime(ctime)
 		f.Mtime = millisecToTime(mtime)
 
@@ -388,13 +391,15 @@ func (fsys *Filesys) directoryReadAllEntries(
 // dxWDL as a way to stream individual files.
 func (fsys *Filesys) createDataObject(
 	txn *sql.Tx,
+	kind int,
 	projId string,
 	objId string,
 	size int64,
 	ctime int64,
 	mtime int64,
 	parentDir string,
-	fname string) (int64, error) {
+	fname string,
+	inlineData string) (int64, error) {
 	if fsys.options.Verbose {
 		log.Printf("createDataObject %s:%s %s", projId, objId,
 			filepath.Clean(parentDir + "/" + fname))
@@ -413,8 +418,8 @@ func (fsys *Filesys) createDataObject(
 		// Create an entry for the file
 		sqlStmt := fmt.Sprintf(`
  		        INSERT INTO data_objects
-			VALUES ('%s', '%s', '%d', '%d', '%d', '%d', '%d');`,
-			objId, projId, inode, size, ctime, mtime, 1)
+			VALUES ('%d', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%s');`,
+			kind, objId, projId, inode, size, ctime, mtime, 1, inlineData)
 		if _, err := txn.Exec(sqlStmt); err != nil {
 			return 0, printErrorStack(err)
 		}
@@ -496,6 +501,46 @@ func (fsys *Filesys) setDirectoryToPopulated(txn *sql.Tx, dinode int64) error {
 	return nil
 }
 
+func kindOfFile(o DxDescribeDataObject) int {
+	kind := 0
+	if strings.HasPrefix(o.Id, "file-") {
+		kind = FK_Regular
+	} else if strings.HasPrefix(o.Id, "applet-") {
+		kind = FK_Applet
+	} else if strings.HasPrefix(o.Id, "workflow-") {
+		kind = FK_Workflow
+	} else if strings.HasPrefix(o.Id, "record-") {
+		kind = FK_Record
+	} else if strings.HasPrefix(o.Id, "database-") {
+		kind = FK_Database
+	}
+	if kind == 0 {
+		log.Printf("A data object has an unknown prefix (%s)", o.Id)
+		kind = FK_Other
+	}
+
+	// A symbolic link is a special kind of regular file
+	if kind == FK_Regular &&
+		len(o.SymlinkPath) > 0 {
+		kind = FK_Symlink
+	}
+	return kind
+}
+
+func inlineDataOfFile(kind int, o DxDescribeDataObject) string {
+	if kind == FK_Regular && len(o.SymlinkPath) > 0 {
+		// A symbolic link
+		kind = FK_Symlink
+	}
+
+	switch (kind) {
+	case FK_Symlink:
+		return o.SymlinkPath
+	default:
+		return ""
+	}
+}
+
 // Create a directory with: an i-node, files, and empty unpopulated subdirectories.
 func (fsys *Filesys) populateDir(
 	txn *sql.Tx,
@@ -521,14 +566,19 @@ func (fsys *Filesys) populateDir(
 	}
 
 	for _, o := range dxObjs {
+		kind := kindOfFile(o)
+		inlineData := inlineDataOfFile(kind, o)
+
 		_, err := fsys.createDataObject(txn,
+			kind,
 			o.ProjId,
 			o.Id,
 			o.Size,
 			o.CtimeMillisec,
 			o.MtimeMillisec,
 			dirPath,
-			o.Name)
+			o.Name,
+			inlineData)
 		if err != nil {
 			return err
 		}
@@ -1023,9 +1073,9 @@ func (fsys *Filesys) MetadataDbPopulateRoot(manifest Manifest) error {
 	// create individual files
 	for _, fl := range manifest.Files {
 		_, err := fsys.createDataObject(
-			txn, fl.ProjId, fl.FileId,
+			txn, FK_Regular, fl.ProjId, fl.FileId,
 			fl.Size, fl.CtimeMillisec, fl.MtimeMillisec,
-			fl.Parent, fl.Fname)
+			fl.Parent, fl.Fname, "")
 		if err != nil {
 			txn.Rollback()
 			return printErrorStack(err)

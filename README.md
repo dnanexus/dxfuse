@@ -5,7 +5,7 @@ storage system.
 
 [![Build Status](https://travis-ci.org/dnanexus/dxfuse.svg?branch=master)](https://travis-ci.org/dnanexus/dxfuse)
 
-**NOTE: This is a project in its early stage. We are using in carefully controlled situations on the cloud, however, it may be run from any machine with a network connection. At this point, it requires good connectivity to the DNAnexus platform. Using it elsewhere may result in sluggish behavior, or the OS unmounting the system.**
+**NOTE: This is a project in its early stage. We are using it in carefully controlled situations on the cloud, however, it may be run from any machine with a network connection. At this point, it requires good connectivity to the DNAnexus platform. Using it elsewhere may result in sluggish behavior, or the OS unmounting the filesystem.**
 
 The code uses the [FUSE](https://bazil.org/fuse/)
 library, implemented in [golang](https://golang.org). The DNAnexus
@@ -133,6 +133,11 @@ This will create the directory hierarchy:
 Note that files may be hard linked from several projects. These will appear as a single inode with
 a link count greater than one.
 
+To stop the dxfuse process do:
+```
+sudo umount MOUNT-POINT
+```
+
 ## Mac OS (OSX)
 
 For OSX you will need to install [OSXFUSE](http://osxfuse.github.com/). This is a requirement of
@@ -141,3 +146,9 @@ For OSX you will need to install [OSXFUSE](http://osxfuse.github.com/). This is 
 # Common problems
 
 If a project appears empty, or is missing files, it could be that the dnanexus token does not have permissions for it. Try to see if you can do `dx ls YOUR_PROJECT:`.
+
+
+# Known filesystem issues
+
+1. The [Bazil FUSE](https://bazil.org/fuse/) library presents symbolic links as regular files. This is something we need to explore.
+2. There is no natural match for DNAnexus applets and workflows, so they are presented as block devices. The do not behave like block devices, but the shell knows to color code them differently from files and directories.

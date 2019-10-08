@@ -7,89 +7,88 @@ set -e -o pipefail
 ######################################################################
 ## constants
 
-projName="dxfs2_test_data"
-projId="project-FbZ25gj04J9B8FJ3Gb5fVP41"
+projName="dxfuse_test_data"
 dxDirOnProject="correctness"
 
-baseDir="$HOME/dxfs2_test"
+baseDir="$HOME/dxfuse_test"
 dxTrgDir="${baseDir}/dxCopy"
 mountpoint="${baseDir}/MNT"
 
-dxfs2Dir="$mountpoint/$projName/$dxDirOnProject"
+dxfuseDir="$mountpoint/$projName/$dxDirOnProject"
 dxpyDir="${baseDir}/dxCopy/$dxDirOnProject"
 
 ######################################################################
 
 function check_tree {
-    tree -n $dxfs2Dir -o dxfs2.org.txt
+    tree -n $dxfuseDir -o dxfuse.org.txt
     tree -n $dxpyDir -o dxpy.org.txt
 
     # The first line is different, we need to get rid of it
-    tail --lines=+2 dxfs2.org.txt > dxfs2.txt
+    tail --lines=+2 dxfuse.org.txt > dxfuse.txt
     tail --lines=+2 dxpy.org.txt > dxpy.txt
 
-    diff dxpy.txt dxfs2.txt > D.txt || true
+    diff dxpy.txt dxfuse.txt > D.txt || true
     if [[ -s D.txt ]]; then
         echo "tree command was not equivalent"
         cat D.txt
         exit 1
     fi
-    rm -f dxfs2*.txt dxpy*.txt D.txt
+    rm -f dxfuse*.txt dxpy*.txt D.txt
 }
 
 function check_ls {
     d=$(pwd)
-    cd $dxfs2Dir; ls -R > $d/dxfs2.txt
+    cd $dxfuseDir; ls -R > $d/dxfuse.txt
     cd $dxpyDir; ls -R > $d/dxpy.txt
     cd $d
-    diff dxfs2.txt dxpy.txt > D.txt || true
+    diff dxfuse.txt dxpy.txt > D.txt || true
     if [[ -s D.txt ]]; then
         echo "ls -R was not equivalent"
         cat D.txt
         exit 1
     fi
-    rm -f dxfs2*.txt dxpy*.txt D.txt
+    rm -f dxfuse*.txt dxpy*.txt D.txt
 }
 
 function check_cmd_line_utils {
     d=$(pwd)
 
-    cd $dxfs2Dir
+    cd $dxfuseDir
     files=$(find . -type f)
     cd $d
 
     for f in $files; do
         echo $f
 
-        dxfs2_f=$dxfs2Dir/$f
+        dxfuse_f=$dxfuseDir/$f
         dxpy_f=$dxpyDir/$f
 
         # wc should return the same result
-        wc < $dxfs2_f > 1.txt
+        wc < $dxfuse_f > 1.txt
         wc < $dxpy_f > 2.txt
         diff 1.txt 2.txt > D.txt || true
         if [[ -s D.txt ]]; then
-            echo "wc for files $dxfs2_f $dxpy_f is not the same"
+            echo "wc for files $dxfuse_f $dxpy_f is not the same"
             cat D.txt
             exit 1
         fi
 
         # head
-        head $dxfs2_f > 1.txt
+        head $dxfuse_f > 1.txt
         head $dxpy_f > 2.txt
         diff 1.txt 2.txt > D.txt || true
         if [[ -s D.txt ]]; then
-            echo "head for files $dxfs2_f $dxpy_f is not the same"
+            echo "head for files $dxfuse_f $dxpy_f is not the same"
             cat D.txt
             exit 1
         fi
 
         # tail
-        tail $dxfs2_f > 1.txt
+        tail $dxfuse_f > 1.txt
         tail $dxpy_f > 2.txt
         diff 1.txt 2.txt > D.txt || true
         if [[ -s D.txt ]]; then
-            echo "tail for files $dxfs2_f $dxpy_f is not the same"
+            echo "tail for files $dxfuse_f $dxpy_f is not the same"
             cat D.txt
             exit 1
         fi
@@ -98,7 +97,7 @@ function check_cmd_line_utils {
 }
 
 function check_find {
-    find $dxfs2Dir -type f -name "*.conf" > 1.txt
+    find $dxfuseDir -type f -name "*.conf" > 1.txt
     find $dxpyDir -type f -name "*.conf" > 2.txt
 
     # each line starts with the directory name. those are different, so we normliaze them
@@ -123,7 +122,7 @@ function check_find {
 }
 
 function check_grep {
-    grep --directories=skip -R "stream" $dxfs2Dir/dxWDL_source_code/src > 1.txt
+    grep --directories=skip -R "stream" $dxfuseDir/dxWDL_source_code/src > 1.txt
     grep --directories=skip -R "stream" $dxpyDir/dxWDL_source_code/src > 2.txt
 
     # each line starts with the directory name. those are different, so we normliaze them
@@ -149,7 +148,7 @@ function check_grep {
 }
 
 main() {
-    # Get all the DX environment variables, so that dxfs2 can use them
+    # Get all the DX environment variables, so that dxfuse can use them
     echo "loading the dx environment"
 
     # don't leak the token to stdout
@@ -160,18 +159,18 @@ main() {
         mkdir -p $d
     done
 
-    # download with dxfs2
-    # Start the dxfs2 daemon in the background, and wait for it to initilize.
-    echo "Mounting dxfs2"
-    sudo -E dxfs2 $mountpoint $projId &
+    # download with dxfuse
+    # Start the dxfuse daemon in the background, and wait for it to initilize.
+    echo "Mounting dxfuse"
+    sudo -E dxfuse $mountpoint $DX_PROJECT_CONTEXT_ID &
     sleep 1
 
     echo "download recursively with dx download"
-    dx download --no-progress -o $dxTrgDir -r  "$projId:/$dxDirOnProject"
+    dx download --no-progress -o $dxTrgDir -r  "$DX_PROJECT_CONTEXT_ID:/$dxDirOnProject"
 
     # do not exit immediately if there are differences; we want to see the files
     # that aren't the same
-    diff -r --brief $dxpyDir $dxfs2Dir > diff.txt || true
+    diff -r --brief $dxpyDir $dxfuseDir > diff.txt || true
     if [[ -s diff.txt ]]; then
         echo "Difference in basic file structure"
         cat diff.txt
@@ -198,6 +197,6 @@ main() {
     echo "head, tail, wc"
     check_cmd_line_utils
 
-    echo "unmounting dxfs2"
+    echo "unmounting dxfuse"
     sudo umount $mountpoint
 }

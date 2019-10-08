@@ -7,40 +7,40 @@ set -e -o pipefail
 ######################################################################
 ## constants
 
-projName="dxfs2_test_data"
+projName="dxfuse_test_data"
 projId="project-FbZ25gj04J9B8FJ3Gb5fVP41"
 dxDirOnProject="correctness"
 
-baseDir="$HOME/dxfs2_test"
+baseDir="$HOME/dxfuse_test"
 dxTrgDir="${baseDir}/dxCopy"
-dxfs2TrgDir="${baseDir}/dxfs2Copy"
+dxfuseTrgDir="${baseDir}/dxfuseCopy"
 mountpoint="${baseDir}/MNT"
 
 
 ######################################################################
 
 main() {
-    # Get all the DX environment variables, so that dxfs2 can use them
+    # Get all the DX environment variables, so that dxfuse can use them
     echo "loading the dx environment"
 
     # don't leak the token to stdout
     source environment >& /dev/null
 
     # clean and make fresh directories
-    for d in $dxTrgDir $dxfs2TrgDir $mountpoint; do
+    for d in $dxTrgDir $dxfuseTrgDir $mountpoint; do
         mkdir -p $d
     done
 
-    # download with dxfs2
-    # Start the dxfs2 daemon in the background, and wait for it to initilize.
-    echo "Mounting dxfs2"
-    sudo -E dxfs2 $mountpoint $projId &
+    # download with dxfuse
+    # Start the dxfuse daemon in the background, and wait for it to initilize.
+    echo "Mounting dxfuse"
+    sudo -E dxfuse $mountpoint $projId &
 
     sleep 1
 
-    echo "copying from a dxfs2 mount point"
-    cp -r  "$mountpoint/$projName/$dxDirOnProject" $dxfs2TrgDir
-    echo "unmounting dxfs2"
+    echo "copying from a dxfuse mount point"
+    cp -r  "$mountpoint/$projName/$dxDirOnProject" $dxfuseTrgDir
+    echo "unmounting dxfuse"
     sudo umount $mountpoint
 
 
@@ -50,7 +50,7 @@ main() {
     # do not exit immediately if there are differences; we want to see the files
     # that aren't the same
     mkdir -p $HOME/out/result
-    diff -r --brief $dxTrgDir $dxfs2TrgDir > $HOME/out/result/results.txt || true
+    diff -r --brief $dxTrgDir $dxfuseTrgDir > $HOME/out/result/results.txt || true
 
     # If the diff is non empty, declare that the results
     # are not equivalent.

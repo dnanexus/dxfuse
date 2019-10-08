@@ -14,9 +14,14 @@ from dxpy.exceptions import DXJobFailureError
 
 # The list of instance types to test on. We don't want too many, because it will be expensive.
 # We are trying to take a representative from small, medium, and large instances.
-scale = {
+aws_ladder = {
     "small" : ["mem1_ssd1_x4"],
     "large" : ["mem1_ssd1_x4", "mem1_ssd1_x16", "mem3_ssd1_x32"]
+}
+
+azure_ladder = {
+    "small" : ["azure:mem1_ssd1_x4"],
+    "large" : ["azure:mem1_ssd1_x4", "azure:mem1_ssd1_x16", "azure:mem3_ssd1_x16"],
 }
 
 def lookup_applet(name, project, folder):
@@ -56,7 +61,7 @@ def get_project(project_name):
     except dxpy.DXError:
         pass
 
-    project = dxpy.find_projects(name=project_name, name_mode='glob', return_handler=True, level="VIEW")
+    project = dxpy.find_projects(name=project_name, return_handler=True, level="VIEW")
     project = [p for p in project]
     if len(project) == 0:
         print('Did not find project {0}'.format(project_name), file=sys.stderr)
@@ -72,7 +77,7 @@ def launch_and_wait(project, bench_applet, instance_types):
     jobs=[]
     print("Launching benchmark applet")
     for itype in instance_types:
-        print("intance: {}".format(itype))
+        print("instance: {}".format(itype))
         job = bench_applet.run({},
                                project=project.get_id(),
                                instance_type=itype)
@@ -113,12 +118,23 @@ def run_download(dx_proj, instance_types):
 def main():
     argparser = argparse.ArgumentParser(description="Run benchmarks on several instance types for dxfuse")
     argparser.add_argument("--project", help="DNAnexus project",
-                           default="dxfs2_test_data")
+                           default="dxfuse_test_data")
     argparser.add_argument("--test", help="which testing suite to run [benchmark, correctness, download]",
                            default="correctness")
     argparser.add_argument("--size", help="how large should the test be? [small, large]",
                            default="small")
     args = argparser.parse_args()
+    dx_proj = get_project(args.project)
+
+    # figure out which region we are operating in
+    region = dx_proj.describe()["region"]
+    scale = None
+    if region.startswith("aws:"):
+        scale = aws_ladder
+    elif region.startswith("azure"):
+        scale = azure_ladder
+    else:
+        raise Exception("unknown region {}".format(region))
 
     if args.size in scale.keys():
         instance_types = scale[args.size]
@@ -126,7 +142,6 @@ def main():
         print("Unknown size value {}".format(args.scale))
         exit(1)
 
-    dx_proj = get_project(args.project)
     if args.test == "benchmark":
         run_benchmarks(dx_proj, instance_types)
     elif args.test == "correctness":

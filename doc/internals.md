@@ -8,12 +8,14 @@ The `data_objects` table maintains information for files, applets, workflows, an
 | field name | SQL type |  description |
 | ---        | ---  |  --          |
 | inode      | bigint  | local filesystem i-node, cannot change |
+| kind       | int  | type of file: regular, symbolic link, other |
 | id         | text | The DNAx object-id |
 | proj\_id   | text |	A project id for the file |
 | size       | bigint  | size of the file in bytes |
 | ctime      | bigint  | creation time |
 | mtime      | bigint  | modification time |
 | nlink      | int     | number of hard links to this file |
+| inline\_data | string | holds the path for a symlink, may contain record data in the future |
 
 It stores `stat` information on a data object, and maps it to an
 inode.  The inode is the primary key, and it cannot change once
@@ -103,6 +105,8 @@ X.txt
 |_ 2
    |_ X.txt
 ```
+
+A symbolic link is represented as a regular file, with the link stored in the `inner\_data` field.
 
 ## Sequential Prefetch
 
