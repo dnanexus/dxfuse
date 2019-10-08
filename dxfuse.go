@@ -223,9 +223,12 @@ func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	// Add entries for Unix files, representing DNAx data objects
 	for oname, oDesc := range dxObjs {
 		var dType fuse.DirentType
-		if strings.HasPrefix(oDesc.Id, "file-") {
+		switch oDesc.Kind {
+		case FK_Regular:
 			dType = fuse.DT_File
-		} else {
+		case FK_Symlink:
+			dType = fuse.DT_Link
+		default:
 			// There is no good way to represent these
 			// in the filesystem.
 			dType = fuse.DT_Block
@@ -246,8 +249,6 @@ func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 			Name : subDirName,
 		})
 	}
-
-	// TODO: we need to add entries for '.' and '..'
 
 	// directory entries need to be sorted
 	sort.Slice(dEntries, func(i, j int) bool { return dEntries[i].Name < dEntries[j].Name })
@@ -287,16 +288,7 @@ func (f *File) Attr(ctx context.Context, a *fuse.Attr) error {
 
 var _ = fs.NodeOpener(&File{})
 
-func (f *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (fs.Handle, error) {
-	// these files are read only
-	if !req.Flags.IsReadOnly() {
-		return nil, fuse.Errno(syscall.EACCES)
-	}
-	if !strings.HasPrefix(f.Id, "file-") {
-		// can only open files. Not allowed to "open" applet, workflows, etc.
-		return nil, fuse.Errno(syscall.EPERM)
-	}
-
+func (f *File) openRegularFile(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (fs.Handle, error) {
 	// create a download URL for this file
 	const secondsInYear int = 60 * 60 * 24 * 365
 	payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
@@ -323,6 +315,33 @@ func (f *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenR
 	return fh, nil
 }
 
+func (f *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (fs.Handle, error) {
+	// these files are read only
+	if !req.Flags.IsReadOnly() {
+		return nil, fuse.Errno(syscall.EACCES)
+	}
+	switch f.Kind {
+	case FK_Regular:
+		return f.openRegularFile(ctx, req, resp)
+	case FK_Symlink:
+		// A symbolic link can use the remote URL address
+		// directly. There is no need to generate a preauthenticated
+		// URL.
+		fh := &FileHandle{
+			f : f,
+			url : f.inlineData
+		}
+		return fh, nil
+	default:
+		// these don't contain data
+		fh := &FileHandle{
+			f : f,
+			url : nil,
+		}
+		return fh, nil
+	}
+}
+
 var _ fs.Handle = (*FileHandle)(nil)
 
 var _ fs.HandleReleaser = (*FileHandle)(nil)
@@ -334,7 +353,8 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 
 var _ = fs.HandleReader(&FileHandle{})
 
-func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
+func (fh *FileHandle) readRegularFile(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
+	// This is a regular file
 	if fh.f.Size == 0 || req.Size == 0 {
 		// The file is empty
 		return nil
@@ -378,4 +398,17 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 
 	resp.Data = body
 	return nil
+}
+
+func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
+	switch fh.f.Kind {
+	case FK_Regular:
+		return fh.readRegularFile(ctx, req, resp)
+	case FK_Symlink:
+		return fh.readSymlink(ctx, req, resp)
+	default:
+		// This isn't a regular file. It is an applet/workflow/...
+		resp.Data = fmt.Sprintf("A dnanexus %s", fh.f.Id)
+		return nil
+	}
 }

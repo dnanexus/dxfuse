@@ -5,7 +5,7 @@ storage system.
 
 [![Build Status](https://travis-ci.org/dnanexus/dxfuse.svg?branch=master)](https://travis-ci.org/dnanexus/dxfuse)
 
-**NOTE: This is a project in its early stage. We are using in carefully controlled situations on the cloud, however, it may be run from any machine with a network connection. At this point, it requires good connectivity to the DNAnexus platform. Using it elsewhere may result in sluggish behavior, or the OS unmounting the system.**
+**NOTE: This is a project in its early stage. We are using it in carefully controlled situations on the cloud, however, it may be run from any machine with a network connection. At this point, it requires good connectivity to the DNAnexus platform. Using it elsewhere may result in sluggish behavior, or the OS unmounting the filesystem.**
 
 The code uses the [FUSE](https://bazil.org/fuse/)
 library, implemented in [golang](https://golang.org). The DNAnexus

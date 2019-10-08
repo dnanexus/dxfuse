@@ -18,21 +18,22 @@ const (
 // -------------------------------------------------------------------
 // Description of a DNAx data object
 type DxDescribeDataObject struct {
-	Id         string
-	ProjId     string
-	Name       string
-	Folder     string
-	Size       int64
+	Id             string
+	ProjId         string
+	Name           string
+	Folder         string
+	Size           int64
 	CtimeMillisec  int64
 	MtimeMillisec  int64
+	SymlinkPath    string
 }
 
 type DxDescribePrj struct {
-	Id           string
-	Name         string
-	Region       string
-	Version      int
-	DataUsageGiB float64
+	Id             string
+	Name           string
+	Region         string
+	Version        int
+	DataUsageGiB   float64
 	CtimeMillisec  int64
 	MtimeMillisec  int64
 }
@@ -68,6 +69,7 @@ type DxDescribeRaw struct {
 	CreatedMillisec  int64 `json:"created"`
 	ModifiedMillisec int64 `json:"modified"`
 	Size             int64 `json:"size"`
+	SymlinkPath      string `json:"symlinkPath"`
 }
 
 // Describe a large number of file-ids in one API call.
@@ -89,6 +91,8 @@ func submit(
 				"created" : true,
 				"modified" : true,
 				"size" : true,
+				"symlinkPath" : true,
+				"drive" : true,
 			},
 		},
 	}
@@ -120,6 +124,7 @@ func submit(
 			log.Printf("File %s is not closed, it is [" + descRaw.State + "], dropping")
 			continue
 		}
+		symlink := false
 		desc := DxDescribeDataObject{
 			Id :  descRaw.Id,
 			ProjId : descRaw.ProjId,
@@ -128,6 +133,7 @@ func submit(
 			Size : descRaw.Size,
 			CtimeMillisec : descRaw.CreatedMillisec,
 			MtimeMillisec : descRaw.ModifiedMillisec,
+			SymlinkPath : descRaw.SymlinkPath,
 		}
 		//fmt.Printf("%v\n", desc)
 		files[desc.Id] = desc

@@ -86,18 +86,31 @@ type Dir struct {
 var _ fs.Node = (*Dir)(nil)
 
 
+// Kinds of files
+const (
+	FK_Regular = 10
+	FK_Symlink = 11
+	FK_Applet = 12
+	FK_Workflow = 13
+	FK_Record = 14
+	FK_Database = 15
+	FK_Other = 16
+)
+
 // A Unix file can stand for any DNAx data object. For example, it could be a workflow or an applet.
 // We distinguish between them based on the Id (file-xxxx, applet-xxxx, workflow-xxxx, ...).
 type File struct {
-	Fsys     *Filesys
-	Id        string  // Required to build a download URL
-	ProjId    string  // Note: this could be a container
-	Name      string
-	Size      int64
-	Inode     int64
-	Ctime     time.Time
-	Mtime     time.Time
-	Nlink     int
+	Fsys      *Filesys
+	Kind       int     // Kind of object this is
+	Id         string  // Required to build a download URL
+	ProjId     string  // Note: this could be a container
+	Name       string
+	Size       int64
+	Inode      int64
+	Ctime      time.Time
+	Mtime      time.Time
+	Nlink      int
+	InlineData string  // holds the path for a symlink.
 }
 
 // Make sure that File implements the fs.Node interface
