@@ -146,3 +146,9 @@ For OSX you will need to install [OSXFUSE](http://osxfuse.github.com/). This is 
 # Common problems
 
 If a project appears empty, or is missing files, it could be that the dnanexus token does not have permissions for it. Try to see if you can do `dx ls YOUR_PROJECT:`.
+
+
+# Known filesystem issues
+
+1. The [Bazil FUSE](https://bazil.org/fuse/) library presents symbolic links as regular files. This is something we need to explore.
+2. There is no natural match for DNAnexus applets and workflows, so they are presented as block devices. The do not behave like block devices, but the shell knows to color code them differently from files and directories.
