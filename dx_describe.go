@@ -60,6 +60,10 @@ type DxDescribeRawTop struct {
 	Describe DxDescribeRaw `json:"describe"`
 }
 
+type DxSymLink struct {
+	Url string  `json:"object"`
+}
+
 type DxDescribeRaw struct {
 	Id               string `json:"id"`
 	ProjId           string `json:"project"`
@@ -69,7 +73,7 @@ type DxDescribeRaw struct {
 	CreatedMillisec  int64 `json:"created"`
 	ModifiedMillisec int64 `json:"modified"`
 	Size             int64 `json:"size"`
-	SymlinkPath      string `json:"symlinkPath"`
+	SymlinkPath     *DxSymLink `json:"symlinkPath,omitempty"`
 }
 
 // Describe a large number of file-ids in one API call.
@@ -124,7 +128,11 @@ func submit(
 			log.Printf("File %s is not closed, it is [" + descRaw.State + "], dropping")
 			continue
 		}
-		symlink := false
+		symlinkUrl := ""
+		if descRaw.SymlinkPath != nil {
+			symlinkUrl = descRaw.SymlinkPath.Url
+		}
+
 		desc := DxDescribeDataObject{
 			Id :  descRaw.Id,
 			ProjId : descRaw.ProjId,
@@ -133,7 +141,7 @@ func submit(
 			Size : descRaw.Size,
 			CtimeMillisec : descRaw.CreatedMillisec,
 			MtimeMillisec : descRaw.ModifiedMillisec,
-			SymlinkPath : descRaw.SymlinkPath,
+			SymlinkPath : symlinkUrl,
 		}
 		//fmt.Printf("%v\n", desc)
 		files[desc.Id] = desc

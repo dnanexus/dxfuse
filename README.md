@@ -133,6 +133,11 @@ This will create the directory hierarchy:
 Note that files may be hard linked from several projects. These will appear as a single inode with
 a link count greater than one.
 
+To stop the dxfuse process do:
+```
+sudo umount MOUNT-POINT
+```
+
 ## Mac OS (OSX)
 
 For OSX you will need to install [OSXFUSE](http://osxfuse.github.com/). This is a requirement of

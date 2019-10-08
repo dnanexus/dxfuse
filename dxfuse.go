@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -306,7 +305,7 @@ func (f *File) openRegularFile(ctx context.Context, req *fuse.OpenRequest, resp 
 
 	fh := &FileHandle{
 		f : f,
-		url: u,
+		url: &u,
 	}
 
 	// Create an entry in the prefetch table, if the file is eligable
@@ -329,7 +328,10 @@ func (f *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenR
 		// URL.
 		fh := &FileHandle{
 			f : f,
-			url : f.inlineData
+			url : &DxDownloadURL{
+				URL : f.InlineData,
+				Headers : nil,
+			},
 		}
 		return fh, nil
 	default:
@@ -353,7 +355,7 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 
 var _ = fs.HandleReader(&FileHandle{})
 
-func (fh *FileHandle) readRegularFile(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
+func (fh *FileHandle) readFile(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
 	// This is a regular file
 	if fh.f.Size == 0 || req.Size == 0 {
 		// The file is empty
@@ -403,12 +405,13 @@ func (fh *FileHandle) readRegularFile(ctx context.Context, req *fuse.ReadRequest
 func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
 	switch fh.f.Kind {
 	case FK_Regular:
-		return fh.readRegularFile(ctx, req, resp)
+		return fh.readFile(ctx, req, resp)
 	case FK_Symlink:
-		return fh.readSymlink(ctx, req, resp)
+		return fh.readFile(ctx, req, resp)
 	default:
 		// This isn't a regular file. It is an applet/workflow/...
-		resp.Data = fmt.Sprintf("A dnanexus %s", fh.f.Id)
+		msg := fmt.Sprintf("A dnanexus %s", fh.f.Id)
+		resp.Data = []byte(msg)
 		return nil
 	}
 }

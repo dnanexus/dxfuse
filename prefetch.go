@@ -551,7 +551,7 @@ func (pgs *PrefetchGlobalState) submitIoForHoles(pfm *PrefetchFileMetadata) {
 		if chunk.shouldPrefetch && !chunk.submitted {
 			pgs.ioQueue <- IoReq{
 				fh : pfm.fh,
-				url : pfm.fh.url,
+				url : *pfm.fh.url,
 				ioSize : chunk.ioSize,
 				startByte : chunk.startByte,
 				endByte : chunk.endByte,

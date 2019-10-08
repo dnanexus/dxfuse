@@ -6,6 +6,7 @@ import (
 	"log"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"bazil.org/fuse"
@@ -520,7 +521,6 @@ func kindOfFile(o DxDescribeDataObject) int {
 
 	// A symbolic link is a special kind of regular file
 	if kind == FK_Regular &&
-		o.SymlinkPath != nil &&
 		len(o.SymlinkPath) > 0 {
 		kind = FK_Symlink
 	}
@@ -539,8 +539,6 @@ func inlineDataOfFile(kind int, o DxDescribeDataObject) string {
 	default:
 		return ""
 	}
-
-	return inlineData
 }
 
 // Create a directory with: an i-node, files, and empty unpopulated subdirectories.
@@ -1075,9 +1073,9 @@ func (fsys *Filesys) MetadataDbPopulateRoot(manifest Manifest) error {
 	// create individual files
 	for _, fl := range manifest.Files {
 		_, err := fsys.createDataObject(
-			txn, fl.ProjId, fl.FileId,
+			txn, FK_Regular, fl.ProjId, fl.FileId,
 			fl.Size, fl.CtimeMillisec, fl.MtimeMillisec,
-			fl.Parent, fl.Fname)
+			fl.Parent, fl.Fname, "")
 		if err != nil {
 			txn.Rollback()
 			return printErrorStack(err)

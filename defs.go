@@ -120,7 +120,7 @@ type FileHandle struct {
 	f *File
 
 	// URL used for downloading file ranges
-	url DxDownloadURL
+	url *DxDownloadURL
 }
 
 // Utility functions
