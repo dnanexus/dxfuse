@@ -226,7 +226,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 		case FK_Regular:
 			dType = fuse.DT_File
 		case FK_Symlink:
-			dType = fuse.DT_Link
+			dType = fuse.DT_File
 		default:
 			// There is no good way to represent these
 			// in the filesystem.
