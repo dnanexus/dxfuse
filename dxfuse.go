@@ -262,7 +262,6 @@ var _ = fs.HandleReadDirAller(&Dir{})
 
 var _ = fs.NodeRequestLookuper(&Dir{})
 
-// We ignore the directory, because it is always the root of the filesystem.
 func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.LookupResponse) (fs.Node, error) {
 	dir.Fsys.mutex.Lock()
 	defer dir.Fsys.mutex.Unlock()
@@ -270,6 +269,34 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 	fullPath := filepath.Clean(dir.FullPath)
 	return dir.Fsys.MetadataDbLookupInDir(fullPath, req.Name)
 }
+
+
+var _ = fs.NodeCreater(&Dir{})
+
+// A CreateRequest asks to create and open a file (not a directory).
+func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.CreateResponse) (Node, Handle, error) {
+	fmt.Printf("name=%s  flags=%d", req.Name, uint32(req.Flags))
+
+	file, err := dir.Fsys.CreateFile(dir, req.Name)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	tmpFile := createTempFile()
+	fh := &FileHandle{
+		fKind : RW_File,
+		f : file,
+		url : nil
+		localPath : tmpFile,
+		stream : open(tmpFile, req.OpenFlags, req.Umask),
+	}
+
+	resp.Handle = fh
+	resp.Flags = req.OpenFlags
+
+	return file, HandleID(fh), nil
+}
+
 
 func (f *File) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.Size = uint64(f.Size)
@@ -304,6 +331,7 @@ func (f *File) openRegularFile(ctx context.Context, req *fuse.OpenRequest, resp 
 	json.Unmarshal(body, &u)
 
 	fh := &FileHandle{
+		fKind: RO_File,
 		f : f,
 		url: &u,
 	}
@@ -327,18 +355,22 @@ func (f *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenR
 		// directly. There is no need to generate a preauthenticated
 		// URL.
 		fh := &FileHandle{
+			fKind : RO_File,
 			f : f,
 			url : &DxDownloadURL{
 				URL : f.InlineData,
 				Headers : nil,
 			},
+			localPath : nil,
 		}
 		return fh, nil
 	default:
 		// these don't contain data
 		fh := &FileHandle{
+			fKind : RO_File,
 			f : f,
 			url : nil,
+			localPath : nil,
 		}
 		return fh, nil
 	}
@@ -414,4 +446,21 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 		resp.Data = []byte(msg)
 		return nil
 	}
+}
+
+var _ = fs.HandleFlusher(&FileHandle{})
+
+// Flush is called each time the file or directory is closed.
+// Because there can be multiple file descriptors referring to a
+// single opened file, Flush can be called multiple times.
+func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
+}
+
+// Writes to files.
+//
+// A file is created locally, and writes go to the local location. When
+// the file is closed, it becomes read only, and is then uploaded to the cloud.
+var _ = fs.HandleWriter(&FileHandle{})
+
+func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) error {
 }

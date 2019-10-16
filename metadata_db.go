@@ -1104,3 +1104,20 @@ func (fsys *Filesys) MetadataDbPopulateRoot(manifest Manifest) error {
 
 	return txn.Commit()
 }
+
+
+func (fsys *Filesys) CreateFile(dir *Dir, name string) (File, error) {
+	// Check if the directory already contains [name].
+	node, err := fsys.MetadataDbLookupInDir(dir.FullPath, name)
+	if err != nil {
+		return err
+	}
+	if node != node {
+		return fuse.EEXIST
+	}
+
+	// now we know this is a new file
+	// 1. create it on the platform
+	// 2. insert into the database
+	// 3. return a File structure
+}

@@ -1,7 +1,6 @@
 # dxfuse: a FUSE filesystem for dnanexus
 
-A filesystem that allows users read-only access to the DNAnexus
-storage system.
+A filesystem that allows users access to the DNAnexus storage system.
 
 [![Build Status](https://travis-ci.org/dnanexus/dxfuse.svg?branch=master)](https://travis-ci.org/dnanexus/dxfuse)
 
@@ -38,11 +37,12 @@ dxfuse approximates a normal POSIX filesystem, but does not always have the same
 1. Metadata like last access time are not supported
 2. Directories have approximate create/modify times. This is because DNAx does not keep such attributes for directories.
 3. Files are immutable
+4. A newly written file is located locally. When it is closed, it becomes read-only, and is uploaded to the cloud.
 
 There are several limitations currently:
 - Primarily intended for Linux, but can be used on OSX
 - Intended to operate on platform workers
-- Mounted read only
+- Can upload files, but cannot overwrite or remove files.
 - Limits directories to 10,000 elements
 
 ## Implementation

@@ -116,11 +116,24 @@ type File struct {
 // Make sure that File implements the fs.Node interface
 var _ fs.Node = (*File)(nil)
 
+// Files can be opened in read-only mode, or read-write mode.
+const (
+	RO_File = 1
+	RW_File = 2
+)
+
 type FileHandle struct {
+	fKind int
 	f *File
 
-	// URL used for downloading file ranges
+	// URL used for downloading file ranges.
+	// Used for read-only files.
 	url *DxDownloadURL
+
+	// temporary local file; used for read-write files, while
+	// they are being updated.
+	localPath *string
+	stream
 }
 
 // Utility functions
