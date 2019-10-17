@@ -77,10 +77,6 @@ type Filesys struct {
 	baseDir2ProjectId map[string]string
 	nonce *Nonce
 	tmpFileCounter uint64
-
-	// A HandleID is a number identifying an open directory or file.
-	// It only needs to be unique while the directory or file is open.
-	fileHandleCounter uint64
 }
 
 var _ fs.FS = (*Filesys)(nil)

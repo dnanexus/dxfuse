@@ -106,7 +106,6 @@ func Mount(
 		baseDir2ProjectId : make(map[string]string),
 		nonce : nonceMake(),
 		tmpFileCounter : 0,
-		fileHandleCounter : 0,
 	}
 
 	// extra debugging information from FUSE
@@ -178,17 +177,12 @@ func unmount(fsys *Filesys, dirname string) error {
 	return nil
 }
 
-/*func (fsys *Filesys) makeFileHandle() uint64 {
-	return atomic.AddUint64(&fsys.fileHandleCounter, 1)
-}*/
-
 func (fsys *Filesys) Root() (fs.Node, error) {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
 
 	return fsys.MetadataDbRoot()
 }
-
 
 func (dir *Dir) Attr(ctx context.Context, a *fuse.Attr) error {
 	// this can be retained in cache indefinitely (a year is an approximation)
@@ -291,7 +285,7 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.
 	dir.Fsys.mutex.Lock()
 	defer dir.Fsys.mutex.Unlock()
 	if dir.Fsys.options.Verbose {
-		log.Printf("name=%s flags=%d", req.Name, uint32(req.Flags))
+		log.Printf("Create(%s)", req.Name)
 	}
 
 	file, err := dir.Fsys.CreateFile(dir, req.Name)
@@ -406,9 +400,50 @@ var _ fs.Handle = (*FileHandle)(nil)
 
 var _ fs.HandleReleaser = (*FileHandle)(nil)
 
+
 func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
-	fh.f.Fsys.pgs.RemoveFileEntry(fh)
-	return nil
+	switch fh.fKind {
+
+	case RO_File:
+		// Read-only file that is accessed remotely
+		fh.f.Fsys.pgs.RemoveFileEntry(fh)
+		return nil
+
+	case RW_File:
+		// A new file created locally. We need to upload it
+		// to the platform.
+		if fh.f.Fsys.options.Verbose {
+			log.Printf("Close new file(%s)", fh.f.Name)
+		}
+
+		fInfo, err := fh.writer.Stat()
+		if err != nil {
+			return err
+		}
+
+		// flush and close the local file
+		if err := fh.writer.Sync(); err != nil {
+			return err
+		}
+		if err := fh.writer.Close(); err != nil {
+			return err
+		}
+		fh.writer = nil
+
+		// upload to the platform
+		//DxFileUpload(fh.f, fh.localPath)
+		//DxFileClose(fh.f.fsys, fh.)
+
+		// remove local file
+		os.Remove(*fh.localPath)
+		fh.localPath = nil
+
+		// update database entry
+		return fh.f.Fsys.MetadataDbUpdateFile(*fh.f, fInfo)
+
+	default:
+		panic(fmt.Sprintf("Invalid file kind %", fh.fKind))
+	}
 }
 
 var _ = fs.HandleReader(&FileHandle{})

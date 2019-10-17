@@ -2,18 +2,16 @@ package dxfuse
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"log"
 	"path/filepath"
+	"os"
 	"runtime/debug"
 	"strings"
 	"time"
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
-
-	"github.com/dnanexus/dxda"
 )
 
 
@@ -1112,18 +1110,6 @@ func (fsys *Filesys) MetadataDbPopulateRoot(manifest Manifest) error {
 	return txn.Commit()
 }
 
-type RequestNewFile struct {
-	ProjId   string `json:"project"`
-	Name     string `json:"name"`
-	Folder   string `json:"folder"`
-	Parents  bool   `json:"parents"`
-	Nonce    string `json:"nonce"`
-}
-
-type ReplyNewFile struct {
-	Id string `json:"id"`
-}
-
 // Figure out which project this folder belongs to.
 // For example,
 //  "/dxWDL_playground/A/B" -> "project-xxxx", "/A/B"
@@ -1164,47 +1150,10 @@ func (fsys *Filesys) CreateFile(dir *Dir, fname string) (*File, error) {
 
 	// now we know this is a new file
 	// 1. create it on the platform
-	var request RequestNewFile
-	request.ProjId = projId
-	request.Name = fname
-	request.Folder = folder
-	request.Parents = false
-	request.Nonce = fsys.nonce.String()
-	if fsys.options.Verbose {
-		log.Printf("%v", request)
-	}
-
-	payload, err := json.Marshal(request)
+	fileId, err := DxFileNew(fsys, projId, fname, folder)
 	if err != nil {
 		return nil, err
 	}
-	httpClient := <- fsys.httpClientPool
-	repJs, err := dxda.DxAPI(httpClient, &fsys.dxEnv, "file/new", string(payload))
-	fsys.httpClientPool <- httpClient
-	if err != nil {
-		return nil, err
-	}
-
-	var reply ReplyNewFile
-	if err := json.Unmarshal(repJs, &reply); err != nil {
-		// TODO: triage the errors
-		/*
-		InvalidInput
-		A nonce was reused in a request but some of the other inputs had changed signifying a new and different request
-
-		PermissionDenied
-		    UPLOAD access required
-		InvalidType
-		    project is not a project ID
-		ResourceNotFound
-		    The specified project is not found
-		    The route in folder does not exist, and parents is false
-	*/
-		return nil, err
-	}
-
-	// got a file ID back
-	fileId := reply.Id
 
 	// 2. insert into the database
 	txn, err := fsys.db.Begin()
@@ -1246,4 +1195,24 @@ func (fsys *Filesys) CreateFile(dir *Dir, fname string) (*File, error) {
 		InlineData : "",
 	}
 	return file, nil
+}
+
+func (fsys *Filesys) MetadataDbUpdateFile(f File, fInfo os.FileInfo) error {
+	txn, err := fsys.db.Begin()
+	if err != nil {
+		return printErrorStack(err)
+	}
+
+	modTimeMsec := fInfo.ModTime().UnixNano()/1000
+	sqlStmt := fmt.Sprintf(`
+ 		        UPDATE data_objects
+                        SET size = '%d', mtime='%d'
+			WHERE inode = '%d';`,
+		fInfo.Size(), modTimeMsec, f.Inode)
+
+	if _, err := txn.Exec(sqlStmt); err != nil {
+		txn.Rollback()
+		return printErrorStack(err)
+	}
+	return txn.Commit()
 }
