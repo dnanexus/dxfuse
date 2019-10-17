@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -75,6 +76,11 @@ func Mount(
 		log.Fatalf("error removing old database %b", err)
 	}
 
+	// Create a directory for new files
+	if _, err := os.Stat(CreatedFilesDir); os.IsNotExist(err) {
+		os.Mkdir(CreatedFilesDir, 0755)
+	}
+
 	// create a connection to the database, that will be kept open
 	db, err := sql.Open("sqlite3", DatabaseFile + "?mode=rwc")
 	if err != nil {
@@ -97,6 +103,10 @@ func Mount(
 		inodeCnt : InodeRoot + 2,
 		db : db,
 		httpClientPool : httpClientPool,
+		baseDir2ProjectId : make(map[string]string),
+		nonce : nonceMake(),
+		tmpFileCounter : 0,
+		fileHandleCounter : 0,
 	}
 
 	// extra debugging information from FUSE
@@ -123,7 +133,6 @@ func Mount(
 	c, err := fuse.Mount(
 		mountpoint,
 		fuse.AllowOther(),
-		fuse.ReadOnly(),
 		fuse.MaxReadahead(128 * 1024))
 	if err != nil {
 		return err
@@ -168,6 +177,10 @@ func unmount(fsys *Filesys, dirname string) error {
 	}
 	return nil
 }
+
+/*func (fsys *Filesys) makeFileHandle() uint64 {
+	return atomic.AddUint64(&fsys.fileHandleCounter, 1)
+}*/
 
 func (fsys *Filesys) Root() (fs.Node, error) {
 	fsys.mutex.Lock()
@@ -274,27 +287,35 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 var _ = fs.NodeCreater(&Dir{})
 
 // A CreateRequest asks to create and open a file (not a directory).
-func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.CreateResponse) (Node, Handle, error) {
-	fmt.Printf("name=%s  flags=%d", req.Name, uint32(req.Flags))
+func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.CreateResponse) (fs.Node, fs.Handle, error) {
+	dir.Fsys.mutex.Lock()
+	defer dir.Fsys.mutex.Unlock()
+	if dir.Fsys.options.Verbose {
+		log.Printf("name=%s flags=%d", req.Name, uint32(req.Flags))
+	}
 
 	file, err := dir.Fsys.CreateFile(dir, req.Name)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	tmpFile := createTempFile()
+	// Create a temporary file in a protected directory, used only
+	// by dxfuse.
+	cnt := atomic.AddUint64(&dir.Fsys.tmpFileCounter, 1)
+	tmpFilePath := fmt.Sprintf("%s/%d_%s", CreatedFilesDir, cnt, req.Name)
+	writer, err := os.OpenFile(tmpFilePath, os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		return nil, nil, err
+	}
 	fh := &FileHandle{
 		fKind : RW_File,
 		f : file,
-		url : nil
-		localPath : tmpFile,
-		stream : open(tmpFile, req.OpenFlags, req.Umask),
+		url : nil,
+		localPath : &tmpFilePath,
+		writer : writer,
 	}
 
-	resp.Handle = fh
-	resp.Flags = req.OpenFlags
-
-	return file, HandleID(fh), nil
+	return file, fh, nil
 }
 
 
@@ -334,6 +355,8 @@ func (f *File) openRegularFile(ctx context.Context, req *fuse.OpenRequest, resp 
 		fKind: RO_File,
 		f : f,
 		url: &u,
+		localPath : nil,
+		writer : nil,
 	}
 
 	// Create an entry in the prefetch table, if the file is eligable
@@ -343,7 +366,8 @@ func (f *File) openRegularFile(ctx context.Context, req *fuse.OpenRequest, resp 
 }
 
 func (f *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (fs.Handle, error) {
-	// these files are read only
+	// existing files are read only. The only way
+	// to open a file for writing, is to create a new one.
 	if !req.Flags.IsReadOnly() {
 		return nil, fuse.Errno(syscall.EACCES)
 	}
@@ -362,6 +386,7 @@ func (f *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenR
 				Headers : nil,
 			},
 			localPath : nil,
+			writer : nil,
 		}
 		return fh, nil
 	default:
@@ -371,6 +396,7 @@ func (f *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenR
 			f : f,
 			url : nil,
 			localPath : nil,
+			writer : nil,
 		}
 		return fh, nil
 	}
@@ -450,10 +476,8 @@ func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fus
 
 var _ = fs.HandleFlusher(&FileHandle{})
 
-// Flush is called each time the file or directory is closed.
-// Because there can be multiple file descriptors referring to a
-// single opened file, Flush can be called multiple times.
 func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
+	return nil
 }
 
 // Writes to files.
@@ -463,4 +487,10 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 var _ = fs.HandleWriter(&FileHandle{})
 
 func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) error {
+	if fh.writer == nil {
+		return fuse.EPERM
+	}
+	len, err := fh.writer.WriteAt(req.Data, req.Offset)
+	resp.Size = len
+	return err
 }

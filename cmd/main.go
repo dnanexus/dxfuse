@@ -18,8 +18,8 @@ var progName = filepath.Base(os.Args[0])
 
 func usage() {
 	fmt.Fprintf(os.Stderr, "usage:\n")
-	fmt.Fprintf(os.Stderr, "    %s MOUNTPOINT [options] PROJECT1 PROJECT2 ...\n", progName)
-	fmt.Fprintf(os.Stderr, "    %s MOUNTPOINT [options] manifest.json\n", progName)
+	fmt.Fprintf(os.Stderr, "    %s [options] MOUNTPOINT PROJECT1 PROJECT2 ...\n", progName)
+	fmt.Fprintf(os.Stderr, "    %s [options] MOUNTPOINT manifest.json\n", progName)
 	fmt.Fprintf(os.Stderr, "options:\n")
 	flag.PrintDefaults()
 	fmt.Fprintf(os.Stderr, "\n")

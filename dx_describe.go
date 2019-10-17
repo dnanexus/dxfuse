@@ -290,7 +290,7 @@ type ReplyDescribeProject struct {
 	Name             string `json:"name"`
 	Region           string `json:"region"`
 	Version          int    `json:"version"`
-	DataUsage        float64 `jdon:"dataUsage"`
+	DataUsage        float64 `json:"dataUsage"`
 	CreatedMillisec  int64 `json:"created"`
 	ModifiedMillisec int64 `json:"modified"`
 }

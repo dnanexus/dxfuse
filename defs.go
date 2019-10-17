@@ -2,6 +2,7 @@ package dxfuse
 
 import (
 	"database/sql"
+	"os"
 	"sync"
 	"time"
 
@@ -11,11 +12,12 @@ import (
 )
 
 const (
+	CreatedFilesDir = "/var/dxfuse/created_files"
 	DatabaseFile       = "/var/dxfuse/metadata.db"
 	HttpClientPoolSize = 4
 	LogFile            = "/var/log/dxfuse.log"
 	MaxDirSize         = 10 * 1000
-	Version            = "v0.11"
+	Version            = "v0.12"
 )
 const (
 	InodeInvalid       = 0
@@ -67,7 +69,18 @@ type Filesys struct {
 	// prefetch state for all files
 	pgs PrefetchGlobalState
 
+	// a pool of http clients, for short requests, such as file creation,
+	// or file describe.
 	httpClientPool chan(*retryablehttp.Client)
+
+	// mapping from mounted directory to project ID
+	baseDir2ProjectId map[string]string
+	nonce *Nonce
+	tmpFileCounter uint64
+
+	// A HandleID is a number identifying an open directory or file.
+	// It only needs to be unique while the directory or file is open.
+	fileHandleCounter uint64
 }
 
 var _ fs.FS = (*Filesys)(nil)
@@ -130,10 +143,10 @@ type FileHandle struct {
 	// Used for read-only files.
 	url *DxDownloadURL
 
-	// temporary local file; used for read-write files, while
-	// they are being updated.
+	// temporary local file; used for created files, while
+	// they are written to.
 	localPath *string
-	stream
+	writer *os.File
 }
 
 // Utility functions
