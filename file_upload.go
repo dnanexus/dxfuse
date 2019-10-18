@@ -79,8 +79,10 @@ func DxFileClose(
 	dxEnv *dxda.DXEnvironment,
 	fid string) error {
 
-	req := fmt.Sprintf("/%s/close", fid)
-	_, err := dxda.DxAPI(httpClient, dxEnv, req, "{}")
+	_, err := dxda.DxAPI(httpClient,
+		dxEnv,
+		fmt.Sprintf("%s/close", fid),
+		"{}")
 	if err != nil {
 		log.Printf(err.Error())
 		return err
@@ -101,7 +103,6 @@ The file has size larger than fileUploadParameters.maximumFileSize bytes
 }
 
 type RequestUploadChunk struct {
-	Id    string  `json:"id"`
 	Size  int     `json:"size"`
 	Index int     `json:"index"`
 	Md5   string  `json:"md5"`
@@ -109,7 +110,7 @@ type RequestUploadChunk struct {
 
 type ReplyUploadChunk struct {
 	Url     string            `json:"url"`
-	Expires string            `json:"expires"`
+	Expires int64             `json:"expires"`
 	Headers map[string]string `json:"headers"`
 }
 
@@ -125,18 +126,20 @@ func DxFileUploadPart(
 	chunk Chunk) error {
 
 	md5Sum := md5.Sum(chunk.data)
-	reqJson, err := json.Marshal(
-		RequestUploadChunk{
-			Size: len(chunk.data),
-			Index: chunk.index,
-			Md5: hex.EncodeToString(md5Sum[:]),
-		})
+	uploadReq := RequestUploadChunk{
+		Size: len(chunk.data),
+		Index: chunk.index,
+		Md5: hex.EncodeToString(md5Sum[:]),
+	}
+	log.Printf("%v", uploadReq)
+
+	reqJson, err := json.Marshal(uploadReq)
 	if err != nil {
 		return err
 	}
 	replyJs, err := dxda.DxAPI(httpClient,
 		dxEnv,
-		fmt.Sprintf("/%s/upload", fileId),
+		fmt.Sprintf("%s/upload", fileId),
 		string(reqJson))
 	if err != nil {
 		log.Printf(err.Error())
@@ -242,7 +245,9 @@ func (fugs *FileUploadGlobalState) uploadFileDataSequentially(
 
 	fileSize := upReq.fInfo.Size()
 	ofs := int64(0)
-	cIndex := 0
+
+	// chunk indexes start at 1 (not zero)
+	cIndex := 1
 	for ofs < fileSize {
 		chunkLen := MinInt64(ofs + upReq.partSize , fileSize)
 		buf := make([]byte, chunkLen)
@@ -285,7 +290,7 @@ func (fugs *FileUploadGlobalState) uploadIoWorker() {
 				// we need to upload an empty part, only
 				// then can we close the file
 				chunk := Chunk{
-					index: 0,
+					index: 1,
 					data : make([]byte, 0),
 				}
 				err := DxFileUploadPart(client, &fugs.fsys.dxEnv, upReq.id, chunk)
