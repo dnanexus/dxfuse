@@ -311,6 +311,9 @@ func (fugs *FileUploadGlobalState) uploadIoWorker() {
 			}
 		}
 
+		if fugs.fsys.options.Verbose {
+			log.Printf("Closing %s", upReq.id)
+		}
 		err := DxFileClose(client, &fugs.fsys.dxEnv, upReq.id)
 		if err != nil {
 			log.Printf("failed to close file %s, error = %s", upReq.id, err.Error())
