@@ -28,6 +28,15 @@ type DxDescribeDataObject struct {
 	SymlinkPath    string
 }
 
+// https://documentation.dnanexus.com/developer/api/data-containers/projects#api-method-project-xxxx-describe
+type FileUploadParameters struct {
+	MinimumPartSize      int64  `json:"minimumPartSize"`
+	MaximumPartSize      int64  `json:"maximumPartSize"`
+	EmptyLastPartAllowed bool   `json:"emptyLastPartAllowed"`
+	MaximumNumParts      int64  `json:"maximumNumParts"`
+	MaximumFileSize      int64  `json:"maximumFileSize"`
+}
+
 type DxDescribePrj struct {
 	Id             string
 	Name           string
@@ -36,6 +45,7 @@ type DxDescribePrj struct {
 	DataUsageGiB   float64
 	CtimeMillisec  int64
 	MtimeMillisec  int64
+	UploadParams   FileUploadParameters
 }
 
 // a DNAx directory. It holds files and sub-directories.
@@ -293,6 +303,7 @@ type ReplyDescribeProject struct {
 	DataUsage        float64 `json:"dataUsage"`
 	CreatedMillisec  int64 `json:"created"`
 	ModifiedMillisec int64 `json:"modified"`
+	UploadParams     FileUploadParameters  `json:"fileUploadParameters"`
 }
 
 func DxDescribeProject(
@@ -309,6 +320,7 @@ func DxDescribeProject(
 		"dataUsage" : true,
 		"created" : true,
 		"modified" : true,
+		"fileUploadParameters" : true,
 	}
 	var payload []byte
 	payload, err := json.Marshal(request)
@@ -335,6 +347,7 @@ func DxDescribeProject(
 		DataUsageGiB : reply.DataUsage,
 		CtimeMillisec : reply.CreatedMillisec,
 		MtimeMillisec : reply.ModifiedMillisec,
+		UploadParams : reply.UploadParams,
 	}
 	return &prj, nil
 }

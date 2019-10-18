@@ -104,6 +104,7 @@ func Mount(
 		db : db,
 		httpClientPool : httpClientPool,
 		baseDir2ProjectId : make(map[string]string),
+		projId2Desc : make(map[string]DxDescribePrj),
 		nonce : nonceMake(),
 		tmpFileCounter : 0,
 	}
@@ -126,6 +127,9 @@ func Mount(
 
 	// initialize prefetching state
 	fsys.pgs.Init(options.VerboseLevel)
+
+	// initialize background upload state
+	fsys.fugs.Init(fsys)
 
 	// Fuse mount
 	log.Printf("mounting dxfuse")
@@ -402,17 +406,21 @@ var _ fs.HandleReleaser = (*FileHandle)(nil)
 
 
 func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
+	fsys := fh.f.Fsys
+	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
+
 	switch fh.fKind {
 
 	case RO_File:
 		// Read-only file that is accessed remotely
-		fh.f.Fsys.pgs.RemoveFileEntry(fh)
+		fsys.pgs.RemoveFileEntry(fh)
 		return nil
 
 	case RW_File:
 		// A new file created locally. We need to upload it
 		// to the platform.
-		if fh.f.Fsys.options.Verbose {
+		if fsys.options.Verbose {
 			log.Printf("Close new file(%s)", fh.f.Name)
 		}
 
@@ -421,28 +429,50 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 			return err
 		}
 
-		// flush and close the local file
-		if err := fh.writer.Sync(); err != nil {
-			return err
-		}
-		if err := fh.writer.Close(); err != nil {
-			return err
-		}
-		fh.writer = nil
-
-		// upload to the platform
-		//DxFileUpload(fh.f, fh.localPath)
-		//DxFileClose(fh.f.fsys, fh.)
-
-		// remove local file
-		os.Remove(*fh.localPath)
-		fh.localPath = nil
-
 		// update database entry
-		return fh.f.Fsys.MetadataDbUpdateFile(*fh.f, fInfo)
+		if err := fsys.MetadataDbUpdateFile(*fh.f, fInfo); err != nil {
+			return err
+		}
+
+		if fInfo.Size() > 0 {
+			// flush and close the local file
+			if err := fh.writer.Sync(); err != nil {
+				return err
+			}
+			if err := fh.writer.Close(); err != nil {
+				return err
+			}
+			fh.writer = nil
+
+			// We leave the local file in place. This allows reading from
+			// it, without accessing the network.
+		}
+
+		// enqueue a request to upload the file
+		projDesc, ok := fsys.projId2Desc[fh.f.ProjId]
+		if !ok {
+			panic(fmt.Sprintf("project %s not found", fh.f.ProjId))
+		}
+		partSize, err := fsys.fugs.calcPartSize(projDesc.UploadParams, fInfo.Size())
+		if err != nil {
+			// There is a problem with the file size, it cannot be uploaded
+			// to the platform due to part size constraints.
+			log.Printf(err.Error())
+			return fuse.ENOTSUP
+		}
+
+		fsys.fugs.reqQueue <- UploadReq{
+			id : fh.f.Id,
+			partSize : partSize,
+			uploadParams : projDesc.UploadParams,
+			localPath : *fh.localPath,
+			fInfo : fInfo,
+		}
+
+		return nil
 
 	default:
-		panic(fmt.Sprintf("Invalid file kind %", fh.fKind))
+		panic(fmt.Sprintf("Invalid file kind %d", fh.fKind))
 	}
 }
 

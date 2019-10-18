@@ -1047,6 +1047,21 @@ func (fsys *Filesys) MetadataDbPopulateRoot(manifest Manifest) error {
 		fsys.baseDir2ProjectId[d.Dirname] = d.ProjId
 	}
 
+	// describe all the projects, we need their upload parameters
+	httpClient := <- fsys.httpClientPool
+	defer func() {
+		fsys.httpClientPool <- httpClient
+	} ()
+	for _, pId := range fsys.baseDir2ProjectId {
+		pDesc, err := DxDescribeProject(httpClient, &fsys.dxEnv, pId)
+		if err != nil {
+			log.Printf("Could not describe project %s, check permissions", pId)
+			return err
+		}
+		fsys.projId2Desc[pDesc.Id] = *pDesc
+	}
+
+
 	dirSkel, err := manifest.DirSkeleton()
 	if err != nil {
 		return err
@@ -1150,7 +1165,12 @@ func (fsys *Filesys) CreateFile(dir *Dir, fname string) (*File, error) {
 
 	// now we know this is a new file
 	// 1. create it on the platform
-	fileId, err := DxFileNew(fsys, projId, fname, folder)
+	httpClient := <- fsys.httpClientPool
+	fileId, err := DxFileNew(
+		httpClient, &fsys.dxEnv,
+		fsys.nonce.String(),
+		projId, fname, folder)
+	fsys.httpClientPool <- httpClient
 	if err != nil {
 		return nil, err
 	}

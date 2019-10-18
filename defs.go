@@ -69,12 +69,17 @@ type Filesys struct {
 	// prefetch state for all files
 	pgs PrefetchGlobalState
 
+	// background upload state
+	fugs FileUploadGlobalState
+
 	// a pool of http clients, for short requests, such as file creation,
 	// or file describe.
 	httpClientPool chan(*retryablehttp.Client)
 
 	// mapping from mounted directory to project ID
 	baseDir2ProjectId map[string]string
+	projId2Desc map[string]DxDescribePrj
+
 	nonce *Nonce
 	tmpFileCounter uint64
 }
