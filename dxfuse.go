@@ -63,7 +63,6 @@ func Mount(
 	}
 
 	fsys := &Filesys{
-		conn : nil,
 		dxEnv : dxEnv,
 		options: options,
 		uid : uint32(uid),
@@ -110,13 +109,12 @@ func Mount(
 	if err != nil {
 		return err
 	}
+
+	// close the database, and unmount the fuse filesystem when done.
 	defer c.Close()
-	fsys.conn = c
+	defer fsys.unmount(mountpoint)
 
-	// This method does not return. close the database,
-	// and unmount the fuse filesystem when done.
-	defer unmount(fsys, mountpoint)
-
+	// This method does not return
 	if err := fs.Serve(c, fsys); err != nil {
 		return err
 	}
@@ -131,7 +129,7 @@ func Mount(
 	return nil
 }
 
-func unmount(fsys *Filesys, dirname string) error {
+func (fsys *Filesys) unmount(dirname string) error {
 	// Close the sql database.
 	//
 	// If there is an error, we report it. There is nothing actionable
@@ -282,7 +280,6 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.
 		url : nil,
 		localPath : &localPath,
 		fd : writer,
-		fuseNodeID :req.Header.Node,
 	}
 
 	return file, fh, nil
@@ -414,8 +411,8 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 			return err
 		}
 		// invalidate the file metadata information, it is at its final size
-		if err := fh.f.Fsys.conn.InvalidateNode(fh.fuseNodeID, 0, 0); err != nil {
-			log.Printf("invalidate %d err=%s", fh.fuseNodeID, err.Error())
+		if err := req.Header.Conn.InvalidateNode(req.Header.Node, 0, 0); err != nil {
+			log.Printf("invalidate %d err=%s", req.Header.Node, err.Error())
 		}
 
 		// initiate a background request to upload the file to the cloud

@@ -23,8 +23,8 @@ type DxDescribeDataObject struct {
 	Name           string
 	Folder         string
 	Size           int64
-	CtimeMillisec  int64
-	MtimeMillisec  int64
+	CtimeSeconds   int64
+	MtimeSeconds   int64
 	SymlinkPath    string
 }
 
@@ -43,8 +43,8 @@ type DxDescribePrj struct {
 	Region         string
 	Version        int
 	DataUsageGiB   float64
-	CtimeMillisec  int64
-	MtimeMillisec  int64
+	CtimeSeconds   int64
+	MtimeSeconds   int64
 	UploadParams   FileUploadParameters
 }
 
@@ -149,8 +149,8 @@ func submit(
 			Name : descRaw.Name,
 			Folder : descRaw.Folder,
 			Size : descRaw.Size,
-			CtimeMillisec : descRaw.CreatedMillisec,
-			MtimeMillisec : descRaw.ModifiedMillisec,
+			CtimeSeconds : descRaw.CreatedMillisec / 1000,
+			MtimeSeconds : descRaw.ModifiedMillisec / 1000,
 			SymlinkPath : symlinkUrl,
 		}
 		//fmt.Printf("%v\n", desc)
@@ -345,8 +345,8 @@ func DxDescribeProject(
 		Region :  reply.Region,
 		Version : reply.Version,
 		DataUsageGiB : reply.DataUsage,
-		CtimeMillisec : reply.CreatedMillisec,
-		MtimeMillisec : reply.ModifiedMillisec,
+		CtimeSeconds : reply.CreatedMillisec / 1000,
+		MtimeSeconds : reply.ModifiedMillisec/ 1000,
 		UploadParams : reply.UploadParams,
 	}
 	return &prj, nil

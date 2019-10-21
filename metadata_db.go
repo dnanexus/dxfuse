@@ -61,12 +61,10 @@ func boolToInt(b bool) int {
 	return 0
 }
 
-// convert time in milliseconds since 1970, in the equivalent
+// convert time in seconds since 1-Jan 1970, to the equivalent
 // golang structure
-func millisecToTime(t int64) time.Time {
-	sec := int64(t/1000)
-	millisec := int64(t % 1000)
-	return time.Unix(sec, millisec)
+func secondsToTime(t int64) time.Time {
+	return time.Unix(t, 0)
 }
 
 // Print the error and the stack trace.
@@ -293,8 +291,8 @@ func (fsys *Filesys) lookupDataObjectShouldExist(
 		var ctime int64
 		var mtime int64
 		rows.Scan(&f.Kind,&f.Id, &f.ProjId, &f.Size, &ctime, &mtime, &f.Nlink, &f.InlineData)
-		f.Ctime = millisecToTime(ctime)
-		f.Mtime = millisecToTime(mtime)
+		f.Ctime = secondsToTime(ctime)
+		f.Mtime = secondsToTime(mtime)
 		numRows++
 	}
 	rows.Close()
@@ -349,8 +347,8 @@ func (fsys *Filesys) directoryReadAllEntries(
 			Dname : dname,
 			FullPath : filepath.Join(dirFullName, dname),
 			Inode : inode,
-			Ctime : millisecToTime(ctime),
-			Mtime : millisecToTime(mtime),
+			Ctime : secondsToTime(ctime),
+			Mtime : secondsToTime(mtime),
 		}
 	}
 	rows.Close()
@@ -377,8 +375,8 @@ func (fsys *Filesys) directoryReadAllEntries(
 		var ctime int64
 		var mtime int64
 		rows.Scan(&f.Kind,&f.Id, &f.ProjId, &f.Inode, &f.Size, &ctime, &mtime, &f.Nlink, &f.InlineData,&f.Name)
-		f.Ctime = millisecToTime(ctime)
-		f.Mtime = millisecToTime(mtime)
+		f.Ctime = secondsToTime(ctime)
+		f.Mtime = secondsToTime(mtime)
 
 		files[f.Name] = f
 	}
@@ -575,8 +573,8 @@ func (fsys *Filesys) populateDir(
 			o.ProjId,
 			o.Id,
 			o.Size,
-			o.CtimeMillisec,
-			o.MtimeMillisec,
+			o.CtimeSeconds,
+			o.MtimeSeconds,
 			dirPath,
 			o.Name,
 			inlineData)
@@ -649,8 +647,8 @@ func (fsys *Filesys) directoryReadFromDNAx(
 	ctimeApprox := ctime
 	mtimeApprox := mtime
 	for _, f := range dxDir.dataObjects {
-		ctimeApprox = MinInt64(ctimeApprox, f.CtimeMillisec)
-		mtimeApprox = MaxInt64(mtimeApprox, f.MtimeMillisec)
+		ctimeApprox = MinInt64(ctimeApprox, f.CtimeSeconds)
+		mtimeApprox = MaxInt64(mtimeApprox, f.MtimeSeconds)
 	}
 
 	// The DNAx storage system does not adhere to POSIX. Try
@@ -914,8 +912,8 @@ func (fsys *Filesys) lookupDir(
 			Dname : dname,
 			FullPath : filepath.Join(dirFullName, dname),
 			Inode : dinode,
-			Ctime : millisecToTime(ctime),
-			Mtime : millisecToTime(mtime),
+			Ctime : secondsToTime(ctime),
+			Mtime : secondsToTime(mtime),
 		}, nil
 	default:
 		panic(fmt.Sprintf("Found %d directories of the form %s/%s",
@@ -1078,11 +1076,12 @@ func (fsys *Filesys) MetadataDbPopulateRoot(manifest Manifest) error {
 	// build the supporting directory structure.
 	// We mark each directory as populated, so that the platform would not
 	// be queries.
+	nowSeconds := time.Now().Unix()
 	for _, d := range dirSkel {
 		_, err := fsys.createEmptyDir(
 			txn,
 			"", "",   // There is no backing project/folder
-			time.Now().Unix(), time.Now().Unix(),
+			nowSeconds, nowSeconds,
 			d, true)
 		if err != nil {
 			txn.Rollback()
@@ -1094,7 +1093,7 @@ func (fsys *Filesys) MetadataDbPopulateRoot(manifest Manifest) error {
 	for _, fl := range manifest.Files {
 		_, err := fsys.createDataObject(
 			txn, FK_Regular, fl.ProjId, fl.FileId,
-			fl.Size, fl.CtimeMillisec, fl.MtimeMillisec,
+			fl.Size, fl.CtimeSeconds, fl.MtimeSeconds,
 			fl.Parent, fl.Fname, "")
 		if err != nil {
 			txn.Rollback()
@@ -1108,7 +1107,7 @@ func (fsys *Filesys) MetadataDbPopulateRoot(manifest Manifest) error {
 		_, err := fsys.createEmptyDir(
 			txn,
 			d.ProjId, d.Folder,
-			d.CtimeMillisec, d.MtimeMillisec,
+			d.CtimeSeconds, d.MtimeSeconds,
 			d.Dirname, false)
 		if err != nil {
 			txn.Rollback()
@@ -1180,15 +1179,15 @@ func (fsys *Filesys) CreateFile(dir *Dir, fname string, localPath string) (*File
 	if err != nil {
 		return nil, printErrorStack(err)
 	}
-	timeMsec := time.Now().UnixNano()/1000
+	nowSeconds := time.Now().Unix()
 	inode, err := fsys.createDataObject(
 		txn,
 		FK_Regular,
 		projId,
 		fileId,
 		0,    /* the file is empty */
-		timeMsec,
-		timeMsec,
+		nowSeconds,
+		nowSeconds,
 		dir.FullPath,
 		fname,
 		localPath)
@@ -1209,8 +1208,8 @@ func (fsys *Filesys) CreateFile(dir *Dir, fname string, localPath string) (*File
 		Name : fname,
 		Size : 0,
 		Inode : inode,
-		Ctime : millisecToTime(timeMsec),
-		Mtime : millisecToTime(timeMsec),
+		Ctime : secondsToTime(nowSeconds),
+		Mtime : secondsToTime(nowSeconds),
 		Nlink : 1,
 		InlineData : localPath,
 	}
@@ -1223,12 +1222,12 @@ func (fsys *Filesys) MetadataDbUpdateFile(f File, fInfo os.FileInfo) error {
 		return printErrorStack(err)
 	}
 
-	modTimeMsec := fInfo.ModTime().UnixNano()/1000
+	modTimeSec := fInfo.ModTime().Unix()
 	sqlStmt := fmt.Sprintf(`
  		        UPDATE data_objects
                         SET size = '%d', mtime='%d'
 			WHERE inode = '%d';`,
-		fInfo.Size(), modTimeMsec, f.Inode)
+		fInfo.Size(), modTimeSec, f.Inode)
 
 	if _, err := txn.Exec(sqlStmt); err != nil {
 		txn.Rollback()
