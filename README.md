@@ -1,7 +1,6 @@
 # dxfuse: a FUSE filesystem for dnanexus
 
-A filesystem that allows users read-only access to the DNAnexus
-storage system.
+A filesystem that allows users access to the DNAnexus storage system.
 
 [![Build Status](https://travis-ci.org/dnanexus/dxfuse.svg?branch=master)](https://travis-ci.org/dnanexus/dxfuse)
 
@@ -38,11 +37,12 @@ dxfuse approximates a normal POSIX filesystem, but does not always have the same
 1. Metadata like last access time are not supported
 2. Directories have approximate create/modify times. This is because DNAx does not keep such attributes for directories.
 3. Files are immutable
+4. A newly written file is located locally. When it is closed, it becomes read-only, and is uploaded to the cloud.
 
 There are several limitations currently:
 - Primarily intended for Linux, but can be used on OSX
 - Intended to operate on platform workers
-- Mounted read only
+- Can upload files, but cannot overwrite or remove files.
 - Limits directories to 10,000 elements
 
 ## Implementation
@@ -67,26 +67,20 @@ instance types. The benchmark was *how many seconds does it take to
 download a file of size X?* The lower the number, the better. The two
 download methods were (1) `dx cat`, and (2) `cat` from a dxfuse mount point.
 
-| instance type   | method | seconds | file size |
-| ----            | ----   | ----    |  ----     |
-| mem1\_ssd1\_x4  | dx-cat | 73| 5.9G |
-| mem1\_ssd1\_x4  | dxfuse  | 74| 5.9G |
-| mem1\_ssd1\_x4  | dx-cat | 7| 705M |
-| mem1\_ssd1\_x4  | dxfuse  | 8| 705M |
-| mem1\_ssd1\_x4  | dx-cat | 3| 285M |
-| mem1\_ssd1\_x4  | dxfuse  | 4| 285M |
-| mem1\_ssd1\_x16 | dx-cat | 27| 5.9G |
-| mem1\_ssd1\_x16 | dxfuse  | 28| 5.9G |
-| mem1\_ssd1\_x16 | dx-cat | 4| 705M |
-| mem1\_ssd1\_x16 | dxfuse  | 5| 705M |
-| mem1\_ssd1\_x16 | dx-cat | 2| 285M |
-| mem1\_ssd1\_x16 | dxfuse  | 2| 285M |
-| mem3\_ssd1\_x32 | dx-cat | 25| 5.9G |
-| mem3\_ssd1\_x32 | dxfuse  | 30| 5.9G |
-| mem3\_ssd1\_x32 | dx-cat | 5| 705M |
-| mem3\_ssd1\_x32 | dxfuse  | 4| 705M |
-| mem3\_ssd1\_x32 | dx-cat | 2| 285M |
-| mem3\_ssd1\_x32 | dxfuse  | 2| 285M |
+| instance type   | dx cat (seconds) | dxfuse cat (seconds) | file size |
+| ----            | ----             | ---                  |  ----     |
+| mem1\_ssd1\_x4  | 3                | 4                    | 285M |
+| mem1\_ssd1\_x4  | 7                | 8                    | 705M |
+| mem1\_ssd1\_x4  | 73               | 74                   | 5.9G |
+|                 |                  |                      |      |
+| mem1\_ssd1\_x16 | 2                | 2                    | 285M |
+| mem1\_ssd1\_x16 | 4                | 5                    | 705M |
+| mem1\_ssd1\_x16 | 27               | 28                   | 5.9G |
+|                 |                  |                      |      |
+| mem3\_ssd1\_x32 | 2                | 2                    | 285M |
+| mem3\_ssd1\_x32 | 5                | 4                    | 705M |
+| mem3\_ssd1\_x32 | 25               | 30                   | 5.9G |
+
 
 # Building
 
@@ -150,5 +144,4 @@ If a project appears empty, or is missing files, it could be that the dnanexus t
 
 # Known filesystem issues
 
-1. The [Bazil FUSE](https://bazil.org/fuse/) library presents symbolic links as regular files. This is something we need to explore.
-2. There is no natural match for DNAnexus applets and workflows, so they are presented as block devices. The do not behave like block devices, but the shell knows to color code them differently from files and directories.
+* There is no natural match for DNAnexus applets and workflows, so they are presented as block devices. They do not behave like block devices, but the shell colors them differently from files and directories.

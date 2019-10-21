@@ -15,7 +15,7 @@ The `data_objects` table maintains information for files, applets, workflows, an
 | ctime      | bigint  | creation time |
 | mtime      | bigint  | modification time |
 | nlink      | int     | number of hard links to this file |
-| inline\_data | string | holds the path for a symlink, may contain record data in the future |
+| inline\_data | string | holds the path for a symlink, if it has a local copy, this is the path |
 
 It stores `stat` information on a data object, and maps it to an
 inode.  The inode is the primary key, and it cannot change once
@@ -121,6 +121,11 @@ asynchronous IO to fetch 4MiB of data. As long as the data
 is fully read, prefetch continues. If a file is not accessed for more
 than five minutes, or, access is outside the prefetched area, the process stops.
 
+## File upload and creation
+
+It is possible to create new files. These are written to the local disk, and uploaded when they
+are closed. Since DNAnexus files are immutable, once a file is closed, it becomes read only. The local
+copy is not erased, it is accessed when performing read IOs.
 
 ## Manifest
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"os"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -400,7 +401,7 @@ func (fsys *Filesys) createDataObject(
 	parentDir string,
 	fname string,
 	inlineData string) (int64, error) {
-	if fsys.options.Verbose {
+	if fsys.options.VerboseLevel > 1 {
 		log.Printf("createDataObject %s:%s %s", projId, objId,
 			filepath.Clean(parentDir + "/" + fname))
 	}
@@ -464,7 +465,7 @@ func (fsys *Filesys) createEmptyDir(
 	// choose unused inode number. It is on stable stoage, and will not change.
 	inode := fsys.allocInodeNum()
 	parentDir, basename := splitPath(dirPath)
-	if fsys.options.Verbose {
+	if fsys.options.VerboseLevel > 1 {
 		log.Printf("createEmptyDir %s:%s %s populated=%t",
 			projId, projFolder, dirPath, populated)
 	}
@@ -552,7 +553,7 @@ func (fsys *Filesys) populateDir(
 	dirPath string,
 	dxObjs []DxDescribeDataObject,
 	subdirs []string) error {
-	if fsys.options.Verbose {
+	if fsys.options.VerboseLevel > 1 {
 		var objNames []string
 		for _, oDesc := range dxObjs {
 			objNames = append(objNames, oDesc.Name)
@@ -561,7 +562,7 @@ func (fsys *Filesys) populateDir(
 	}
 
 	// Create a database entry for each file
-	if fsys.options.Verbose {
+	if fsys.options.VerboseLevel > 1 {
 		log.Printf("inserting files")
 	}
 
@@ -585,7 +586,7 @@ func (fsys *Filesys) populateDir(
 	}
 
 	// Create a database entry for each sub-directory
-	if fsys.options.Verbose {
+	if fsys.options.VerboseLevel > 1 {
 		log.Printf("inserting subdirs")
 	}
 	for _, subDirName := range subdirs {
@@ -602,7 +603,7 @@ func (fsys *Filesys) populateDir(
 		}
 	}
 
-	if fsys.options.Verbose {
+	if fsys.options.VerboseLevel > 1 {
 		log.Printf("setting populated for directory %s", dirPath)
 	}
 
@@ -1042,6 +1043,25 @@ func (fsys *Filesys) MetadataDbRoot() (*Dir, error) {
 func (fsys *Filesys) MetadataDbPopulateRoot(manifest Manifest) error {
 	log.Printf("Populating root directory")
 
+	for _, d := range manifest.Directories {
+		fsys.baseDir2ProjectId[d.Dirname] = d.ProjId
+	}
+
+	// describe all the projects, we need their upload parameters
+	httpClient := <- fsys.httpClientPool
+	defer func() {
+		fsys.httpClientPool <- httpClient
+	} ()
+	for _, pId := range fsys.baseDir2ProjectId {
+		pDesc, err := DxDescribeProject(httpClient, &fsys.dxEnv, pId)
+		if err != nil {
+			log.Printf("Could not describe project %s, check permissions", pId)
+			return err
+		}
+		fsys.projId2Desc[pDesc.Id] = *pDesc
+	}
+
+
 	dirSkel, err := manifest.DirSkeleton()
 	if err != nil {
 		return err
@@ -1102,5 +1122,117 @@ func (fsys *Filesys) MetadataDbPopulateRoot(manifest Manifest) error {
 		return printErrorStack(err)
 	}
 
+	return txn.Commit()
+}
+
+// Figure out which project this folder belongs to.
+// For example,
+//  "/dxWDL_playground/A/B" -> "project-xxxx", "/A/B"
+func (fsys *Filesys) projectIdAndFolder(dirname string) (string, string) {
+	for baseDir, projId := range fsys.baseDir2ProjectId {
+		if strings.HasPrefix(dirname, baseDir) {
+			folderInProject := dirname[len(baseDir) : ]
+			if !strings.HasPrefix(folderInProject, "/") {
+				// folders in DNAx have to start with a slash
+				folderInProject = "/" + folderInProject
+			}
+			return projId, folderInProject
+		}
+	}
+	panic(fmt.Sprintf("directory %s does not belong to any project", dirname))
+}
+
+func (fsys *Filesys) CreateFile(dir *Dir, fname string, localPath string) (*File, error) {
+	if fsys.options.Verbose {
+		log.Printf("CreateFile %s/%s  localPath=%s", dir.FullPath, fname, localPath)
+	}
+
+	// Check if the directory already contains [name].
+	_, err := fsys.MetadataDbLookupInDir(dir.FullPath, fname)
+	if err == nil {
+		// file already exists
+		return nil, fuse.EEXIST
+	}
+	if err != fuse.ENOENT {
+		// An error occured. We are expecting the file to -not- exist.
+		return nil, err
+	}
+
+	projId,folder := fsys.projectIdAndFolder(dir.FullPath)
+	if fsys.options.Verbose {
+		log.Printf("projId = %s", projId)
+	}
+
+	// now we know this is a new file
+	// 1. create it on the platform
+	httpClient := <- fsys.httpClientPool
+	fileId, err := DxFileNew(
+		httpClient, &fsys.dxEnv,
+		fsys.nonce.String(),
+		projId, fname, folder)
+	fsys.httpClientPool <- httpClient
+	if err != nil {
+		return nil, err
+	}
+
+	// 2. insert into the database
+	txn, err := fsys.db.Begin()
+	if err != nil {
+		return nil, printErrorStack(err)
+	}
+	timeMsec := time.Now().UnixNano()/1000
+	inode, err := fsys.createDataObject(
+		txn,
+		FK_Regular,
+		projId,
+		fileId,
+		0,    /* the file is empty */
+		timeMsec,
+		timeMsec,
+		dir.FullPath,
+		fname,
+		localPath)
+	if err != nil {
+		txn.Rollback()
+		return nil, printErrorStack(err)
+	}
+	if err := txn.Commit(); err != nil {
+		return nil, err
+	}
+
+	// 3. return a File structure
+	file := &File{
+		Fsys: fsys,
+		Kind: FK_Regular,
+		Id : fileId,
+		ProjId : projId,
+		Name : fname,
+		Size : 0,
+		Inode : inode,
+		Ctime : millisecToTime(timeMsec),
+		Mtime : millisecToTime(timeMsec),
+		Nlink : 1,
+		InlineData : localPath,
+	}
+	return file, nil
+}
+
+func (fsys *Filesys) MetadataDbUpdateFile(f File, fInfo os.FileInfo) error {
+	txn, err := fsys.db.Begin()
+	if err != nil {
+		return printErrorStack(err)
+	}
+
+	modTimeMsec := fInfo.ModTime().UnixNano()/1000
+	sqlStmt := fmt.Sprintf(`
+ 		        UPDATE data_objects
+                        SET size = '%d', mtime='%d'
+			WHERE inode = '%d';`,
+		fInfo.Size(), modTimeMsec, f.Inode)
+
+	if _, err := txn.Exec(sqlStmt); err != nil {
+		txn.Rollback()
+		return printErrorStack(err)
+	}
 	return txn.Commit()
 }

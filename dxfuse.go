@@ -4,13 +4,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
-	"os/user"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -24,37 +24,6 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-func initUid(options Options) (int,int) {
-	// This is current the root user, because the program is run under
-	// sudo privileges. The "user" variable is used only if we don't
-	// get command line uid/gid.
-	user, err := user.Current()
-	if err != nil {
-		panic(err)
-	}
-
-	// get the user ID
-	uid := options.Uid
-	if uid == -1 {
-		var err error
-		uid, err = strconv.Atoi(user.Uid)
-		if err != nil {
-			panic(err)
-		}
-	}
-
-	// get the group ID
-	gid := options.Gid
-	if gid == -1 {
-		var err error
-		gid, err = strconv.Atoi(user.Gid)
-		if err != nil {
-			panic(err)
-		}
-	}
-	return uid,gid
-}
-
 // Mount the filesystem:
 //  - setup the debug log to the FUSE kernel log (I think)
 //  - mount as read-only
@@ -62,9 +31,9 @@ func Mount(
 	mountpoint string,
 	dxEnv dxda.DXEnvironment,
 	manifest Manifest,
+	uid int,
+	gid int,
 	options Options) error {
-	uid,gid := initUid(options)
-
 	// Create a fresh SQL database
 	dbParentFolder := filepath.Dir(DatabaseFile)
 	if _, err := os.Stat(dbParentFolder); os.IsNotExist(err) {
@@ -73,6 +42,12 @@ func Mount(
 	log.Printf("Removing old version of the database (%s)", DatabaseFile)
 	if err := os.RemoveAll(DatabaseFile); err != nil {
 		log.Fatalf("error removing old database %b", err)
+	}
+
+	// Create a directory for new files
+	os.RemoveAll(CreatedFilesDir)
+	if _, err := os.Stat(CreatedFilesDir); os.IsNotExist(err) {
+		os.Mkdir(CreatedFilesDir, 0755)
 	}
 
 	// create a connection to the database, that will be kept open
@@ -88,6 +63,7 @@ func Mount(
 	}
 
 	fsys := &Filesys{
+		conn : nil,
 		dxEnv : dxEnv,
 		options: options,
 		uid : uint32(uid),
@@ -97,6 +73,10 @@ func Mount(
 		inodeCnt : InodeRoot + 2,
 		db : db,
 		httpClientPool : httpClientPool,
+		baseDir2ProjectId : make(map[string]string),
+		projId2Desc : make(map[string]DxDescribePrj),
+		nonce : nonceMake(),
+		tmpFileCounter : 0,
 	}
 
 	// extra debugging information from FUSE
@@ -118,17 +98,20 @@ func Mount(
 	// initialize prefetching state
 	fsys.pgs.Init(options.VerboseLevel)
 
+	// initialize background upload state
+	fsys.fugs.Init(fsys)
+
 	// Fuse mount
 	log.Printf("mounting dxfuse")
 	c, err := fuse.Mount(
 		mountpoint,
 		fuse.AllowOther(),
-		fuse.ReadOnly(),
 		fuse.MaxReadahead(128 * 1024))
 	if err != nil {
 		return err
 	}
 	defer c.Close()
+	fsys.conn = c
 
 	// This method does not return. close the database,
 	// and unmount the fuse filesystem when done.
@@ -175,7 +158,6 @@ func (fsys *Filesys) Root() (fs.Node, error) {
 
 	return fsys.MetadataDbRoot()
 }
-
 
 func (dir *Dir) Attr(ctx context.Context, a *fuse.Attr) error {
 	// this can be retained in cache indefinitely (a year is an approximation)
@@ -226,7 +208,7 @@ func (dir *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 		case FK_Regular:
 			dType = fuse.DT_File
 		case FK_Symlink:
-			dType = fuse.DT_Link
+			dType = fuse.DT_File
 		default:
 			// There is no good way to represent these
 			// in the filesystem.
@@ -262,7 +244,6 @@ var _ = fs.HandleReadDirAller(&Dir{})
 
 var _ = fs.NodeRequestLookuper(&Dir{})
 
-// We ignore the directory, because it is always the root of the filesystem.
 func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.LookupResponse) (fs.Node, error) {
 	dir.Fsys.mutex.Lock()
 	defer dir.Fsys.mutex.Unlock()
@@ -270,6 +251,43 @@ func (dir *Dir) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.
 	fullPath := filepath.Clean(dir.FullPath)
 	return dir.Fsys.MetadataDbLookupInDir(fullPath, req.Name)
 }
+
+
+var _ = fs.NodeCreater(&Dir{})
+
+// A CreateRequest asks to create and open a file (not a directory).
+func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.CreateResponse) (fs.Node, fs.Handle, error) {
+	dir.Fsys.mutex.Lock()
+	defer dir.Fsys.mutex.Unlock()
+
+	if dir.Fsys.options.Verbose {
+		log.Printf("Create(%s)", req.Name)
+	}
+
+	// Create a temporary file in a protected directory, used only
+	// by dxfuse.
+	cnt := atomic.AddUint64(&dir.Fsys.tmpFileCounter, 1)
+	localPath := fmt.Sprintf("%s/%d_%s", CreatedFilesDir, cnt, req.Name)
+	file, err := dir.Fsys.CreateFile(dir, req.Name, localPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	writer, err := os.OpenFile(localPath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0644)
+	if err != nil {
+		return nil, nil, err
+	}
+	fh := &FileHandle{
+		fKind : RW_File,
+		f : *file,
+		url : nil,
+		localPath : &localPath,
+		fd : writer,
+		fuseNodeID :req.Header.Node,
+	}
+
+	return file, fh, nil
+}
+
 
 func (f *File) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.Size = uint64(f.Size)
@@ -303,19 +321,41 @@ func (f *File) openRegularFile(ctx context.Context, req *fuse.OpenRequest, resp 
 	var u DxDownloadURL
 	json.Unmarshal(body, &u)
 
-	fh := &FileHandle{
-		f : f,
-		url: &u,
+	// Check if a file has a local copy. If so, return the path to the copy.
+	var fh *FileHandle
+	if f.InlineData != "" {
+		// a regular file that has a local copy
+		reader, err := os.OpenFile(f.InlineData, os.O_RDONLY, 0644)
+		if err != nil {
+			log.Printf("Could not open local file %s, err=%s", f.InlineData, err.Error())
+			return nil, err
+		}
+		fh = &FileHandle{
+			fKind: RO_LocalCopy,
+			f : *f,
+			url: nil,
+			localPath : &f.InlineData,
+			fd : reader,
+		}
+	} else {
+		fh = &FileHandle{
+			fKind: RO_Remote,
+			f : *f,
+			url: &u,
+			localPath : nil,
+			fd : nil,
+		}
 	}
 
 	// Create an entry in the prefetch table, if the file is eligable
-	f.Fsys.pgs.CreateFileEntry(fh)
+	f.Fsys.pgs.CreateStreamEntry(fh)
 
 	return fh, nil
 }
 
 func (f *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (fs.Handle, error) {
-	// these files are read only
+	// existing files are read only. The only way
+	// to open a file for writing, is to create a new one.
 	if !req.Flags.IsReadOnly() {
 		return nil, fuse.Errno(syscall.EACCES)
 	}
@@ -327,20 +367,19 @@ func (f *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenR
 		// directly. There is no need to generate a preauthenticated
 		// URL.
 		fh := &FileHandle{
-			f : f,
+			fKind : RO_Remote,
+			f : *f,
 			url : &DxDownloadURL{
 				URL : f.InlineData,
 				Headers : nil,
 			},
+			localPath : nil,
+			fd : nil,
 		}
 		return fh, nil
 	default:
-		// these don't contain data
-		fh := &FileHandle{
-			f : f,
-			url : nil,
-		}
-		return fh, nil
+		// can't open an applet/workflow/etc.
+		return nil, fuse.Errno(syscall.EACCES)
 	}
 }
 
@@ -348,14 +387,53 @@ var _ fs.Handle = (*FileHandle)(nil)
 
 var _ fs.HandleReleaser = (*FileHandle)(nil)
 
+
 func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
-	fh.f.Fsys.pgs.RemoveFileEntry(fh)
-	return nil
+	fsys := fh.f.Fsys
+	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
+
+	switch fh.fKind {
+	case RO_Remote:
+		// Read-only file that is accessed remotely
+		fsys.pgs.RemoveStreamEntry(fh)
+		return nil
+
+	case RW_File:
+		// A new file created locally. We need to upload it
+		// to the platform.
+		if fsys.options.Verbose {
+			log.Printf("Close new file(%s)", fh.f.Name)
+		}
+		fInfo, err := fh.fd.Stat()
+		if err != nil {
+			return err
+		}
+		// update database entry
+		if err := fsys.MetadataDbUpdateFile(fh.f, fInfo); err != nil {
+			return err
+		}
+		// invalidate the file metadata information, it is at its final size
+		if err := fh.f.Fsys.conn.InvalidateNode(fh.fuseNodeID, 0, 0); err != nil {
+			log.Printf("invalidate %d err=%s", fh.fuseNodeID, err.Error())
+		}
+
+		// initiate a background request to upload the file to the cloud
+		return fsys.fugs.UploadFile(*fh, fInfo)
+
+	case RO_LocalCopy:
+		// Read-only file with a local copy
+		fh.fd.Close()
+		return nil
+
+	default:
+		panic(fmt.Sprintf("Invalid file kind %d", fh.fKind))
+	}
 }
 
 var _ = fs.HandleReader(&FileHandle{})
 
-func (fh *FileHandle) readFile(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
+func (fh *FileHandle) readRemoteFile(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
 	// This is a regular file
 	if fh.f.Size == 0 || req.Size == 0 {
 		// The file is empty
@@ -405,13 +483,46 @@ func (fh *FileHandle) readFile(ctx context.Context, req *fuse.ReadRequest, resp 
 func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
 	switch fh.f.Kind {
 	case FK_Regular:
-		return fh.readFile(ctx, req, resp)
+		if fh.fKind == RO_Remote {
+			return fh.readRemoteFile(ctx, req, resp)
+		}
+		// read from the local copy
+		buf := make([]byte, req.Size)
+		n, err := fh.fd.ReadAt(buf, req.Offset)
+		if err == io.ErrUnexpectedEOF || err == io.EOF {
+			err = nil
+		}
+		resp.Data = buf[:n]
+		return err
+
 	case FK_Symlink:
-		return fh.readFile(ctx, req, resp)
+		return fh.readRemoteFile(ctx, req, resp)
+
 	default:
 		// This isn't a regular file. It is an applet/workflow/...
 		msg := fmt.Sprintf("A dnanexus %s", fh.f.Id)
 		resp.Data = []byte(msg)
 		return nil
 	}
+}
+
+var _ = fs.HandleFlusher(&FileHandle{})
+
+func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
+	return nil
+}
+
+// Writes to files.
+//
+// A file is created locally, and writes go to the local location. When
+// the file is closed, it becomes read only, and is then uploaded to the cloud.
+var _ = fs.HandleWriter(&FileHandle{})
+
+func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) error {
+	if fh.fd == nil {
+		return fuse.EPERM
+	}
+	len, err := fh.fd.WriteAt(req.Data, req.Offset)
+	resp.Size = len
+	return err
 }

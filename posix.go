@@ -91,7 +91,7 @@ func makeCut(dxObjs []DxDescribeDataObject) ([]DxDescribeDataObject, []DxDescrib
 // 1. Keep directory names fixed
 // 2. Change file names to not collide with directories, or with each other.
 func PosixFixDir(fsys *Filesys, dxFolder *DxFolder) (*PosixDir, error) {
-	if fsys.options.Verbose {
+	if fsys.options.VerboseLevel > 1 {
 		log.Printf("PosixFixDir %s #objects=%d #subdirs=%d",
 			dxFolder.path,
 			len(dxFolder.dataObjects),
@@ -119,7 +119,7 @@ func PosixFixDir(fsys *Filesys, dxFolder *DxFolder) (*PosixDir, error) {
 
 		subdirs = append(subdirs, filepath.Base(subDirName))
 	}
-	if fsys.options.Verbose {
+	if fsys.options.VerboseLevel > 1 {
 		log.Printf("subdirs = %v", subdirs)
 	}
 
@@ -153,7 +153,7 @@ func PosixFixDir(fsys *Filesys, dxFolder *DxFolder) (*PosixDir, error) {
 		fauxDir := chooseFauxDirName(usedSubdirNames, &fauxDirCounter)
 		fauxSubdirs[fauxDir] = uniqueObjs
 
-		if fsys.options.Verbose {
+		if fsys.options.VerboseLevel > 1 {
 			log.Printf(fmt.Sprintf("fauxDir=%s  len(remainingObjs)=%d  len(uniqueObjs)=%d",
 				fauxDir, len(notChosenThisTime), len(uniqueObjs)))
 		}

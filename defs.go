@@ -2,20 +2,23 @@ package dxfuse
 
 import (
 	"database/sql"
+	"os"
 	"sync"
 	"time"
 
+	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
 	"github.com/dnanexus/dxda"
 	"github.com/hashicorp/go-retryablehttp"
 )
 
 const (
+	CreatedFilesDir = "/var/dxfuse/created_files"
 	DatabaseFile       = "/var/dxfuse/metadata.db"
 	HttpClientPoolSize = 4
 	LogFile            = "/var/log/dxfuse.log"
 	MaxDirSize         = 10 * 1000
-	Version            = "v0.11"
+	Version            = "v0.12"
 )
 const (
 	InodeInvalid       = 0
@@ -38,12 +41,13 @@ type Options struct {
 	DebugFuse      bool
 	Verbose        bool
 	VerboseLevel   int
-	Uid            int
-	Gid            int
 }
 
 
 type Filesys struct {
+	// fuse connection to the kernel
+	conn  *fuse.Conn
+
 	// configuration information for accessing dnanexus servers
 	dxEnv dxda.DXEnvironment
 
@@ -67,7 +71,19 @@ type Filesys struct {
 	// prefetch state for all files
 	pgs PrefetchGlobalState
 
+	// background upload state
+	fugs FileUploadGlobalState
+
+	// a pool of http clients, for short requests, such as file creation,
+	// or file describe.
 	httpClientPool chan(*retryablehttp.Client)
+
+	// mapping from mounted directory to project ID
+	baseDir2ProjectId map[string]string
+	projId2Desc map[string]DxDescribePrj
+
+	nonce *Nonce
+	tmpFileCounter uint64
 }
 
 var _ fs.FS = (*Filesys)(nil)
@@ -110,17 +126,39 @@ type File struct {
 	Ctime      time.Time
 	Mtime      time.Time
 	Nlink      int
-	InlineData string  // holds the path for a symlink.
+
+	// for a symlink, it holds the path.
+	// For a regular file, a path to a local copy (if any).
+	InlineData string
 }
 
 // Make sure that File implements the fs.Node interface
 var _ fs.Node = (*File)(nil)
 
-type FileHandle struct {
-	f *File
+// Files can be opened in read-only mode, or read-write mode.
+const (
+	RO_Remote = 1     // read only file that is on the cloud
+	RW_File = 2       // newly created file
+	RO_LocalCopy = 3  // read only file that has a local copy
+)
 
-	// URL used for downloading file ranges
+type FileHandle struct {
+	fKind int
+	f File
+
+	// URL used for downloading file ranges.
+	// Used for read-only files.
 	url *DxDownloadURL
+
+	// Local file copy, may be empty.
+	localPath *string
+
+	// 1. Used for reading from an immutable local copy
+	// 2. Used for writing to newly created files.
+	fd *os.File
+
+	// Used for handling fuse cache invalidation
+	fuseNodeID fuse.NodeID
 }
 
 // Utility functions
