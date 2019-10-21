@@ -124,7 +124,10 @@ type File struct {
 	Ctime      time.Time
 	Mtime      time.Time
 	Nlink      int
-	InlineData string  // holds the path for a symlink.
+
+	// for a symlink, it holds the path.
+	// For a regular file, a path to a local copy (if any).
+	InlineData string
 }
 
 // Make sure that File implements the fs.Node interface
@@ -132,22 +135,25 @@ var _ fs.Node = (*File)(nil)
 
 // Files can be opened in read-only mode, or read-write mode.
 const (
-	RO_File = 1
-	RW_File = 2
+	RO_Remote = 1     // read only file that is on the cloud
+	RW_File = 2       // newly created file
+	RO_LocalCopy = 3  // read only file that has a local copy
 )
 
 type FileHandle struct {
 	fKind int
-	f *File
+	f File
 
 	// URL used for downloading file ranges.
 	// Used for read-only files.
 	url *DxDownloadURL
 
-	// temporary local file; used for created files, while
-	// they are written to.
+	// Local file copy, may be empty.
 	localPath *string
-	writer *os.File
+
+	// 1. Used for reading from an immutable local copy
+	// 2. Used for writing to newly created files.
+	fd *os.File
 }
 
 // Utility functions

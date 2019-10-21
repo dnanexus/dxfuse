@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/user"
@@ -288,29 +289,29 @@ var _ = fs.NodeCreater(&Dir{})
 func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.CreateResponse) (fs.Node, fs.Handle, error) {
 	dir.Fsys.mutex.Lock()
 	defer dir.Fsys.mutex.Unlock()
+
 	if dir.Fsys.options.Verbose {
 		log.Printf("Create(%s)", req.Name)
-	}
-
-	file, err := dir.Fsys.CreateFile(dir, req.Name)
-	if err != nil {
-		return nil, nil, err
 	}
 
 	// Create a temporary file in a protected directory, used only
 	// by dxfuse.
 	cnt := atomic.AddUint64(&dir.Fsys.tmpFileCounter, 1)
-	tmpFilePath := fmt.Sprintf("%s/%d_%s", CreatedFilesDir, cnt, req.Name)
-	writer, err := os.OpenFile(tmpFilePath, os.O_RDWR|os.O_CREATE, 0644)
+	localPath := fmt.Sprintf("%s/%d_%s", CreatedFilesDir, cnt, req.Name)
+	file, err := dir.Fsys.CreateFile(dir, req.Name, localPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	writer, err := os.OpenFile(localPath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0644)
 	if err != nil {
 		return nil, nil, err
 	}
 	fh := &FileHandle{
 		fKind : RW_File,
-		f : file,
+		f : *file,
 		url : nil,
-		localPath : &tmpFilePath,
-		writer : writer,
+		localPath : &localPath,
+		fd : writer,
 	}
 
 	return file, fh, nil
@@ -349,12 +350,30 @@ func (f *File) openRegularFile(ctx context.Context, req *fuse.OpenRequest, resp 
 	var u DxDownloadURL
 	json.Unmarshal(body, &u)
 
-	fh := &FileHandle{
-		fKind: RO_File,
-		f : f,
-		url: &u,
-		localPath : nil,
-		writer : nil,
+	// Check if a file has a local copy. If so, return the path to the copy.
+	var fh *FileHandle
+	if f.InlineData != "" {
+		// a regular file that has a local copy
+		reader, err := os.OpenFile(f.InlineData, os.O_RDONLY, 0644)
+		if err != nil {
+			log.Printf("Could not open local file %s, err=%s", f.InlineData, err.Error())
+			return nil, err
+		}
+		fh = &FileHandle{
+			fKind: RO_LocalCopy,
+			f : *f,
+			url: nil,
+			localPath : &f.InlineData,
+			fd : reader,
+		}
+	} else {
+		fh = &FileHandle{
+			fKind: RO_Remote,
+			f : *f,
+			url: &u,
+			localPath : nil,
+			fd : nil,
+		}
 	}
 
 	// Create an entry in the prefetch table, if the file is eligable
@@ -377,26 +396,19 @@ func (f *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenR
 		// directly. There is no need to generate a preauthenticated
 		// URL.
 		fh := &FileHandle{
-			fKind : RO_File,
-			f : f,
+			fKind : RO_Remote,
+			f : *f,
 			url : &DxDownloadURL{
 				URL : f.InlineData,
 				Headers : nil,
 			},
 			localPath : nil,
-			writer : nil,
+			fd : nil,
 		}
 		return fh, nil
 	default:
-		// these don't contain data
-		fh := &FileHandle{
-			fKind : RO_File,
-			f : f,
-			url : nil,
-			localPath : nil,
-			writer : nil,
-		}
-		return fh, nil
+		// can't open an applet/workflow/etc.
+		return nil, fuse.Errno(syscall.EACCES)
 	}
 }
 
@@ -411,8 +423,7 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 	defer fsys.mutex.Unlock()
 
 	switch fh.fKind {
-
-	case RO_File:
+	case RO_Remote:
 		// Read-only file that is accessed remotely
 		fsys.pgs.RemoveFileEntry(fh)
 		return nil
@@ -423,52 +434,20 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 		if fsys.options.Verbose {
 			log.Printf("Close new file(%s)", fh.f.Name)
 		}
-
-		fInfo, err := fh.writer.Stat()
+		fInfo, err := fh.fd.Stat()
 		if err != nil {
 			return err
 		}
-
 		// update database entry
-		if err := fsys.MetadataDbUpdateFile(*fh.f, fInfo); err != nil {
+		if err := fsys.MetadataDbUpdateFile(fh.f, fInfo); err != nil {
 			return err
 		}
+		// initiate a background request to upload the file to the cloud
+		return fsys.fugs.UploadFile(*fh, fInfo)
 
-		if fInfo.Size() > 0 {
-			// flush and close the local file
-			if err := fh.writer.Sync(); err != nil {
-				return err
-			}
-			if err := fh.writer.Close(); err != nil {
-				return err
-			}
-			fh.writer = nil
-
-			// We leave the local file in place. This allows reading from
-			// it, without accessing the network.
-		}
-
-		// enqueue a request to upload the file
-		projDesc, ok := fsys.projId2Desc[fh.f.ProjId]
-		if !ok {
-			panic(fmt.Sprintf("project %s not found", fh.f.ProjId))
-		}
-		partSize, err := fsys.fugs.calcPartSize(projDesc.UploadParams, fInfo.Size())
-		if err != nil {
-			// There is a problem with the file size, it cannot be uploaded
-			// to the platform due to part size constraints.
-			log.Printf(err.Error())
-			return fuse.ENOTSUP
-		}
-
-		fsys.fugs.reqQueue <- UploadReq{
-			id : fh.f.Id,
-			partSize : partSize,
-			uploadParams : projDesc.UploadParams,
-			localPath : *fh.localPath,
-			fInfo : fInfo,
-		}
-
+	case RO_LocalCopy:
+		// Read-only file with a local copy
+		fh.fd.Close()
 		return nil
 
 	default:
@@ -478,7 +457,7 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 
 var _ = fs.HandleReader(&FileHandle{})
 
-func (fh *FileHandle) readFile(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
+func (fh *FileHandle) readRemoteFile(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
 	// This is a regular file
 	if fh.f.Size == 0 || req.Size == 0 {
 		// The file is empty
@@ -528,9 +507,21 @@ func (fh *FileHandle) readFile(ctx context.Context, req *fuse.ReadRequest, resp 
 func (fh *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
 	switch fh.f.Kind {
 	case FK_Regular:
-		return fh.readFile(ctx, req, resp)
+		if fh.fKind == RO_Remote {
+			return fh.readRemoteFile(ctx, req, resp)
+		}
+		// read from the local copy
+		buf := make([]byte, req.Size)
+		n, err := fh.fd.ReadAt(buf, req.Offset)
+		if err == io.ErrUnexpectedEOF || err == io.EOF {
+			err = nil
+		}
+		resp.Data = buf[:n]
+		return err
+
 	case FK_Symlink:
-		return fh.readFile(ctx, req, resp)
+		return fh.readRemoteFile(ctx, req, resp)
+
 	default:
 		// This isn't a regular file. It is an applet/workflow/...
 		msg := fmt.Sprintf("A dnanexus %s", fh.f.Id)
@@ -552,10 +543,10 @@ func (fh *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 var _ = fs.HandleWriter(&FileHandle{})
 
 func (fh *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *fuse.WriteResponse) error {
-	if fh.writer == nil {
+	if fh.fd == nil {
 		return fuse.EPERM
 	}
-	len, err := fh.writer.WriteAt(req.Data, req.Offset)
+	len, err := fh.fd.WriteAt(req.Data, req.Offset)
 	resp.Size = len
 	return err
 }

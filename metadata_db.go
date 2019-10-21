@@ -1142,9 +1142,9 @@ func (fsys *Filesys) projectIdAndFolder(dirname string) (string, string) {
 	panic(fmt.Sprintf("directory %s does not belong to any project", dirname))
 }
 
-func (fsys *Filesys) CreateFile(dir *Dir, fname string) (*File, error) {
+func (fsys *Filesys) CreateFile(dir *Dir, fname string, localPath string) (*File, error) {
 	if fsys.options.Verbose {
-		log.Printf("CreateFile %s/%s", dir.FullPath, fname)
+		log.Printf("CreateFile %s/%s  localPath=%s", dir.FullPath, fname, localPath)
 	}
 
 	// Check if the directory already contains [name].
@@ -1191,7 +1191,7 @@ func (fsys *Filesys) CreateFile(dir *Dir, fname string) (*File, error) {
 		timeMsec,
 		dir.FullPath,
 		fname,
-		"")
+		localPath)
 	if err != nil {
 		txn.Rollback()
 		return nil, printErrorStack(err)
@@ -1212,7 +1212,7 @@ func (fsys *Filesys) CreateFile(dir *Dir, fname string) (*File, error) {
 		Ctime : millisecToTime(timeMsec),
 		Mtime : millisecToTime(timeMsec),
 		Nlink : 1,
-		InlineData : "",
+		InlineData : localPath,
 	}
 	return file, nil
 }

@@ -9,6 +9,8 @@ import (
 	"log"
 	"os"
 
+	"bazil.org/fuse"
+
 	"github.com/dnanexus/dxda"
 	"github.com/hashicorp/go-retryablehttp"
 )
@@ -234,8 +236,8 @@ func (fugs *FileUploadGlobalState) calcPartSize(param FileUploadParameters, file
 }
 
 func (fugs *FileUploadGlobalState) uploadFileDataSequentially(
-	upReq UploadReq,
-	httpClient *retryablehttp.Client) error {
+	httpClient *retryablehttp.Client,
+	upReq UploadReq) error {
 
 	fReader, err := os.OpenFile(upReq.localPath, os.O_RDONLY, os.ModeExclusive)
 	if err != nil {
@@ -272,6 +274,36 @@ func (fugs *FileUploadGlobalState) uploadFileDataSequentially(
 	return nil
 }
 
+func (fugs *FileUploadGlobalState) createEmptyFile(
+	httpClient *retryablehttp.Client,
+	upReq UploadReq) {
+	// The file is empty
+	if upReq.uploadParams.EmptyLastPartAllowed {
+		// we need to upload an empty part, only
+		// then can we close the file
+		chunk := Chunk{
+			index: 1,
+			data : make([]byte, 0),
+		}
+		err := DxFileUploadPart(httpClient, &fugs.fsys.dxEnv, upReq.id, chunk)
+		if err != nil {
+			log.Printf("error uploading empty chunk to file %s, error = %s",
+				upReq.id, err.Error())
+			return
+		}
+	} else {
+		// The file can have no parts.
+	}
+
+	if fugs.fsys.options.Verbose {
+		log.Printf("Closing %s", upReq.id)
+	}
+	err := DxFileClose(httpClient, &fugs.fsys.dxEnv, upReq.id)
+	if err != nil {
+		log.Printf("failed to close file %s, error = %s", upReq.id, err.Error())
+	}
+}
+
 func (fugs *FileUploadGlobalState) uploadIoWorker() {
 	// A fixed http client. The idea is to be able to reuse http connections.
 	client := dxda.NewHttpClient(true)
@@ -285,30 +317,15 @@ func (fugs *FileUploadGlobalState) uploadIoWorker() {
 		}
 
 		if fileSize == 0 {
-			// The file is empty
-			if upReq.uploadParams.EmptyLastPartAllowed {
-				// we need to upload an empty part, only
-				// then can we close the file
-				chunk := Chunk{
-					index: 1,
-					data : make([]byte, 0),
-				}
-				err := DxFileUploadPart(client, &fugs.fsys.dxEnv, upReq.id, chunk)
-				if err != nil {
-					log.Printf("error uploading empty chunk to file %s, error = %s",
-						upReq.id, err.Error())
-					continue
-				}
-			} else {
-				// no need to upload any parts, we
-				// can just close the file
-			}
-		} else {
-			// loop over the parts, and upload them
-			if err := fugs.uploadFileDataSequentially(upReq, client); err != nil {
-				log.Printf("upload error to file %s, error = %s", upReq.id, err.Error())
-				continue
-			}
+			// Create an empty file, and continue to the next request
+			fugs.createEmptyFile(client, upReq)
+			continue
+		}
+
+		// loop over the parts, and upload them
+		if err := fugs.uploadFileDataSequentially(client, upReq); err != nil {
+			log.Printf("upload error to file %s, error = %s", upReq.id, err.Error())
+			continue
 		}
 
 		if fugs.fsys.options.Verbose {
@@ -319,4 +336,45 @@ func (fugs *FileUploadGlobalState) uploadIoWorker() {
 			log.Printf("failed to close file %s, error = %s", upReq.id, err.Error())
 		}
 	}
+}
+
+// enqueue a request to upload the file. This will happen in the background. Since
+// we don't erase the local file, there is no rush.
+func (fugs *FileUploadGlobalState) UploadFile(fh FileHandle, fInfo os.FileInfo) error {
+	if fInfo.Size() > 0 {
+		// flush and close the local file
+		if err := fh.fd.Sync(); err != nil {
+			return err
+		}
+		if err := fh.fd.Close(); err != nil {
+			return err
+		}
+		fh.fd = nil
+
+		// We leave the local file in place. This allows reading from
+		// it, without accessing the network.
+	}
+
+	projDesc, ok := fugs.fsys.projId2Desc[fh.f.ProjId]
+	if !ok {
+		panic(fmt.Sprintf("project %s not found", fh.f.ProjId))
+	}
+
+	partSize, err := fugs.calcPartSize(projDesc.UploadParams, fInfo.Size())
+	if err != nil {
+		log.Printf(`
+There is a problem with the file size, it cannot be uploaded
+to the platform due to part size constraints. Error=%s`,
+			err.Error())
+		return fuse.ENOTSUP
+	}
+
+	fugs.reqQueue <- UploadReq{
+		id : fh.f.Id,
+		partSize : partSize,
+		uploadParams : projDesc.UploadParams,
+		localPath : fh.f.InlineData,
+		fInfo : fInfo,
+	}
+	return nil
 }
