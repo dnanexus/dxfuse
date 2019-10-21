@@ -355,7 +355,7 @@ func (pgs *PrefetchGlobalState) newPrefetchFileMetadata(fh *FileHandle) *Prefetc
 	return &entry
 }
 
-func (pgs *PrefetchGlobalState) CreateFileEntry(fh *FileHandle) {
+func (pgs *PrefetchGlobalState) CreateStreamEntry(fh *FileHandle) {
 	pgs.mutex.Lock()
 	defer pgs.mutex.Unlock()
 
@@ -371,18 +371,18 @@ func (pgs *PrefetchGlobalState) CreateFileEntry(fh *FileHandle) {
 	}
 
 	if pgs.verbose {
-		log.Printf("prefetch: CreateFileEntry %s", fh.f.Name)
+		log.Printf("prefetch: CreateStreamEntry %s", fh.f.Name)
 	}
 	pgs.files[fh] = pgs.newPrefetchFileMetadata(fh)
 }
 
-func (pgs *PrefetchGlobalState) RemoveFileEntry(fh *FileHandle) {
+func (pgs *PrefetchGlobalState) RemoveStreamEntry(fh *FileHandle) {
 	pgs.mutex.Lock()
 	defer pgs.mutex.Unlock()
 
 	if pfm, ok := pgs.files[fh]; ok {
 		if pgs.verbose {
-			log.Printf("prefetch: RemoveFileEntry %s", fh.f.Name)
+			log.Printf("prefetch: RemoveStreamEntry %s", fh.f.Name)
 		}
 
 		// wake up any waiting synchronous user IOs
@@ -750,7 +750,7 @@ func (pgs *PrefetchGlobalState) CacheLookup(fh *FileHandle, startOfs int64, endO
 		pfm := pgs.files[fh]
 		pgs.mutex.Unlock()
 		if pfm != nil {
-			pgs.RemoveFileEntry(pfm.fh)
+			pgs.RemoveStreamEntry(pfm.fh)
 		}
 		return nil
 

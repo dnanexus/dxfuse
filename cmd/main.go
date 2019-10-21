@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/user"
 	"path/filepath"
-	//"runtime"
+	"strconv"
 	"strings"
 
 	// The dxda package has the get-environment code
@@ -60,6 +61,35 @@ func initLog() *os.File {
 	return f
 }
 
+func initUid(uid int, gid int) (int,int) {
+	// This is current the root user, because the program is run under
+	// sudo privileges. The "user" variable is used only if we don't
+	// get command line uid/gid.
+	user, err := user.Current()
+	if err != nil {
+		panic(err)
+	}
+
+	// get the user ID
+	if uid == -1 {
+		var err error
+		uid, err = strconv.Atoi(user.Uid)
+		if err != nil {
+			panic(err)
+		}
+	}
+
+	// get the group ID
+	if gid == -1 {
+		var err error
+		gid, err = strconv.Atoi(user.Gid)
+		if err != nil {
+			panic(err)
+		}
+	}
+	return uid,gid
+}
+
 func main() {
 	flag.Usage = usage
 	flag.Parse()
@@ -85,8 +115,6 @@ func main() {
 		DebugFuse: *debugFuseFlag,
 		Verbose : *verbose > 0,
 		VerboseLevel : *verbose,
-		Uid : *uid,
-		Gid : *gid,
 	}
 
 	dxEnv, _, err := dxda.GetDxEnvironment()
@@ -148,7 +176,9 @@ result in the filesystem freezing, or being unmounted.`)
 		}
 	}
 
-	if err := dxfuse.Mount(mountpoint, dxEnv, *manifest, options); err != nil {
+	uid,gid := initUid(*uid, *gid)
+
+	if err := dxfuse.Mount(mountpoint, dxEnv, *manifest, uid, gid, options); err != nil {
 		fmt.Println("Error: " + err.Error())
 	}
 }

@@ -7,10 +7,8 @@ import (
 	"io"
 	"log"
 	"os"
-	"os/user"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -26,37 +24,6 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-func initUid(options Options) (int,int) {
-	// This is current the root user, because the program is run under
-	// sudo privileges. The "user" variable is used only if we don't
-	// get command line uid/gid.
-	user, err := user.Current()
-	if err != nil {
-		panic(err)
-	}
-
-	// get the user ID
-	uid := options.Uid
-	if uid == -1 {
-		var err error
-		uid, err = strconv.Atoi(user.Uid)
-		if err != nil {
-			panic(err)
-		}
-	}
-
-	// get the group ID
-	gid := options.Gid
-	if gid == -1 {
-		var err error
-		gid, err = strconv.Atoi(user.Gid)
-		if err != nil {
-			panic(err)
-		}
-	}
-	return uid,gid
-}
-
 // Mount the filesystem:
 //  - setup the debug log to the FUSE kernel log (I think)
 //  - mount as read-only
@@ -64,9 +31,9 @@ func Mount(
 	mountpoint string,
 	dxEnv dxda.DXEnvironment,
 	manifest Manifest,
+	uid int,
+	gid int,
 	options Options) error {
-	uid,gid := initUid(options)
-
 	// Create a fresh SQL database
 	dbParentFolder := filepath.Dir(DatabaseFile)
 	if _, err := os.Stat(dbParentFolder); os.IsNotExist(err) {
@@ -78,6 +45,7 @@ func Mount(
 	}
 
 	// Create a directory for new files
+	os.RemoveAll(CreatedFilesDir)
 	if _, err := os.Stat(CreatedFilesDir); os.IsNotExist(err) {
 		os.Mkdir(CreatedFilesDir, 0755)
 	}
@@ -95,6 +63,7 @@ func Mount(
 	}
 
 	fsys := &Filesys{
+		conn : nil,
 		dxEnv : dxEnv,
 		options: options,
 		uid : uint32(uid),
@@ -142,6 +111,7 @@ func Mount(
 		return err
 	}
 	defer c.Close()
+	fsys.conn = c
 
 	// This method does not return. close the database,
 	// and unmount the fuse filesystem when done.
@@ -312,6 +282,7 @@ func (dir *Dir) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.
 		url : nil,
 		localPath : &localPath,
 		fd : writer,
+		fuseNodeID :req.Header.Node,
 	}
 
 	return file, fh, nil
@@ -377,7 +348,7 @@ func (f *File) openRegularFile(ctx context.Context, req *fuse.OpenRequest, resp 
 	}
 
 	// Create an entry in the prefetch table, if the file is eligable
-	f.Fsys.pgs.CreateFileEntry(fh)
+	f.Fsys.pgs.CreateStreamEntry(fh)
 
 	return fh, nil
 }
@@ -425,7 +396,7 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 	switch fh.fKind {
 	case RO_Remote:
 		// Read-only file that is accessed remotely
-		fsys.pgs.RemoveFileEntry(fh)
+		fsys.pgs.RemoveStreamEntry(fh)
 		return nil
 
 	case RW_File:
@@ -442,6 +413,11 @@ func (fh *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) err
 		if err := fsys.MetadataDbUpdateFile(fh.f, fInfo); err != nil {
 			return err
 		}
+		// invalidate the file metadata information, it is at its final size
+		if err := fh.f.Fsys.conn.InvalidateNode(fh.fuseNodeID, 0, 0); err != nil {
+			log.Printf("invalidate %d err=%s", fh.fuseNodeID, err.Error())
+		}
+
 		// initiate a background request to upload the file to the cloud
 		return fsys.fugs.UploadFile(*fh, fInfo)
 
