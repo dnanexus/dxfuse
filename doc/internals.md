@@ -147,8 +147,8 @@ The `files` table describes individual files, and where to mount them.
 | parent      | string | local directory |
 | fname       | string | file name (optional) |
 | size        | int64  | file length (optional) |
-| ctime       | int64  | time in milliseconds since Jan-1-1970 (optional) |
-| mtime       | int64  | time in milliseconds since Jan-1-1970 (optional) |
+| ctime       | int64  | time in seconds since Jan-1-1970 (optional) |
+| mtime       | int64  | time in seconds since Jan-1-1970 (optional) |
 
 The `fname, size, ctime`, and `mtime` fields are optional. If they are unspecified, the system queries DNAx instead.
 

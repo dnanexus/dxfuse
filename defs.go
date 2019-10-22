@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
 	"github.com/dnanexus/dxda"
 	"github.com/hashicorp/go-retryablehttp"
@@ -45,9 +44,6 @@ type Options struct {
 
 
 type Filesys struct {
-	// fuse connection to the kernel
-	conn  *fuse.Conn
-
 	// configuration information for accessing dnanexus servers
 	dxEnv dxda.DXEnvironment
 
@@ -156,9 +152,6 @@ type FileHandle struct {
 	// 1. Used for reading from an immutable local copy
 	// 2. Used for writing to newly created files.
 	fd *os.File
-
-	// Used for handling fuse cache invalidation
-	fuseNodeID fuse.NodeID
 }
 
 // Utility functions

@@ -23,8 +23,8 @@ type ManifestFile struct {
 	// need to query DNAx for the information.
 	Fname   string       `json:"fname,omitempty"`
 	Size    int64        `json:"size,omitempty"`
-	CtimeMillisec int64  `json:"ctime,omitempty"`
-	MtimeMillisec int64  `json:"mtime,omitempty"`
+	CtimeSeconds int64  `json:"ctime,omitempty"`
+	MtimeSeconds int64  `json:"mtime,omitempty"`
 }
 
 type ManifestDir struct {
@@ -33,8 +33,8 @@ type ManifestDir struct {
 	Dirname       string `json:"dirname"`
 
 	// These may missing.
-	CtimeMillisec int64  `json:"ctime,omitempty"`
-	MtimeMillisec int64  `json:"mtime,omitempty"`
+	CtimeSeconds int64  `json:"ctime,omitempty"`
+	MtimeSeconds int64  `json:"mtime,omitempty"`
 }
 
 type Manifest struct {
@@ -158,8 +158,8 @@ func MakeManifestFromProjectIds(
 			ProjId : pDesc.Id,
 			Folder : "/",
 			Dirname : filepath.Clean("/" + pDesc.Name),
-			CtimeMillisec : pDesc.CtimeMillisec,
-			MtimeMillisec : pDesc.MtimeMillisec,
+			CtimeSeconds : pDesc.CtimeSeconds,
+			MtimeSeconds : pDesc.MtimeSeconds,
 		}
 		dirs = append(dirs, mstDir)
 	}
@@ -293,8 +293,8 @@ func (m *Manifest) FillInMissingFields(dxEnv dxda.DXEnvironment) error {
 	for _, fl := range m.Files {
 		if fl.Fname == "" ||
 			fl.Size == 0 ||
-			fl.CtimeMillisec == 0 ||
-			fl.MtimeMillisec == 0 {
+			fl.CtimeSeconds == 0 ||
+			fl.MtimeSeconds == 0 {
 			fileIds[fl.FileId] = true
 		}
 	}
@@ -317,16 +317,16 @@ func (m *Manifest) FillInMissingFields(dxEnv dxda.DXEnvironment) error {
 				fl.Fname = fDesc.Name
 			}
 			fl.Size = fDesc.Size
-			fl.CtimeMillisec = fDesc.CtimeMillisec
-			fl.MtimeMillisec = fDesc.MtimeMillisec
+			fl.CtimeSeconds = fDesc.CtimeSeconds
+			fl.MtimeSeconds = fDesc.MtimeSeconds
 		}
 	}
 
 	// Make a list of all the projects we need to query.
 	projectIds := make(map[string]bool)
 	for _, d := range m.Directories {
-		if d.CtimeMillisec == 0 ||
-			d.MtimeMillisec == 0 {
+		if d.CtimeSeconds == 0 ||
+			d.MtimeSeconds == 0 {
 			projectIds[d.ProjId] = true
 		}
 	}
@@ -348,8 +348,8 @@ func (m *Manifest) FillInMissingFields(dxEnv dxda.DXEnvironment) error {
 		pDesc, ok := projDescs[d.ProjId]
 		if ok {
 			// This directory may have been missing fields
-			d.CtimeMillisec = pDesc.CtimeMillisec
-			d.MtimeMillisec = pDesc.MtimeMillisec
+			d.CtimeSeconds = pDesc.CtimeSeconds
+			d.MtimeSeconds = pDesc.MtimeSeconds
 		}
 	}
 
