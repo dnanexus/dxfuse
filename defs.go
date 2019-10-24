@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"bazil.org/fuse/fs"
 	"github.com/dnanexus/dxda"
 	"github.com/hashicorp/go-retryablehttp"
 )

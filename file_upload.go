@@ -9,10 +9,9 @@ import (
 	"log"
 	"os"
 
-	"bazil.org/fuse"
-
 	"github.com/dnanexus/dxda"
 	"github.com/hashicorp/go-retryablehttp"
+	"github.com/jacobsa/fuse"
 )
 
 type RequestNewFile struct {

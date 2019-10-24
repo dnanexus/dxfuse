@@ -1,6 +1,7 @@
 package dxfuse
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -14,11 +15,9 @@ import (
 	"syscall"
 	"time"
 
-	"bazil.org/fuse"
-	"bazil.org/fuse/fs"
-	"github.com/hashicorp/go-retryablehttp" // use http libraries from hashicorp for implement retry logic
 	"github.com/dnanexus/dxda"
-	"golang.org/x/net/context"
+	"github.com/hashicorp/go-retryablehttp" // use http libraries from hashicorp for implement retry logic
+	"github.com/jacobsa/fuse"
 
 	// for the sqlite driver
 	_ "github.com/mattn/go-sqlite3"

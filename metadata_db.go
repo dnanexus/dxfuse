@@ -10,8 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"bazil.org/fuse"
-	"bazil.org/fuse/fs"
+	"github.com/jacobsa/fuse"
 )
 
 
