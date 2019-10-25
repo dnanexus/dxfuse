@@ -32,6 +32,7 @@ var (
 	debugFuseFlag = flag.Bool("debugFuse", false, "Tap into FUSE debugging information")
 	gid = flag.Int("gid", -1, "User group id (gid)")
 	help = flag.Bool("help", false, "display program options")
+	readOnly = flag.Bool("read-only", false, "mount the filesystem in read-only mode")
 	uid = flag.Int("uid", -1, "User id (uid)")
 	verbose = flag.Int("verbose", 0, "Enable verbose debugging")
 	version = flag.Bool("version", false, "Print the version and exit")
@@ -61,7 +62,7 @@ func initLog() *os.File {
 	return f
 }
 
-func initUid(uid int, gid int) (int,int) {
+func initUidGid(uid int, gid int) (uint32,uint32) {
 	// This is current the root user, because the program is run under
 	// sudo privileges. The "user" variable is used only if we don't
 	// get command line uid/gid.
@@ -87,7 +88,58 @@ func initUid(uid int, gid int) (int,int) {
 			panic(err)
 		}
 	}
-	return uid,gid
+	return uint32(uid),uint32(gid)
+}
+
+// Mount the filesystem:
+//  - setup the debug log to the FUSE kernel log (I think)
+//  - mount as read-only
+func mount(
+	mountpoint string,
+	dxEnv dxda.DXEnvironment,
+	manifest dxfuse.Manifest,
+	options Options) error {
+
+	fsys, err := dxfuse.NewDxfuse(dxEnv, manifest, options)
+	if err != nil {
+		return err
+	}
+	server := fuseutil.NewFileSystemServer(fsys)
+
+	// initialize the log file
+	logf := initLog()
+	defer logf.Close()
+
+	// This should allow users other than root
+	// to access the mounted files
+	osMountOptions := make(map[string]string)
+	osMountOption["allowOther"] = ""
+
+	// Fuse mount
+	cfg := &fuse.MountConfig{
+		FSName : "dxfuse",
+		ReadOnly : *readOnly,
+		ErrorLogger : logf,
+		DebugLogger : logf,
+		DisableWritebackCaching : true,
+		Options : osMountOptions,
+		Subtype : "fuse",
+	}
+
+	log.Printf("mounting dxfuse")
+	mfs, err := fuse.Mount(mountpoint, server, cfg)
+	if err != nil {
+		log.Fatalf("Mount: %v", err)
+	}
+
+	// Wait for it to be unmounted. This happens only after
+	// all requests have been served.
+	if err = mfs.Join(context.Background()); err != nil {
+		log.Fatalf("Join: %v", err)
+	}
+
+	// We want to do a proper shutdown so that files will be uploaded
+	fsys.Shutdown()
 }
 
 func main() {
@@ -111,10 +163,14 @@ func main() {
 	}
 	mountpoint := flag.Arg(0)
 
+	uid,gid := initUidGid(*uid, *gid)
+
 	options := dxfuse.Options {
-		DebugFuse: *debugFuseFlag,
+		ReadOnly: *readOnly,
 		Verbose : *verbose > 0,
 		VerboseLevel : *verbose,
+		Uid : uid,
+		Gid : gid,
 	}
 
 	dxEnv, _, err := dxda.GetDxEnvironment()
@@ -132,10 +188,6 @@ S3 or Azure. Without such connectivity, some operations may take a
 long time, causing operating system timeouts to expire. This can
 result in the filesystem freezing, or being unmounted.`)
 	}
-
-	// initialize the log file
-	logf := initLog()
-	defer logf.Close()
 
 	// distinguish between the case of a manifest, and a list of projects.
 	var manifest *dxfuse.Manifest
@@ -176,9 +228,8 @@ result in the filesystem freezing, or being unmounted.`)
 		}
 	}
 
-	uid,gid := initUid(*uid, *gid)
-
-	if err := dxfuse.Mount(mountpoint, dxEnv, *manifest, uid, gid, options); err != nil {
+	err := mount(mountpoint, dxEnv, *manifest, options)
+	if err != nil {
 		fmt.Println("Error: " + err.Error())
 	}
 }

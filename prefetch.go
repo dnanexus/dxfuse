@@ -114,14 +114,16 @@ type PrefetchGlobalState struct {
 	mutex        sync.Mutex  // Lock used to control the files table
 	files        map[*FileHandle](*PrefetchFileMetadata) // tracking state per file-id
 	ioQueue      chan IoReq    // queue of IOs to prefetch
+	wg           sync.WaitGroup
 }
 
-func (pgs *PrefetchGlobalState) Init(verboseLevel int) {
-	pgs.verbose = verboseLevel >= 1
-	pgs.verboseLevel = verboseLevel
-
-	pgs.files = make(map[*FileHandle](*PrefetchFileMetadata))
-	pgs.ioQueue = make(chan IoReq)
+func NewPrefetchGlobalState(verboseLevel int) *PrefetchGlobalState {
+	pgs := &PrefetchGlobalState{
+		verbose : verboseLevel >= 1,
+		verboseLevel : verboseLevel,
+		files : make(map[*FileHandle](*PrefetchFileMetadata)),
+		ioQueue : make(chan IoReq),
+	}
 
 	// limit the number of prefetch IOs
 	for i := 0; i < numPrefetchThreads; i++ {
@@ -130,6 +132,26 @@ func (pgs *PrefetchGlobalState) Init(verboseLevel int) {
 
 	// start a periodic thread to cleanup the table if needed
 	go pgs.tableCleanupWorker()
+
+	return pgs
+}
+
+func (pgs *PrefetchGlobalState) Shutdown() {
+	// signal all prefetch threads to stop
+	close(pgs.ioQueue)
+
+	// wait for all of them to complete
+	pgs.wg.Wait()
+
+	pgs.mutex.Lock()
+	// clear the entire table
+	for fh := range pgs.files {
+		delete(pgs.files, fh)
+	}
+	pgs.mutex.Unlock()
+
+	// we aren't waiting for the periodic cleanup thread.
+	// it will take 60 seconds.
 }
 
 func check(value bool) {
@@ -237,9 +259,14 @@ func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq
 func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 	// reuse this http client. The idea is to be able to reuse http connections.
 	client := dxda.NewHttpClient(true)
+	wg.Add(1)
 
 	for true {
-		ioReq := <-pgs.ioQueue
+		ioReq, ok := <-pgs.ioQueue
+		if !ok {
+			pgs.wg.Done()
+			return
+		}
 
 		// perform the IO. We don't want to hold any locks while we
 		// are doing this, because this request could take a long time.
@@ -290,6 +317,7 @@ func (pgs *PrefetchGlobalState) isWorthIt(pfm *PrefetchFileMetadata, now time.Ti
 }
 
 func (pgs *PrefetchGlobalState) tableCleanupWorker() {
+	pgs.wg.Add(1)
 	for true {
 		// sleep 60
 		time.Sleep(60 * time.Second)

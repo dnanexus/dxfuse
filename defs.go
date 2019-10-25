@@ -40,9 +40,11 @@ type DxDownloadURL struct {
 }
 
 type Options struct {
-	DebugFuse      bool
+	ReadOnly       bool
 	Verbose        bool
 	VerboseLevel   int
+	Uid            uint32
+	Gid            uint32
 }
 
 
@@ -57,9 +59,6 @@ type Filesys struct {
 	// various options
 	options Options
 
-	uid uint32
-	gid uint32
-
 	// A file holding a sqlite3 database with all the files and
 	// directories collected thus far.
 	dbFullPath string
@@ -72,10 +71,10 @@ type Filesys struct {
 	db  *sql.DB
 
 	// prefetch state for all files
-	pgs PrefetchGlobalState
+	pgs *PrefetchGlobalState
 
 	// background upload state
-	fugs FileUploadGlobalState
+	fugs *FileUploadGlobalState
 
 	// a pool of http clients, for short requests, such as file creation,
 	// or file describe.
@@ -88,6 +87,10 @@ type Filesys struct {
 	// all open files
 	fhTable map[fuseops.Handle]FileHandle
 	fhFreeList []fuseops.Handle
+
+	// all open directories
+	dhTable map[fuseops.Handle]DirHandle
+	dhFreeList []fuseops.Handle
 
 	nonce *Nonce
 	tmpFileCounter uint64
@@ -118,8 +121,8 @@ func (d Dir) Attrs(fsys *Filesys) (a fuseops.InodeAttributes) {
 	a.Mtime = SecondsToTime(a.Mtime)
 	a.Ctime = SecondsToTime(a.Ctime)
 	a.Crtime = SecondsToTime(a.Ctime)
-	a.Uid = fsys.uid
-	a.Gid = fsys.gid
+	a.Uid = fsys.Options.Uid
+	a.Gid = fsys.Options.Gid
 	return
 }
 
@@ -183,10 +186,6 @@ const (
 )
 
 type FileHandle struct {
-	// ID used by recurring FUSE operations to identify this
-	// file handle
-	fuseops.FileHandle id
-
 	fKind int
 	f File
 
@@ -200,6 +199,11 @@ type FileHandle struct {
 	// 1. Used for reading from an immutable local copy
 	// 2. Used for writing to newly created files.
 	fd *os.File
+}
+
+type DirHandle struct {
+	d Dir
+	entries []fuseutil.Dirent
 }
 
 // Utility functions

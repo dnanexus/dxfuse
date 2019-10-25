@@ -1214,7 +1214,7 @@ func (fsys *Filesys) projectIdAndFolder(dirname string) (string, string) {
 	panic(fmt.Sprintf("directory %s does not belong to any project", dirname))
 }
 
-func (fsys *Filesys) CreateFile(dir *Dir, fname string, localPath string) (*File, error) {
+func (fsys *Filesys) MetadataDbCreateFile(dir *Dir, fname string, localPath string) (*File, error) {
 	if fsys.options.Verbose {
 		log.Printf("CreateFile %s/%s  localPath=%s", dir.FullPath, fname, localPath)
 	}
