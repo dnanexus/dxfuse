@@ -8,6 +8,9 @@ import (
 
 	"github.com/dnanexus/dxda"
 	"github.com/hashicorp/go-retryablehttp"
+
+	"github.com/jacobsa/fuse/fuseutil"
+	"github.com/jacobsa/fuse/fuseops"
 )
 
 const (
@@ -16,11 +19,12 @@ const (
 	HttpClientPoolSize = 4
 	LogFile            = "/var/log/dxfuse.log"
 	MaxDirSize         = 10 * 1000
+	MaxNumFileHandles  = 1000 * 1000
 	Version            = "v0.12"
 )
 const (
 	InodeInvalid       = 0
-	InodeRoot          = 1
+	InodeRoot          = fuseops.RootInodeID  // This is an OS constant
 )
 const (
 	KiB                   = 1024
@@ -43,6 +47,10 @@ type Options struct {
 
 
 type Filesys struct {
+	// inherit empty implementations for all the filesystem
+	// methods we do not implement
+	fuseutil.NotImplementedFileSystem
+
 	// configuration information for accessing dnanexus servers
 	dxEnv dxda.DXEnvironment
 
@@ -77,12 +85,22 @@ type Filesys struct {
 	baseDir2ProjectId map[string]string
 	projId2Desc map[string]DxDescribePrj
 
+	// all open files
+	fhTable map[fuseops.Handle]FileHandle
+	fhFreeList []fuseops.Handle
+
 	nonce *Nonce
 	tmpFileCounter uint64
 }
 
-var _ fs.FS = (*Filesys)(nil)
+// A node is a generalization over files and directories
+type Node interface {
+	GetInode() fuseops.InodeID
+	Attrs(fsys *Filesys) fuseops.InodeAttributes
+}
 
+
+// directories
 type Dir struct {
 	Fsys     *Filesys
 	Parent    string  // the parent directory, used for debugging
@@ -93,8 +111,21 @@ type Dir struct {
 	Mtime     time.Time // we use the project creation time, and mtime as an approximation.
 }
 
-// Make sure that Dir implements the fs.Node interface
-var _ fs.Node = (*Dir)(nil)
+func (d Dir) Attrs(fsys *Filesys) (a fuseops.InodeAttributes) {
+	a.Size = 4096
+	a.Nlink = 1
+	a.Mode = os.ModeDir | 0555
+	a.Mtime = SecondsToTime(a.Mtime)
+	a.Ctime = SecondsToTime(a.Ctime)
+	a.Crtime = SecondsToTime(a.Ctime)
+	a.Uid = fsys.uid
+	a.Gid = fsys.gid
+	return
+}
+
+func (d Dir) GetInode() fuseops.InodeID {
+	return fuseops.InodeID(d.Inode)
+}
 
 
 // Kinds of files
@@ -127,8 +158,22 @@ type File struct {
 	InlineData string
 }
 
-// Make sure that File implements the fs.Node interface
-var _ fs.Node = (*File)(nil)
+func (f File) Attrs(fsys *Filesys) (a fuseops.InodeAttributes) {
+	a.Size = f.Size
+	a.Nlink = f.Nlink
+	a.Mode = 0444   // What about files in write mode?
+	a.Mtime = SecondsToTime(a.Mtime)
+	a.Ctime = SecondsToTime(a.Ctime)
+	a.Crtime = SecondsToTime(a.Ctime)
+	a.Uid = fsys.uid
+	a.Gid = fsys.gid
+	return
+}
+
+func (f File) GetInode() fuseops.InodeID {
+	return fuseops.InodeID(f.Inode)
+}
+
 
 // Files can be opened in read-only mode, or read-write mode.
 const (
@@ -138,6 +183,10 @@ const (
 )
 
 type FileHandle struct {
+	// ID used by recurring FUSE operations to identify this
+	// file handle
+	fuseops.FileHandle id
+
 	fKind int
 	f File
 
@@ -166,4 +215,10 @@ func MinInt64(x, y int64) int64 {
         return y
     }
     return x
+}
+
+// convert time in seconds since 1-Jan 1970, to the equivalent
+// golang structure
+func SecondsToTime(t int64) time.Time {
+	return time.Unix(t, 0)
 }

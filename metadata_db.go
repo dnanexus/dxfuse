@@ -60,12 +60,6 @@ func boolToInt(b bool) int {
 	return 0
 }
 
-// convert time in seconds since 1-Jan 1970, to the equivalent
-// golang structure
-func secondsToTime(t int64) time.Time {
-	return time.Unix(t, 0)
-}
-
 // Print the error and the stack trace.
 //
 // This method should be used the first time we encounter an error. For example,
@@ -310,6 +304,86 @@ func (fsys *Filesys) lookupDataObjectShouldExist(
 			numRows, dirFullName, oname))
 	}
 }
+
+func (fsys *Filesys) lookupDirShouldExist(parent string, dname string, inode int64) (*Dir, error) {
+	// Extract information for all the subdirectories
+	sqlStmt := fmt.Sprintf(`
+ 		        SELECT name,ctime,mtime
+                        FROM directories
+			WHERE inode = '%s';`,
+		inode)
+	rows, err := fsys.db.Query(sqlStmt)
+	if err != nil {
+		return nil, printErrorStack(err)
+	}
+	Dir d
+	d.Fsys = fsys
+	d.Parent = parent
+	d.Dname = dname
+	d.FullPath = filepath.Join(parent, dname)
+	d.Inode = inode
+
+	numRows := 0
+	for rows.Next() {
+		rows.Scan(&name,&ctime, &mtime)
+		numRows++
+	}
+	rows.Close()
+
+	switch numRows {
+	case 0:
+		panic(fmt.Sprintf("did not find a directory with inode=%d in the directories table",
+			inode))
+	case 1:
+		return &d, nil
+	default:
+		panic(fmt.Sprintf("found %d directory with inode=%d in the directories table",
+			numRows, inode))
+	}
+}
+
+// search for a file with a particular inode
+func (fsys *Filesys) MetadataDbLookupByInode(inode int64) (*Node, error) {
+	// point lookup in the files table
+	sqlStmt := fmt.Sprintf(`
+ 		        SELECT parent,name,obj\_type
+                        FROM namespace
+			WHERE inode = '%d';`,
+		inode)
+	rows, err := fsys.db.Query(sqlStmt)
+	if err != nil {
+		return err
+
+	}
+	var parent string
+	var name string
+	var obj_type int
+	numRows := 0
+	for rows.Next() {
+		rows.Scan(&parent,&name, &obj_type)
+		numRows++
+	}
+	rows.Close()
+
+	switch numRows {
+	case 0:
+		return fuse.ENOENT
+	case 1:
+		// correct, there is exactly one such file
+	default:
+		panic(fmt.Sprintf("Found %d data-objects with inode %d", numRows, inode))
+	}
+
+	switch obj_type {
+	case nsDirType:
+		return fsys.lookupDirShouldExist(parent, name, inode)
+	case nsDataObjType:
+		return fsys.lookupDataObjectShouldExist(parent, name, inode)
+	default:
+		panic(fmt.Sprintf("Invalid type %d in namespace table", obj_type))
+	}
+}
+
 
 // The directory is in the database, read it in its entirety.
 func (fsys *Filesys) directoryReadAllEntries(
@@ -971,7 +1045,7 @@ func (fsys *Filesys) fastLookup(
 // Note: the file might not exist.
 func (fsys *Filesys) MetadataDbLookupInDir(
 	parentDir string,
-	dirOrFileName string) (fs.Node, error) {
+	dirOrFileName string) (Node, error) {
 
 	retCode, _, err := fsys.directoryExists(parentDir)
 	if err != nil {
