@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sync"
 
 	"github.com/dnanexus/dxda"
 	"github.com/hashicorp/go-retryablehttp"
@@ -193,7 +194,7 @@ func NewFileUploadGlobalState(fsys *Filesys) *FileUploadGlobalState {
 	return fugs
 }
 
-func (fugs *PrefetchGlobalState) Shutdown() {
+func (fugs *FileUploadGlobalState) Shutdown() {
 	// signal all io load threads to stop
 	close(fugs.reqQueue)
 

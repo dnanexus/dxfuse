@@ -85,12 +85,12 @@ type Filesys struct {
 	projId2Desc map[string]DxDescribePrj
 
 	// all open files
-	fhTable map[fuseops.Handle]FileHandle
-	fhFreeList []fuseops.Handle
+	fhTable map[fuseops.HandleID]*FileHandle
+	fhFreeList []fuseops.HandleID
 
 	// all open directories
-	dhTable map[fuseops.Handle]DirHandle
-	dhFreeList []fuseops.Handle
+	dhTable map[fuseops.HandleID]*DirHandle
+	dhFreeList []fuseops.HandleID
 
 	nonce *Nonce
 	tmpFileCounter uint64
@@ -118,11 +118,11 @@ func (d Dir) Attrs(fsys *Filesys) (a fuseops.InodeAttributes) {
 	a.Size = 4096
 	a.Nlink = 1
 	a.Mode = os.ModeDir | 0555
-	a.Mtime = SecondsToTime(a.Mtime)
-	a.Ctime = SecondsToTime(a.Ctime)
-	a.Crtime = SecondsToTime(a.Ctime)
-	a.Uid = fsys.Options.Uid
-	a.Gid = fsys.Options.Gid
+	a.Mtime = a.Mtime
+	a.Ctime = a.Ctime
+	a.Crtime = a.Ctime
+	a.Uid = fsys.options.Uid
+	a.Gid = fsys.options.Gid
 	return
 }
 
@@ -162,14 +162,14 @@ type File struct {
 }
 
 func (f File) Attrs(fsys *Filesys) (a fuseops.InodeAttributes) {
-	a.Size = f.Size
-	a.Nlink = f.Nlink
+	a.Size = uint64(f.Size)
+	a.Nlink = uint32(f.Nlink)
 	a.Mode = 0444   // What about files in write mode?
-	a.Mtime = SecondsToTime(a.Mtime)
-	a.Ctime = SecondsToTime(a.Ctime)
-	a.Crtime = SecondsToTime(a.Ctime)
-	a.Uid = fsys.uid
-	a.Gid = fsys.gid
+	a.Mtime = a.Mtime
+	a.Ctime = a.Ctime
+	a.Crtime = a.Ctime
+	a.Uid = fsys.options.Uid
+	a.Gid = fsys.options.Gid
 	return
 }
 

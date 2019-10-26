@@ -316,7 +316,7 @@ func (fsys *Filesys) lookupDirShouldExist(parent string, dname string, inode int
 	if err != nil {
 		return nil, printErrorStack(err)
 	}
-	Dir d
+	var Dir d
 	d.Fsys = fsys
 	d.Parent = parent
 	d.Dname = dname
