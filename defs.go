@@ -105,7 +105,6 @@ type Node interface {
 
 // directories
 type Dir struct {
-	Fsys     *Filesys
 	Parent    string  // the parent directory, used for debugging
 	Dname     string  // This is the last part of the full path
 	FullPath  string // combine parent and dname, then normalize
@@ -145,7 +144,6 @@ const (
 // A Unix file can stand for any DNAx data object. For example, it could be a workflow or an applet.
 // We distinguish between them based on the Id (file-xxxx, applet-xxxx, workflow-xxxx, ...).
 type File struct {
-	Fsys      *Filesys
 	Kind       int     // Kind of object this is
 	Id         string  // Required to build a download URL
 	ProjId     string  // Note: this could be a container

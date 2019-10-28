@@ -199,7 +199,7 @@ func (fugs *FileUploadGlobalState) Shutdown() {
 	close(fugs.reqQueue)
 
 	// wait for all of them to complete
-	pgs.wg.Wait()
+	fugs.wg.Wait()
 }
 
 func divideRoundUp(x int64, y int64) int64 {
@@ -324,7 +324,7 @@ func (fugs *FileUploadGlobalState) createEmptyFile(
 func (fugs *FileUploadGlobalState) uploadIoWorker() {
 	// A fixed http client. The idea is to be able to reuse http connections.
 	client := dxda.NewHttpClient(true)
-	wg.Add(1)
+	fugs.wg.Add(1)
 
 	for true {
 		upReq, ok := <-fugs.reqQueue
@@ -388,7 +388,7 @@ func (fugs *FileUploadGlobalState) UploadFile(fh FileHandle, fInfo os.FileInfo) 
 There is a problem with the file size, it cannot be uploaded
 to the platform due to part size constraints. Error=%s`,
 			err.Error())
-		return fuse.ENOTSUP
+		return fuse.EINVAL
 	}
 
 	fugs.reqQueue <- UploadReq{

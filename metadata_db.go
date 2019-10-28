@@ -261,7 +261,7 @@ func (fsys *Filesys) lookupDataObjectInodeById(txn *sql.Tx, fId string) (int64, 
 func (fsys *Filesys) lookupDataObjectShouldExist(
 	dirFullName string,
 	oname string,
-	inode int64) (*File, error) {
+	inode int64) (File, error) {
 	// point lookup in the files table
 	sqlStmt := fmt.Sprintf(`
  		        SELECT kind,id,proj_id,size,ctime,mtime,nlink,inline_data
@@ -276,7 +276,6 @@ func (fsys *Filesys) lookupDataObjectShouldExist(
 	}
 
 	var f File
-	f.Fsys = fsys
 	f.Name = oname
 	f.Inode = inode
 	numRows := 0
@@ -284,8 +283,8 @@ func (fsys *Filesys) lookupDataObjectShouldExist(
 		var ctime int64
 		var mtime int64
 		rows.Scan(&f.Kind,&f.Id, &f.ProjId, &f.Size, &ctime, &mtime, &f.Nlink, &f.InlineData)
-		f.Ctime = secondsToTime(ctime)
-		f.Mtime = secondsToTime(mtime)
+		f.Ctime = SecondsToTime(ctime)
+		f.Mtime = SecondsToTime(mtime)
 		numRows++
 	}
 	rows.Close()
@@ -298,14 +297,14 @@ func (fsys *Filesys) lookupDataObjectShouldExist(
 			inode, dirFullName, oname))
 	case 1:
 		// correct, there is exactly one such file
-		return &f, nil
+		return f, nil
 	default:
 		panic(fmt.Sprintf("Found %d data-objects of the form %s/%s",
 			numRows, dirFullName, oname))
 	}
 }
 
-func (fsys *Filesys) lookupDirShouldExist(parent string, dname string, inode int64) (*Dir, error) {
+func (fsys *Filesys) lookupDirShouldExist(parent string, dname string, inode int64) (Dir, error) {
 	// Extract information for all the subdirectories
 	sqlStmt := fmt.Sprintf(`
  		        SELECT name,ctime,mtime
@@ -314,28 +313,37 @@ func (fsys *Filesys) lookupDirShouldExist(parent string, dname string, inode int
 		inode)
 	rows, err := fsys.db.Query(sqlStmt)
 	if err != nil {
-		return nil, printErrorStack(err)
+		return Dir{}, printErrorStack(err)
 	}
-	var Dir d
-	d.Fsys = fsys
+	var d Dir
 	d.Parent = parent
 	d.Dname = dname
-	d.FullPath = filepath.Join(parent, dname)
+	d.FullPath = filepath.Clean(filepath.Join(parent, dname))
 	d.Inode = inode
 
 	numRows := 0
+	var ctime int64
+	var mtime int64
+	var name string
 	for rows.Next() {
-		rows.Scan(&name,&ctime, &mtime)
+		rows.Scan(&name, &ctime, &mtime)
 		numRows++
 	}
 	rows.Close()
+
+	if name != dname {
+		panic(fmt.Sprintf("directory name doesn't match the database entry %s != %s",
+			dname, name))
+	}
+	d.Ctime = SecondsToTime(ctime)
+	d.Mtime = SecondsToTime(mtime)
 
 	switch numRows {
 	case 0:
 		panic(fmt.Sprintf("did not find a directory with inode=%d in the directories table",
 			inode))
 	case 1:
-		return &d, nil
+		return d, nil
 	default:
 		panic(fmt.Sprintf("found %d directory with inode=%d in the directories table",
 			numRows, inode))
@@ -343,7 +351,7 @@ func (fsys *Filesys) lookupDirShouldExist(parent string, dname string, inode int
 }
 
 // search for a file with a particular inode
-func (fsys *Filesys) MetadataDbLookupByInode(inode int64) (*Node, error) {
+func (fsys *Filesys) MetadataDbLookupByInode(inode int64) (Node, error) {
 	// point lookup in the files table
 	sqlStmt := fmt.Sprintf(`
  		        SELECT parent,name,obj\_type
@@ -352,22 +360,21 @@ func (fsys *Filesys) MetadataDbLookupByInode(inode int64) (*Node, error) {
 		inode)
 	rows, err := fsys.db.Query(sqlStmt)
 	if err != nil {
-		return err
-
+		return nil, err
 	}
 	var parent string
 	var name string
 	var obj_type int
 	numRows := 0
 	for rows.Next() {
-		rows.Scan(&parent,&name, &obj_type)
+		rows.Scan(&parent, &name, &obj_type)
 		numRows++
 	}
 	rows.Close()
 
 	switch numRows {
 	case 0:
-		return fuse.ENOENT
+		return nil, fuse.ENOENT
 	case 1:
 		// correct, there is exactly one such file
 	default:
@@ -415,13 +422,12 @@ func (fsys *Filesys) directoryReadAllEntries(
 		rows.Scan(&inode, &projId, &dname, &ctime, &mtime)
 
 		subdirs[dname] = Dir{
-			Fsys : fsys,
 			Parent : dirFullName,
 			Dname : dname,
-			FullPath : filepath.Join(dirFullName, dname),
+			FullPath : filepath.Clean(filepath.Join(dirFullName, dname)),
 			Inode : inode,
-			Ctime : secondsToTime(ctime),
-			Mtime : secondsToTime(mtime),
+			Ctime : SecondsToTime(ctime),
+			Mtime : SecondsToTime(mtime),
 		}
 	}
 	rows.Close()
@@ -443,13 +449,12 @@ func (fsys *Filesys) directoryReadAllEntries(
 	files := make(map[string]File)
 	for rows.Next() {
 		var f File
-		f.Fsys = fsys
 
 		var ctime int64
 		var mtime int64
 		rows.Scan(&f.Kind,&f.Id, &f.ProjId, &f.Inode, &f.Size, &ctime, &mtime, &f.Nlink, &f.InlineData,&f.Name)
-		f.Ctime = secondsToTime(ctime)
-		f.Mtime = secondsToTime(mtime)
+		f.Ctime = SecondsToTime(ctime)
+		f.Mtime = SecondsToTime(mtime)
 
 		files[f.Name] = f
 	}
@@ -980,13 +985,12 @@ func (fsys *Filesys) lookupDir(
 	case 1:
 		// correct, there is exactly one directory
 		return &Dir{
-			Fsys : fsys,
 			Parent : dirFullName,
 			Dname : dname,
-			FullPath : filepath.Join(dirFullName, dname),
+			FullPath : filepath.Clean(filepath.Join(dirFullName, dname)),
 			Inode : dinode,
-			Ctime : secondsToTime(ctime),
-			Mtime : secondsToTime(mtime),
+			Ctime : SecondsToTime(ctime),
+			Mtime : SecondsToTime(mtime),
 		}, nil
 	default:
 		panic(fmt.Sprintf("Found %d directories of the form %s/%s",
@@ -997,7 +1001,7 @@ func (fsys *Filesys) lookupDir(
 // Search for a file/subdir in a directory
 func (fsys *Filesys) fastLookup(
 	dirFullName string,
-	dirOrFileName string) (fs.Node, error) {
+	dirOrFileName string) (Node, error) {
 	// point lookup in the namespace
 	sqlStmt := fmt.Sprintf(`
  		        SELECT obj_type,inode
@@ -1274,15 +1278,14 @@ func (fsys *Filesys) MetadataDbCreateFile(dir *Dir, fname string, localPath stri
 
 	// 3. return a File structure
 	file := &File{
-		Fsys: fsys,
 		Kind: FK_Regular,
 		Id : fileId,
 		ProjId : projId,
 		Name : fname,
 		Size : 0,
 		Inode : inode,
-		Ctime : secondsToTime(nowSeconds),
-		Mtime : secondsToTime(nowSeconds),
+		Ctime : SecondsToTime(nowSeconds),
+		Mtime : SecondsToTime(nowSeconds),
 		Nlink : 1,
 		InlineData : localPath,
 	}

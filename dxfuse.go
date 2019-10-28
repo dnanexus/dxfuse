@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/go-retryablehttp" // use http libraries from hashicorp for implement retry logic
 	"github.com/jacobsa/fuse"
 	"github.com/jacobsa/fuse/fuseops"
+	"github.com/jacobsa/fuse/fuseutil"
 
 	// for the sqlite driver
 	_ "github.com/mattn/go-sqlite3"
@@ -118,38 +119,37 @@ func (fsys *Filesys) StatFS(ctx context.Context, op *fuseops.StatFSOp) error {
 	return nil
 }
 
-func (fsys *Filesys) lookupFileByInode(inode int64) (*File, error) {
+func (fsys *Filesys) lookupFileByInode(inode int64) (File, error) {
 	// find the file by its inode
 	node, err := fsys.MetadataDbLookupByInode(inode)
 	if err != nil {
-		return nil, err
+		return File{}, err
 	}
-	var file File
-	switch (*node).(type) {
+	switch node.(type) {
 	case Dir:
 		// can't open a directory
-		return nil, fuse.ENOSYS
+		return File{}, fuse.ENOSYS
 	case File:
 		// cast to a File type
-		return (*node).(*File), nil
+		return node.(File), nil
 	default:
 		panic(fmt.Sprintf("bad type for node %v", node))
 	}
 }
 
 
-func (fsys *Filesys) lookupDirByInode(inode int64) (*Dir, error) {
+func (fsys *Filesys) lookupDirByInode(inode int64) (Dir, error) {
 	// find the file by its inode
 	node, err := fsys.MetadataDbLookupByInode(inode)
 	if err != nil {
-		return nil, err
+		return Dir{}, err
 	}
-	switch (*node).(type) {
+	switch node.(type) {
 	case Dir:
 		// cast to Dir type
-		return (*node).(*Dir), nil
+		return node.(Dir), nil
 	case File:
-		return nil, fuse.ENOSYS
+		return Dir{}, fuse.ENOSYS
 	default:
 		panic(fmt.Sprintf("bad type for node %v", node))
 	}
@@ -192,7 +192,7 @@ func (fsys *Filesys) GetInodeAttributes(ctx context.Context, op *fuseops.GetInod
 	}
 
 	// Fill in the response.
-	op.Attributes = (*node).Attrs(fsys)
+	op.Attributes = node.Attrs(fsys)
 
 	// We don't spontaneously mutate, so the kernel can cache as long as it wants
 	// (since it also handles invalidation).
@@ -212,7 +212,7 @@ func (fsys *Filesys) insertIntoFileHandleTable(fh *FileHandle) fuseops.HandleID 
 	var id fuseops.HandleID
 	if numFree > 0 {
 		// reuse old file handles
-		id := fsys.fhFreeList[numFree - 1]
+		id = fsys.fhFreeList[numFree - 1]
 		fsys.fhFreeList = fsys.fhFreeList[:numFree-1]
 	} else {
 		// all file handles are in use, choose a new one.
@@ -229,7 +229,7 @@ func (fsys *Filesys) insertIntoDirHandleTable(dh *DirHandle) fuseops.HandleID {
 	var id fuseops.HandleID
 	if numFree > 0 {
 		// reuse old file handles
-		id := fsys.dhFreeList[numFree - 1]
+		id = fsys.dhFreeList[numFree - 1]
 		fsys.dhFreeList = fsys.dhFreeList[:numFree-1]
 	} else {
 		// all file handles are in use, choose a new one.
@@ -258,10 +258,10 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 
 	// Create a temporary file in a protected directory, used only
 	// by dxfuse.
-	cnt := atomic.AddUint64(&dir.Fsys.tmpFileCounter, 1)
+	cnt := atomic.AddUint64(&fsys.tmpFileCounter, 1)
 	localPath := fmt.Sprintf("%s/%d_%s", CreatedFilesDir, cnt, op.Name)
 
-	file, err := fsys.MetadataDbCreateFile(dir, op.Name, localPath)
+	file, err := fsys.MetadataDbCreateFile(&dir, op.Name, localPath)
 	if err != nil {
 		// The error here will be EEXIST, if the file already exists
 		return err
@@ -271,7 +271,7 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	now := time.Now()
 	childAttrs := fuseops.InodeAttributes{
 		Nlink:  1,
-		Mode:   op.mode,
+		Mode:   op.Mode,
 		Atime:  now,
 		Mtime:  now,
 		Ctime:  now,
@@ -284,7 +284,7 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	// soon change. We are writing new content into the file.
 	shortTimeWin := now.Add(5)
 	op.Entry = fuseops.ChildInodeEntry{
-		Child : file.Inode,
+		Child : fuseops.InodeID(file.Inode),
 		Attributes : childAttrs,
 		AttributesExpiration : shortTimeWin,
 		EntryExpiration : shortTimeWin,
@@ -307,7 +307,7 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 }
 
 
-func (fsys *Filesys) openRegularFile(ctx context.Context, op *fuseops.OpenFileOp, f *File) (*FileHandle, error) {
+func (fsys *Filesys) openRegularFile(ctx context.Context, op *fuseops.OpenFileOp, f File) (*FileHandle, error) {
 	// create a download URL for this file
 	const secondsInYear int = 60 * 60 * 24 * 365
 	payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
@@ -334,7 +334,7 @@ func (fsys *Filesys) openRegularFile(ctx context.Context, op *fuseops.OpenFileOp
 		}
 		fh = &FileHandle{
 			fKind: RO_LocalCopy,
-			f : *f,
+			f : f,
 			url: nil,
 			localPath : &f.InlineData,
 			fd : reader,
@@ -342,7 +342,7 @@ func (fsys *Filesys) openRegularFile(ctx context.Context, op *fuseops.OpenFileOp
 	} else {
 		fh = &FileHandle{
 			fKind: RO_Remote,
-			f : *f,
+			f : f,
 			url: &u,
 			localPath : nil,
 			fd : nil,
@@ -359,14 +359,8 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
 
-	// existing files are read only. The only way
-	// to open a file for writing, is to create a new one.
-	if !req.Flags.IsReadOnly() {
-		return fuse.ENOSYS
-	}
-
 	// find the file by its inode
-	file, err := fsys.lookupFileByInode(op.Inode)
+	file, err := fsys.lookupFileByInode(int64(op.Inode))
 	if err != nil {
 		return err
 	}
@@ -374,7 +368,7 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 	var fh *FileHandle
 	switch file.Kind {
 	case FK_Regular:
-		fh, err := fsys.openRegularFile(ctx, op, file)
+		fh, err = fsys.openRegularFile(ctx, op, file)
 		if err != nil {
 			return err
 		}
@@ -384,9 +378,9 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 		// URL.
 		fh = &FileHandle{
 			fKind : RO_Remote,
-			f : *file,
+			f : file,
 			url : &DxDownloadURL{
-				URL : f.InlineData,
+				URL : file.InlineData,
 				Headers : nil,
 			},
 			localPath : nil,
@@ -394,12 +388,12 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 		}
 	default:
 		// can't open an applet/workflow/etc.
-		return nil, fuse.ENOSYS
+		return fuse.ENOSYS
 	}
 
 	// add to the open-file table, so we can recognize future accesses to
 	// the same handle.
-	op.HandleID = fsys.insertIntoFileHandleTable(fh)
+	op.Handle = fsys.insertIntoFileHandleTable(fh)
 	op.KeepPageCache = true
 	op.UseDirectIO = true
 	return nil
@@ -451,7 +445,7 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 	}
 
 	// release the file handle itself
-	fsys.fhTable.Delete(op.Handle)
+	delete(fsys.fhTable, op.Handle)
 	fsys.fhFreeList = append(fsys.fhFreeList, op.Handle)
 	return nil
 }
@@ -474,7 +468,7 @@ func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp,
 	// This call will wait, if a prefetch IO is in progress.
 	prefetchData := fsys.pgs.CacheLookup(fh, op.Offset, endOfs)
 	if prefetchData != nil {
-		op.BytesRead = copy(op.Data, prefetchData)
+		op.BytesRead = copy(op.Dst, prefetchData)
 		return nil
 	}
 
@@ -488,9 +482,9 @@ func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp,
 	}
 
 	// add an extent in the file that we want to read
-	headers["Range"] = fmt.Sprintf("bytes=%d-%d", req.Offset, endOfs)
-	if fh.f.Fsys.options.Verbose {
-		log.Printf("Read  ofs=%d  len=%d\n", req.Offset, req.Size)
+	headers["Range"] = fmt.Sprintf("bytes=%d-%d", op.Offset, endOfs)
+	if fsys.options.Verbose {
+		log.Printf("Read  ofs=%d  len=%d\n", op.Offset, reqSize)
 	}
 
 	// Take an http client from the pool. Return it when done.
@@ -501,7 +495,7 @@ func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp,
 		return err
 	}
 
-	op.BytesRead = copy(op.Data, body)
+	op.BytesRead = copy(op.Dst, body)
 	return nil
 }
 
@@ -536,18 +530,15 @@ func (fsys *Filesys) ReadFile(ctx context.Context, op *fuseops.ReadFileOp) error
 		}
 
 	case FK_Symlink:
-		return fh.readRemoteFile(fh, ctx, op)
+		return fsys.readRemoteFile(ctx, op, fh)
 
 	default:
-		// This isn't a regular file. It is an applet/workflow/...
-		msg := fmt.Sprintf("A dnanexus %s", fh.f.Id)
-		resp.Data = []byte(msg)
 		return nil
 	}
 }
 
 
-func (fsys *Filesys) findWritableFileHandle(handle fuseops.Handle) (*FileHandle, error) {
+func (fsys *Filesys) findWritableFileHandle(handle fuseops.HandleID) (*FileHandle, error) {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
 
@@ -555,16 +546,16 @@ func (fsys *Filesys) findWritableFileHandle(handle fuseops.Handle) (*FileHandle,
 	fh,ok := fsys.fhTable[handle]
 	if !ok {
 		// invalid file handle. It doesn't exist in the table
-		return fuse.EINVAL
+		return nil, fuse.EINVAL
 	}
-	if fh.fKind != RW_FILE {
+	if fh.fKind != RW_File {
 		// This file isn't open for writing
-		return fuse.EINVAL
+		return nil, fuse.EINVAL
 	}
 	if fh.fd == nil {
 		panic("file descriptor is empty")
 	}
-	return fh
+	return fh, nil
 }
 
 // Writes to files.
@@ -572,7 +563,7 @@ func (fsys *Filesys) findWritableFileHandle(handle fuseops.Handle) (*FileHandle,
 // A file is created locally, and writes go to the local location. When
 // the file is closed, it becomes read only, and is then uploaded to the cloud.
 func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) error {
-	fh,err := findWritableFileHandle(op.Handle)
+	fh,err := fsys.findWritableFileHandle(op.Handle)
 	if err != nil {
 		return err
 	}
@@ -584,26 +575,25 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 func (fsys *Filesys) readEntireDir(ctx context.Context, dir Dir) ([]fuseutil.Dirent, error) {
 	// normalize the filename. For example, we can get "//" when reading
 	// the root directory (instead of "/").
-	fullPath := filepath.Clean(dir.FullPath)
-	if dir.Fsys.options.Verbose {
-		log.Printf("ReadDirAll dir=(%s)\n", dir.fullPath)
+	if fsys.options.Verbose {
+		log.Printf("ReadDirAll dir=(%s)\n", dir.FullPath)
 	}
 
-	dxObjs, subdirs, err := fsys.MetadataDbReadDirAll(fullPath)
+	dxObjs, subdirs, err := fsys.MetadataDbReadDirAll(dir.FullPath)
 	if err != nil {
 		return nil, err
 	}
 
-	if dir.Fsys.options.Verbose {
+	if fsys.options.Verbose {
 		log.Printf("%d data objects, %d subdirs", len(dxObjs), len(subdirs))
 	}
 
-	var dEntries []fuse.Dirent
+	var dEntries []fuseutil.Dirent
 	index := 0
 
 	// Add entries for Unix files, representing DNAx data objects
 	for oname, oDesc := range dxObjs {
-		var dType fuse.DirentType
+		var dType fuseutil.DirentType
 		switch oDesc.Kind {
 		case FK_Regular:
 			dType = fuseutil.DT_File
@@ -615,7 +605,7 @@ func (fsys *Filesys) readEntireDir(ctx context.Context, dir Dir) ([]fuseutil.Dir
 			dType = fuseutil.DT_Block
 		}
 		dirEnt := fuseutil.Dirent{
-			Offset: fuseutil.DirOffset(index),
+			Offset: fuseops.DirOffset(index),
 			Inode : fuseops.InodeID(oDesc.Inode),
 			Name : oname,
 			Type : dType,
@@ -627,7 +617,7 @@ func (fsys *Filesys) readEntireDir(ctx context.Context, dir Dir) ([]fuseutil.Dir
 	// Add entries for subdirs
 	for subDirName, dirDesc := range subdirs {
 		dirEnt := fuseutil.Dirent{
-			Offset : fuseutil.DirOffset(index),
+			Offset : fuseops.DirOffset(index),
 			Inode : fuseops.InodeID(dirDesc.Inode),
 			Name : subDirName,
 			Type : fuseutil.DT_Directory,
@@ -638,7 +628,7 @@ func (fsys *Filesys) readEntireDir(ctx context.Context, dir Dir) ([]fuseutil.Dir
 
 	// directory entries need to be sorted
 	sort.Slice(dEntries, func(i, j int) bool { return dEntries[i].Name < dEntries[j].Name })
-	if dir.Fsys.options.Verbose {
+	if fsys.options.Verbose {
 		log.Printf("dentries=%v", dEntries)
 	}
 
@@ -653,14 +643,14 @@ func (fsys *Filesys) OpenDir(ctx context.Context, op *fuseops.OpenDirOp) error {
 	defer fsys.mutex.Unlock()
 
 	// the parent is supposed to be a directory
-	dir, err := fsys.lookupDirByInode(op.Parent)
+	dir, err := fsys.lookupDirByInode(int64(op.Inode))
 	if err != nil {
 		return err
 	}
 
 	// Read the entire directory into memory, and sort
 	// the entries properly.
-	dentries, err := fsys.readEntireDir(context, dir)
+	dentries, err := fsys.readEntireDir(ctx, dir)
 	if err != nil {
 		return err
 	}
@@ -670,15 +660,15 @@ func (fsys *Filesys) OpenDir(ctx context.Context, op *fuseops.OpenDirOp) error {
 		entries: dentries,
 	}
 	op.Handle = fsys.insertIntoDirHandleTable(dh)
-	return
+	return nil
 }
 
 // ReadDir lists files into readdirop
-func (fs *BaseFS) ReadDir(ctx context.Context, op *fuseops.ReadDirOp) (err error) {
+func (fsys *Filesys) ReadDir(ctx context.Context, op *fuseops.ReadDirOp) (err error) {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
 
-	dh, ok := fys.dhTable[op.Handle]
+	dh, ok := fsys.dhTable[op.Handle]
 	if !ok {
 		return fuse.EIO
 	}
@@ -702,7 +692,7 @@ func (fsys *Filesys) ReleaseDirHandle(ctx context.Context, op *fuseops.ReleaseDi
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
 
-	fsys.dhTable.Delete(op.Handle)
+	delete(fsys.dhTable, op.Handle)
 	fsys.dhFreeList = append(fsys.dhFreeList, op.Handle)
-	return
+	return nil
 }

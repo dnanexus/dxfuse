@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -9,6 +10,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/jacobsa/fuse"
+	"github.com/jacobsa/fuse/fuseutil"
 
 	// The dxda package has the get-environment code
 	"github.com/dnanexus/dxda"
@@ -98,7 +102,7 @@ func mount(
 	mountpoint string,
 	dxEnv dxda.DXEnvironment,
 	manifest dxfuse.Manifest,
-	options Options) error {
+	options dxfuse.Options) error {
 
 	fsys, err := dxfuse.NewDxfuse(dxEnv, manifest, options)
 	if err != nil {
@@ -113,14 +117,14 @@ func mount(
 	// This should allow users other than root
 	// to access the mounted files
 	osMountOptions := make(map[string]string)
-	osMountOption["allowOther"] = ""
+	osMountOptions["allowOther"] = ""
 
 	// Fuse mount
 	cfg := &fuse.MountConfig{
 		FSName : "dxfuse",
 		ReadOnly : *readOnly,
-		ErrorLogger : logf,
-		DebugLogger : logf,
+		ErrorLogger : log.New(logf, "", log.Flags()),
+		DebugLogger : log.New(logf, "error: ", log.Flags()),
 		DisableWritebackCaching : true,
 		Options : osMountOptions,
 		Subtype : "fuse",
@@ -140,6 +144,7 @@ func mount(
 
 	// We want to do a proper shutdown so that files will be uploaded
 	fsys.Shutdown()
+	return nil
 }
 
 func main() {
@@ -228,7 +233,7 @@ result in the filesystem freezing, or being unmounted.`)
 		}
 	}
 
-	err := mount(mountpoint, dxEnv, *manifest, options)
+	err = mount(mountpoint, dxEnv, *manifest, options)
 	if err != nil {
 		fmt.Println("Error: " + err.Error())
 	}
