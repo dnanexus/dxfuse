@@ -176,7 +176,7 @@ func (fsys *Filesys) LookUpInode(ctx context.Context, op *fuseops.LookUpInodeOp)
 	if err != nil {
 		return err
 	}
-	node, err := fsys.MetadataDbLookupInDir(dir.FullPath, op.Name)
+	node, err := fsys.LookupInDir(op.Parent, dir.FullPath, op.Name)
 	if err != nil {
 		return err
 	}
@@ -595,7 +595,7 @@ func (fsys *Filesys) readEntireDir(ctx context.Context, dir Dir) ([]fuseutil.Dir
 		log.Printf("ReadDirAll dir=(%s)\n", dir.FullPath)
 	}
 
-	dxObjs, subdirs, err := fsys.MetadataDbReadDirAll(dir.FullPath)
+	dxObjs, subdirs, err := fsys.ReadDirAll(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -659,7 +659,7 @@ func (fsys *Filesys) OpenDir(ctx context.Context, op *fuseops.OpenDirOp) error {
 	defer fsys.mutex.Unlock()
 
 	// the parent is supposed to be a directory
-	dir, err := fsys.lookupDirByInode(int64(op.Inode))
+	dir, err := fsys.LookupDirByInode(int64(op.Inode))
 	if err != nil {
 		return err
 	}

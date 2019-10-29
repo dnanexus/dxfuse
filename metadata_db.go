@@ -9,8 +9,6 @@ import (
 	"runtime/debug"
 	"strings"
 	"time"
-
-	"github.com/jacobsa/fuse"
 )
 
 
@@ -265,7 +263,7 @@ func (mdb *MetadataDb) allocInodeNum() int64 {
 
 // search for a file by Id. If the file exists, return its inode and link-count. Otherwise,
 // return 0, 0.
-func (mdb *MetadataDb) lookupDataObjectInodeById(txn *sql.Tx, fId string) (int64, int, error) {
+func (mdb *MetadataDb) lookupDataObjectById(txn *sql.Tx, fId string) (int64, int, bool, error) {
 	// point lookup in the files table
 	sqlStmt := fmt.Sprintf(`
  		        SELECT inode,nlink
@@ -289,20 +287,17 @@ func (mdb *MetadataDb) lookupDataObjectInodeById(txn *sql.Tx, fId string) (int64
 	switch numRows {
 	case 0:
 		// this file doesn't exist in the database
-		return InodeInvalid, 0, nil
+		return InodeInvalid, 0, false, nil
 	case 1:
 		// correct, there is exactly one such file
-		return inode, nlink, nil
+		return inode, nlink, true, nil
 	default:
 		panic(fmt.Sprintf("Found %d data-objects with Id %s", numRows, fId))
 	}
 }
 
 // search for a file with a particular inode
-func (mdb *MetadataDb) lookupDataObjectShouldExist(
-	dirFullName string,
-	oname string,
-	inode int64) (File, error) {
+func (mdb *MetadataDb) lookupDataObjectByInode(oname string, inode int64) (File, bool, error) {
 	// point lookup in the files table
 	sqlStmt := fmt.Sprintf(`
  		        SELECT kind,id,proj_id,size,ctime,mtime,nlink,inline_data
@@ -312,8 +307,7 @@ func (mdb *MetadataDb) lookupDataObjectShouldExist(
 	rows, err := mdb.db.Query(sqlStmt)
 	if err != nil {
 		log.Printf(err.Error())
-		panic(fmt.Sprintf("could not find data-object inode=%d dir=%s name=%s",
-			inode, dirFullName, oname))
+		return errors.Newf("lookupDataObjectByInode %s inode=%d", oname, inode)
 	}
 
 	var f File
@@ -332,34 +326,30 @@ func (mdb *MetadataDb) lookupDataObjectShouldExist(
 
 	switch numRows {
 	case 0:
-		// file not found
-		panic(fmt.Sprintf(
-			"File (inode=%d, dir=%s, name=%s) should exist in the data_objects table, but doesn't exist",
-			inode, dirFullName, oname))
+		// no file found
+		return File{}, false, nil
 	case 1:
-		// correct, there is exactly one such file
-		return f, nil
+		// found exactly one file
+		return f, true, nil
 	default:
 		panic(fmt.Sprintf("Found %d data-objects of the form %s/%s",
 			numRows, dirFullName, oname))
 	}
 }
 
-func (mdb *MetadataDb) lookupDirShouldExist(parent string, dname string, inode int64) (Dir, error) {
+func (mdb *MetadataDb) LookupDirByInode(inode int64) (Dir, bool, error) {
 	// Extract information for a particular sub directory
 	sqlStmt := fmt.Sprintf(`
- 		        SELECT name,ctime,mtime
+ 		        SELECT parent,name,ctime,mtime
                         FROM directories
 			WHERE inode = '%d';`,
 		inode)
 	rows, err := mdb.db.Query(sqlStmt)
 	if err != nil {
-		return Dir{}, printErrorStack(err)
+		log.Print(err.Error())
+		return Dir{}, false, errors.Newf("lookupDirByInode inode=%d", inode)
 	}
 	var d Dir
-	d.Parent = parent
-	d.Dname = dname
-	d.FullPath = filepath.Clean(filepath.Join(parent, dname))
 	d.Inode = inode
 	d.uid = mdb.options.uid
 	d.gid = mdb.options.gid
@@ -367,26 +357,20 @@ func (mdb *MetadataDb) lookupDirShouldExist(parent string, dname string, inode i
 	numRows := 0
 	var ctime int64
 	var mtime int64
-	var name string
 	for rows.Next() {
-		rows.Scan(&name, &ctime, &mtime)
+		rows.Scan(&d.parent, &d.name, &ctime, &mtime)
 		numRows++
 	}
 	rows.Close()
 
-	if name != dname {
-		panic(fmt.Sprintf("directory name doesn't match the database entry %s != %s",
-			dname, name))
-	}
-	d.Ctime = SecondsToTime(ctime)
-	d.Mtime = SecondsToTime(mtime)
-
 	switch numRows {
 	case 0:
-		panic(fmt.Sprintf("did not find a directory with inode=%d in the directories table",
-			inode))
+		return Dir{}, false, nil
 	case 1:
-		return d, nil
+		d.Ctime = SecondsToTime(ctime)
+		d.Mtime = SecondsToTime(mtime)
+		d.FullPath = filepath.Clean(filepath.Join(d.parent, d.name))
+		return d, true, nil
 	default:
 		panic(fmt.Sprintf("found %d directory with inode=%d in the directories table",
 			numRows, inode))
@@ -394,7 +378,7 @@ func (mdb *MetadataDb) lookupDirShouldExist(parent string, dname string, inode i
 }
 
 // search for a file with a particular inode
-func (mdb *MetadataDb) LookupByInode(inode int64) (Node, error) {
+func (mdb *MetadataDb) LookupByInode(inode int64) (Node, bool, error) {
 	// point lookup in the files table
 	sqlStmt := fmt.Sprintf(`
  		        SELECT parent,name,obj\_type
@@ -419,7 +403,7 @@ func (mdb *MetadataDb) LookupByInode(inode int64) (Node, error) {
 
 	switch numRows {
 	case 0:
-		return nil, fuse.ENOENT
+		return nil, false, nil
 	case 1:
 		// correct, there is exactly one such file
 	default:
@@ -428,9 +412,9 @@ func (mdb *MetadataDb) LookupByInode(inode int64) (Node, error) {
 
 	switch obj_type {
 	case nsDirType:
-		return mdb.lookupDirShouldExist(parent, name, inode)
+		return mdb.LookupDirByInode(inode)
 	case nsDataObjType:
-		return mdb.lookupDataObjectShouldExist(parent, name, inode)
+		return mdb.lookupDataObjectByInode(name, inode)
 	default:
 		panic(fmt.Sprintf("Invalid type %d in namespace table", obj_type))
 	}
@@ -531,12 +515,12 @@ func (mdb *MetadataDb) createDataObject(
 			filepath.Clean(parentDir + "/" + fname))
 	}
 
-	inode, nlink, err := mdb.lookupDataObjectInodeById(txn, objId)
+	inode, nlink, ok, err := mdb.lookupDataObjectById(txn, objId)
 	if err != nil {
-		return InodeInvalid, err
+		return 0, err
 	}
 
-	if inode == InodeInvalid {
+	if !ok {
 		// File doesn't exist, we need to choose a new inode number.
 		// NOte: it is on stable storage, and will not change.
 		inode = mdb.allocInodeNum()
@@ -763,7 +747,7 @@ func (mdb *MetadataDb) directoryReadFromDNAx(
 	dirFullName string) error {
 
 	if mdb.options.Verbose {
-		log.Printf("describe folder %s:%s", projId, projFolder)
+		log.Printf("directoryReadFromDNAx: describe folder %s:%s", projId, projFolder)
 	}
 
 	// describe all the files
@@ -771,7 +755,8 @@ func (mdb *MetadataDb) directoryReadFromDNAx(
 	dxDir, err := DxDescribeFolder(httpClient, &mdb.dxEnv, projId, projFolder)
 	mdb.httpClientPool <- httpClient
 	if err != nil {
-		fmt.Printf("reading directory frmo DNAX: error: %s", err.Error())
+		fmt.Printf(err.Error())
+		fmt.Printf("reading directory frmo DNAx error")
 		return err
 	}
 
@@ -803,7 +788,7 @@ func (mdb *MetadataDb) directoryReadFromDNAx(
 	txn, err := mdb.db.Begin()
 	if err != nil {
 		log.Printf(err.Error())
-		return errors.Newf("error opening transaction")
+		return errors.Newf("directoryReadFromDNAx: error opening transaction")
 	}
 
 	// build the top level directory
@@ -815,7 +800,7 @@ func (mdb *MetadataDb) directoryReadFromDNAx(
 	if err != nil {
 		txn.Rollback()
 		log.Printf(err.Error())
-		return errors.Newf("Error populating directory")
+		return errors.Newf("directoryReadFromDNAx: Error populating directory")
 	}
 
 	// create the faux sub directories. These have no additional depth, and are fully
@@ -831,7 +816,7 @@ func (mdb *MetadataDb) directoryReadFromDNAx(
 		if err != nil {
 			txn.Rollback()
 			log.Printf(err.Error())
-			return log.Newf("Error creating faux directory %s", fauxDirPath)
+			return log.Newf("directoryReadFromDNAx: creating faux directory %s", fauxDirPath)
 		}
 
 		var no_subdirs []string
@@ -843,57 +828,26 @@ func (mdb *MetadataDb) directoryReadFromDNAx(
 		if err != nil {
 			txn.Rollback()
 			log.Printf(err.Error())
-			return errors.Newf("Error populating faux directory %s", fauxDirPath)
+			return errors.Newf("directoryReadFromDNAx: populating faux directory %s", fauxDirPath)
 		}
 	}
 
 	return txn.Commit()
 }
 
-// Look for a directory. Return:
-//  1. Directory exists or not, and if its populated
-//  2. inode
-func (mdb *MetadataDb) directoryLookup(dirPath string) (int, DirInfo) {
-	parentDir, basename := splitPath(dirPath)
-	sqlStmt := fmt.Sprintf(`
- 		        SELECT inode
-                        FROM namespace
-			WHERE parent = '%s' AND name = '%s' AND obj_type = '%d';`,
-		parentDir, basename, nsDirType)
-	rows, err := mdb.db.Query(sqlStmt)
-	if err != nil {
-		panic(err)
-	}
-
-	// There could be at most one such entry
-	var inode int64
-	numRows := 0
-	for rows.Next() {
-		rows.Scan(&inode)
-		numRows++
-	}
-	rows.Close()
-	if numRows == 0 {
-		log.Printf("directory %s not found", dirPath)
-		return dirDoesNotExist, nil
-	} else if numRows > 1 {
-		panic(fmt.Sprintf("Found %d entries for directory %s", numRows, dirPath))
-	}
-
-	// There is exactly one entry
-	// Extract the populated flag
+// check if a directory is fully populated.
+func (mdb *MetadataDb) dirIsPopulated(inode int64) (bool, error) {
 	sqlStmt = fmt.Sprintf(`
- 		        SELECT populated, proj_id, proj_folder, ctime, mtime
+ 		        SELECT populated
                         FROM directories
 			WHERE inode = '%d';`, inode)
 	rows, err = mdb.db.Query(sqlStmt)
 	if err != nil {
-		panic(err)
+		log.Printf(err.Error())
+		return false, errors.Newf("lookupDirByName: query directories, %s", dirPath)
 	}
 
 	var populated int
-	var dInfo DirInfo
-	dInfo.inode = inode
 	numRows = 0
 	for rows.Next() {
 		rows.Scan(&populated, &dInfo.projId, &dInfo.projFolder, &dInfo.ctime, &dInfo.mtime)
@@ -907,163 +861,41 @@ func (mdb *MetadataDb) directoryLookup(dirPath string) (int, DirInfo) {
 		panic(fmt.Sprintf("%d entries found for directory %s in table", numRows, dirPath))
 	}
 
-	var retCode int
 	switch populated {
 	case 0:
-		retCode = dirExistsButNotPopulated
+		return false, nil
 	case 1:
-		retCode = dirExistsAndPopulated
+		return true, nil
 	default:
 		panic(fmt.Sprintf("illegal value for populated field (%d)", populated))
 	}
-	return retCode, dInfo
 }
 
-// We want to check if directory D exists. Denote:
-//     P = parent(dirFullName)
-//     B = basename(dirFullName)
-//
-// For example, if the directory is "/A/B/C" then:
-//    P = "/A/B"
-//    B = "C"
-//
-// The filesystem allows accessing directory D, only if its parent
-// exists. Therefore, this method will be called only if the parent
-// exists, and is in sqlite3.
-//
-// 1. Make sure the parent directory P has been fully populated.
-// 2. Query the parent P, check if B is a member. If not, return "dirDoesNotExist".
-// 3. Having got this far, we know that D exists. Now, check if it is already fully
-//    populated.
-//
-func (mdb *MetadataDb) directoryExists(dirPath string) (int, DirInfo, error) {
-	if dirPath == "/" {
-		// The root directory has the unique property, that it does
-		// not have a parent.
-		//
-		// Skip the parent checking phase.
-		retCode, dInfo := mdb.directoryLookup(dirPath)
-		return retCode, dInfo, nil
+// Add a directory with its contents to an exisiting database
+func (mdb *MetadataDb) ReadDirAll(dir Dir) (map[string]File, map[string]Dir, error) {
+	if mdb.options.Verbose {
+		log.Printf("ReadDirAll %s", dir.FullPath)
 	}
 
-	parentDir := filepath.Dir(dirPath)
-
-	// Make sure the parent exists, and that it is populated.
-	retCode, parentDirInfo := mdb.directoryLookup(parentDir)
-	if retCode == dirDoesNotExist {
-		panic(fmt.Sprintf(
-			"Accessing directory (%s) even though parent (%s) has not been accessed",
-			dirPath, parentDir))
+	populated, err := mdb.dirIsPopulated(dir.inode)
+	if err != nil {
+		return err
 	}
-	if retCode == dirExistsButNotPopulated {
-		// Parent exists, but it has not been populated yet
-		if mdb.options.Verbose {
-			log.Printf("parent directory (%s) has not been populated yet", parentDir)
-		}
-		if parentDir == "/" {
-			panic("the root directory is not populated")
-		}
+	if !populated {
 		err := mdb.directoryReadFromDNAx(
 			parentDirInfo.inode,
 			parentDirInfo.projId, parentDirInfo.projFolder,
 			parentDirInfo.ctime, parentDirInfo.mtime,
 			parentDir)
 		if err != nil {
-			return 0, nil, err
-		}
-	}
-
-	// At this point, we can check if the directory exists
-	retCode, dInfo := mdb.directoryLookup(dirPath)
-	return retCode, dInfo, nil
-}
-
-// Add a directory with its contents to an exisiting database
-func (mdb *MetadataDb) ReadDirAll(
-	dirFullName string) (map[string]File, map[string]Dir, error) {
-	if mdb.options.Verbose {
-		log.Printf("MetadataDbReadDirAll %s", dirFullName)
-	}
-
-	retCode, dInfo, err := mdb.directoryExists(dirFullName)
-	if err != nil {
-		log.Printf("err = %s, %s", err.Error(), dirFullName)
-		return nil, nil, err
-	}
-	switch retCode {
-	case dirDoesNotExist:
-		return nil, nil, fuse.ENOENT
-	case dirExistsButNotPopulated:
-		// we need to read the directory from dnanexus.
-		// This could take a while for large directories.
-		err := mdb.directoryReadFromDNAx(
-			dInfo.inode, dInfo.projId, dInfo.projFolder,
-			dInfo.ctime, dInfo.mtime, dirFullName)
-		if err != nil {
 			return nil, nil, err
 		}
-	case dirExistsAndPopulated:
-		if mdb.options.Verbose {
-			log.Printf("Directory %s is in the DB, and is populated", dirFullName)
-		}
-	default:
-		panic(fmt.Sprintf("Bad return code %d",retCode))
 	}
 
 	// Now that the directory is in the database, we can read it with a local query.
 	return mdb.directoryReadAllEntries(dirFullName)
 }
 
-// search for a directory with a particular inode
-func (mdb *MetadataDb) lookupDir(
-	dirFullName string,
-	dname string,
-	dinode int64) (Dir, error) {
-	// point lookup in the directories table
-	sqlStmt := fmt.Sprintf(`
- 		        SELECT proj_id, ctime, mtime
-                        FROM directories
-			WHERE inode = '%d';`, dinode)
-	rows, err := mdb.db.Query(sqlStmt)
-	if err != nil {
-		log.Printf(err.Error())
-		panic(fmt.Sprintf("could not find directory inode=%d dir=%s name=%s",
-			dinode, dirFullName, dname))
-	}
-
-	numRows := 0
-	var projId string
-	var ctime int64
-	var mtime int64
-	for rows.Next() {
-		rows.Scan(&projId, &ctime, &mtime)
-		numRows++
-	}
-	rows.Close()
-
-	switch numRows {
-	case 0:
-		// file not found
-		panic(fmt.Sprintf(
-			"Directory (inode=%d, dir=%s, name=%s) should exist in the directories table, but doesn't exist",
-			dinode, dirFullName, dname))
-	case 1:
-		// correct, there is exactly one directory
-		return Dir{
-			Parent : dirFullName,
-			Dname : dname,
-			FullPath : filepath.Clean(filepath.Join(dirFullName, dname)),
-			Inode : dinode,
-			Ctime : SecondsToTime(ctime),
-			Mtime : SecondsToTime(mtime),
-			uid : options.Uid,
-			gid : options.Gid,
-		}, nil
-	default:
-		panic(fmt.Sprintf("Found %d directories of the form %s/%s",
-			numRows, dirFullName, dname))
-	}
-}
 
 // Search for a file/subdir in a directory
 func (mdb *MetadataDb) fastLookup(
@@ -1099,9 +931,9 @@ func (mdb *MetadataDb) fastLookup(
 	// There is exactly one answer
 	switch objType {
 	case nsDirType:
-		return mdb.lookupDir(dirFullName, dirOrFileName, inode)
+		return mdb.lookupDirByInode(inode)
 	case nsDataObjType:
-		return mdb.lookupDataObjectShouldExist(dirFullName, dirOrFileName, inode)
+		return mdb.lookupDataObjectByInode(dirOrFileName, inode)
 	default:
 		panic(fmt.Sprintf("Invalid object type %d", objType))
 	}
@@ -1115,8 +947,8 @@ func (mdb *MetadataDb) fastLookup(
 //
 // Note: the file might not exist.
 func (mdb *MetadataDb) LookupInDir(
-	parentDir string,
-	dirOrFileName string) (Node, error) {
+	parentInode int64,
+	dirOrFileName string) (Node, bool, error) {
 
 	retCode, _, err := mdb.directoryExists(parentDir)
 	if err != nil {
