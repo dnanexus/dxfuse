@@ -11,6 +11,7 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/dnanexus/dxda"
@@ -127,34 +128,11 @@ func (fsys *Filesys) StatFS(ctx context.Context, op *fuseops.StatFSOp) error {
 	return nil
 }
 
-func (fsys *Filesys) lookupFileByInode(inode int64) (File, error) {
-	// find the file by its inode
-	node, ok, err := fsys.mdb.LookupByInode(inode)
-	if err != nil {
-		return File{}, err
-	}
-	if !ok {
-		return File{}, fuse.ENOENT
-	}
-
-	switch node.(type) {
-	case Dir:
-		// can't open a directory
-		return File{}, fuse.ENOSYS
-	case File:
-		// cast to a File type
-		return node.(File), nil
-	default:
-		panic(fmt.Sprintf("bad type for node %v", node))
-	}
-}
-
-
 func (fsys *Filesys) LookUpInode(ctx context.Context, op *fuseops.LookUpInodeOp) error {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
 
-	dir, ok, err := fsys.mdb.LookupDirByInode(int64(op.Parent))
+	node, ok, err := fsys.mdb.LookupByInode(int64(op.Parent))
 	if err != nil {
 		return err
 	}
@@ -162,8 +140,9 @@ func (fsys *Filesys) LookUpInode(ctx context.Context, op *fuseops.LookUpInodeOp)
 		// parent directory does not exist
 		return fuse.ENOENT
 	}
+	parentDir := node.(Dir)
 
-	node, ok, err := fsys.mdb.LookupInDir(dir, op.Name)
+	node, ok, err = fsys.mdb.LookupInDir(parentDir, op.Name)
 	if err != nil {
 		return err
 	}
@@ -261,7 +240,7 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	}
 
 	// the parent is supposed to be a directory
-	dir, ok, err := fsys.mdb.LookupDirByInode(int64(op.Parent))
+	node, ok, err := fsys.mdb.LookupByInode(int64(op.Parent))
 	if err != nil {
 		return err
 	}
@@ -269,9 +248,10 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 		// parent directory does not exist
 		return fuse.ENOENT
 	}
+	parentDir := node.(Dir)
 
 	// Check if the file already exists
-	_, ok, err = fsys.mdb.LookupInDir(dir, op.Name)
+	_, ok, err = fsys.mdb.LookupInDir(parentDir, op.Name)
 	if err != nil {
 		return err
 	}
@@ -288,7 +268,7 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	cnt := atomic.AddUint64(&fsys.tmpFileCounter, 1)
 	localPath := fmt.Sprintf("%s/%d_%s", CreatedFilesDir, cnt, op.Name)
 
-	file, err := fsys.mdb.CreateFile(&dir, op.Name, localPath)
+	file, err := fsys.mdb.CreateFile(&parentDir, op.Name, localPath)
 	if err != nil {
 		return err
 	}
@@ -386,9 +366,25 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 	defer fsys.mutex.Unlock()
 
 	// find the file by its inode
-	file, err := fsys.lookupFileByInode(int64(op.Inode))
+	node, ok, err := fsys.mdb.LookupByInode(int64(op.Inode))
 	if err != nil {
 		return err
+	}
+	if !ok {
+		// file doesn't exist
+		return fuse.ENOENT
+	}
+
+	var file File
+	switch node.(type) {
+	case Dir:
+		// not allowed to open a directory
+		return syscall.EPERM
+	case File:
+		// cast to a File type
+		file = node.(File)
+	default:
+		panic(fmt.Sprintf("bad type for node %v", node))
 	}
 
 	var fh *FileHandle
@@ -669,13 +665,14 @@ func (fsys *Filesys) OpenDir(ctx context.Context, op *fuseops.OpenDirOp) error {
 	defer fsys.mutex.Unlock()
 
 	// the parent is supposed to be a directory
-	dir, ok, err := fsys.mdb.LookupDirByInode(int64(op.Inode))
+	node, ok, err := fsys.mdb.LookupByInode(int64(op.Inode))
 	if err != nil {
 		return err
 	}
 	if !ok {
 		return fuse.ENOENT
 	}
+	dir := node.(Dir)
 
 	// Read the entire directory into memory, and sort
 	// the entries properly.

@@ -99,14 +99,19 @@ type Node interface {
 
 // directories
 type Dir struct {
-	Parent    string  // the parent directory, used for debugging
-	Dname     string  // This is the last part of the full path
-	FullPath  string // combine parent and dname, then normalize
-	Inode     int64
-	Ctime     time.Time // DNAx does not record times per directory.
-	Mtime     time.Time // we use the project creation time, and mtime as an approximation.
-	uid       uint32
-	gid       uint32
+	Parent      string  // the parent directory, used for debugging
+	Dname       string  // This is the last part of the full path
+	FullPath    string // combine parent and dname, then normalize
+	Inode       int64
+	Ctime       time.Time // DNAx does not record times per directory.
+	Mtime       time.Time // we use the project creation time, and mtime as an approximation.
+	Uid         uint32
+	Gid         uint32
+
+	// extra information, used internally
+	ProjId     string
+	ProjFolder string
+	Populated   bool
 }
 
 func (d Dir) GetAttrs() (a fuseops.InodeAttributes) {
@@ -116,8 +121,8 @@ func (d Dir) GetAttrs() (a fuseops.InodeAttributes) {
 	a.Mtime = a.Mtime
 	a.Ctime = a.Ctime
 	a.Crtime = a.Ctime
-	a.Uid = d.uid
-	a.Gid = d.gid
+	a.Uid = d.Uid
+	a.Gid = d.Gid
 	return
 }
 
