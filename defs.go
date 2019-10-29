@@ -65,8 +65,9 @@ type Filesys struct {
 	// Lock for protecting shared access to the database
 	mutex sync.Mutex
 
-	// pool for performing remote read IOs
-	httpIoPool chan(*retryablehttp.Client)
+	// a pool of http clients, for short requests, such as file creation,
+	// or file describe.
+	httpClientPool    chan(*retryablehttp.Client)
 
 	// metadata database
 	mdb *MetadataDb
@@ -92,7 +93,7 @@ type Filesys struct {
 // A node is a generalization over files and directories
 type Node interface {
 	GetInode() fuseops.InodeID
-	Attrs() fuseops.InodeAttributes
+	GetAttrs() fuseops.InodeAttributes
 }
 
 
@@ -108,7 +109,7 @@ type Dir struct {
 	gid       uint32
 }
 
-func (d Dir) Attrs() (a fuseops.InodeAttributes) {
+func (d Dir) GetAttrs() (a fuseops.InodeAttributes) {
 	a.Size = 4096
 	a.Nlink = 1
 	a.Mode = os.ModeDir | 0555
@@ -156,7 +157,7 @@ type File struct {
 	InlineData string
 }
 
-func (f File) Attrs(fsys *Filesys) (a fuseops.InodeAttributes) {
+func (f File) GetAttrs() (a fuseops.InodeAttributes) {
 	a.Size = uint64(f.Size)
 	a.Nlink = uint32(f.Nlink)
 	a.Mode = 0444   // What about files in write mode?

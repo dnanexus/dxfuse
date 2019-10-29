@@ -6,20 +6,17 @@ import (
 	"log"
 	"path/filepath"
 	"os"
-	"runtime/debug"
 	"strings"
 	"time"
+
+	"github.com/dnanexus/dxda"
+	"github.com/hashicorp/go-retryablehttp" // use http libraries from hashicorp for implement retry logic
 )
 
 
 const (
 	nsDirType = 1
 	nsDataObjType = 2
-
-	// return code from a directoryExists call
-	dirDoesNotExist = 1
-	dirExistsButNotPopulated = 2
-	dirExistsAndPopulated = 3
 )
 
 type DirInfo struct {
@@ -32,42 +29,43 @@ type DirInfo struct {
 
 type MetadataDb struct {
 	// an open handle to the database
-	db  *sql.DB
+	db               *sql.DB
 
 	// a pool of http clients, for short requests, such as file creation,
 	// or file describe.
-	httpClientPool chan(*retryablehttp.Client)
+	httpClientPool    chan(*retryablehttp.Client)
 
 	// configuration information for accessing dnanexus servers
-	dxEnv dxda.DXEnvironment
+	dxEnv             dxda.DXEnvironment
 
 	// mapping from mounted directory to project ID
 	baseDir2ProjectId map[string]string
 
-	inodeCnt int64
-	options Options
+	inodeCnt          int64
+	nonce             *Nonce
+	options           Options
 }
 
-func NewMetadataDb(dbFullPath string, dxEnv dxda.DXEnvironment, options Options) (*MetadataDb, error) {
-	// initialize a pool of http-clients.
-	httpClientPool := make(chan *retryablehttp.Client, HttpClientPoolSize)
-	for i:=0; i < HttpClientPoolSize; i++ {
-		httpClientPool <- dxda.NewHttpClient(true)
-	}
-
+func NewMetadataDb(
+	dbFullPath string,
+	dxEnv dxda.DXEnvironment,
+	httpClientPool chan(*retryablehttp.Client),
+	nonce *Nonce,
+	options Options) (*MetadataDb, error) {
 	// create a connection to the database, that will be kept open
 	db, err := sql.Open("sqlite3", dbFullPath + "?mode=rwc")
 	if err != nil {
-		return nil, errors.Newf("Could not open the database %s", dbFullPath)
+		return nil, fmt.Errorf("Could not open the database %s", dbFullPath)
 	}
 
 	return &MetadataDb{
 		db : db,
 		httpClientPool : httpClientPool,
 		dxEnv : dxEnv,
-		baseDir2ProjectId: make(map[string]string)
+		baseDir2ProjectId: make(map[string]string),
 		inodeCnt : InodeRoot + 1,
-		options : Options
+		nonce: nonce,
+		options : Options,
 	}
 }
 
@@ -119,7 +117,7 @@ func (mdb *MetadataDb) init2(txn *sql.Tx) error {
 	`
 	if _, err := txn.Exec(sqlStmt); err != nil {
 		log.Printf(err.Error())
-		return errors.Newf("Could not create table data_objects", dbFullPath)
+		return fmt.Errorf("Could not create table data_objects", dbFullPath)
 	}
 
 	sqlStmt = `
@@ -128,7 +126,7 @@ func (mdb *MetadataDb) init2(txn *sql.Tx) error {
 	`
 	if _, err := txn.Exec(sqlStmt); err != nil {
 		log.Printf(err.Error())
-		return errors.Newf("Could not create index id_index on table data_objects")
+		return fmt.Errorf("Could not create index id_index on table data_objects")
 	}
 
 
@@ -150,7 +148,7 @@ func (mdb *MetadataDb) init2(txn *sql.Tx) error {
 	`
 	if _, err := txn.Exec(sqlStmt); err != nil {
 		log.Printf(err.Error())
-		return errors.Newf("Could not create table namespace")
+		return fmt.Errorf("Could not create table namespace")
 	}
 
 	sqlStmt = `
@@ -159,7 +157,7 @@ func (mdb *MetadataDb) init2(txn *sql.Tx) error {
 	`
 	if _, err := txn.Exec(sqlStmt); err != nil {
 		log.Printf(err.Error())
-		return errors.Newf("Could not create index parent_index on table namespace")
+		return fmt.Errorf("Could not create index parent_index on table namespace")
 	}
 
 	// we need to be able to get from the files/tables, back to the namespace
@@ -170,7 +168,7 @@ func (mdb *MetadataDb) init2(txn *sql.Tx) error {
 	`
 	if _, err := txn.Exec(sqlStmt); err != nil {
 		log.Printf(err.Error())
-		return errors.Newf("Could not create index inode_rev_index on table namespace")
+		return fmt.Errorf("Could not create index inode_rev_index on table namespace")
 	}
 
 	// A separate table for directories.
@@ -190,7 +188,7 @@ func (mdb *MetadataDb) init2(txn *sql.Tx) error {
 	`
 	if _, err := txn.Exec(sqlStmt); err != nil {
 		log.Printf(err.Error())
-		return errors.Newf("Could not create table directories")
+		return fmt.Errorf("Could not create table directories")
 	}
 
 	// Adding a root directory. The root directory does
@@ -205,7 +203,7 @@ func (mdb *MetadataDb) init2(txn *sql.Tx) error {
 		nowSeconds, nowSeconds)
 	if _, err := txn.Exec(sqlStmt); err != nil {
 		log.Printf(err.Error())
-		return errors.Newf("Could not create root directory")
+		return fmt.Errorf("Could not create root directory")
 	}
 
 	// We want the root path to match the results of splitPath("/")
@@ -216,7 +214,7 @@ func (mdb *MetadataDb) init2(txn *sql.Tx) error {
 		rParent, rBase, nsDirType, InodeRoot)
 	if _, err := txn.Exec(sqlStmt); err != nil {
 		log.Printf(err.Error())
-		return errors.Newf("Could not create root inode (%d)", InodeRoot)
+		return fmt.Errorf("Could not create root inode (%d)", InodeRoot)
 	}
 
 	return nil
@@ -231,19 +229,19 @@ func (mdb *MetadataDb) Init() error {
 	txn, err := mdb.db.Begin()
 	if err != nil {
 		log.Printf(err.Error())
-		return errors.Newf("Could not open transaction")
+		return fmt.Errorf("Could not open transaction")
 	}
 
 	if err := mdb.init2(txn); err != nil {
 		txn.Rollback()
 		log.Printf(err.Error())
-		return errors.Newf("Could not initialize database")
+		return fmt.Errorf("Could not initialize database")
 	}
 
 	if err := txn.Commit(); err != nil {
 		txn.Rollback()
 		log.Printf(err.Error())
-		return errors.Newf("Error during commit")
+		return fmt.Errorf("Error during commit")
 	}
 
 	if mdb.options.Verbose {
@@ -307,7 +305,7 @@ func (mdb *MetadataDb) lookupDataObjectByInode(oname string, inode int64) (File,
 	rows, err := mdb.db.Query(sqlStmt)
 	if err != nil {
 		log.Printf(err.Error())
-		return errors.Newf("lookupDataObjectByInode %s inode=%d", oname, inode)
+		return fmt.Errorf("lookupDataObjectByInode %s inode=%d", oname, inode)
 	}
 
 	var f File
@@ -347,7 +345,7 @@ func (mdb *MetadataDb) LookupDirByInode(inode int64) (Dir, bool, error) {
 	rows, err := mdb.db.Query(sqlStmt)
 	if err != nil {
 		log.Print(err.Error())
-		return Dir{}, false, errors.Newf("lookupDirByInode inode=%d", inode)
+		return Dir{}, false, fmt.Errorf("lookupDirByInode inode=%d", inode)
 	}
 	var d Dir
 	d.Inode = inode
@@ -497,9 +495,13 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 	return files, subdirs, nil
 }
 
-// Create an entry representing one remote file. This is used by
-// dxWDL as a way to stream individual files.
+// Create an entry representing one remote file. This has
+// two use cases:
+//  1) Create a singleton file from the manifest
+//  2) Create a new file, and upload it later to the platform
+//  3) Discover a file in a directory, which may actually be a link to another file.
 func (mdb *MetadataDb) createDataObject(
+	mustBeNewObject bool,
 	txn *sql.Tx,
 	kind int,
 	projId string,
@@ -537,6 +539,10 @@ func (mdb *MetadataDb) createDataObject(
 		}
 	} else {
 		// File already exists, we need to increase the link count
+		if mustBeNewObject {
+			panic(fmt.Sprintf("Object %s:%s must not be already in the database. We are trying to create it again", projId, objId))
+		}
+
 		sqlStmt := fmt.Sprintf(`
  		        UPDATE data_objects
                         SET nlink = '%d'
@@ -688,7 +694,9 @@ func (mdb *MetadataDb) populateDir(
 		kind := kindOfFile(o)
 		inlineData := inlineDataOfFile(kind, o)
 
-		_, err := mdb.createDataObject(txn,
+		_, err := mdb.createDataObject(
+			false,
+			txn,
 			kind,
 			o.ProjId,
 			o.Id,
@@ -788,7 +796,7 @@ func (mdb *MetadataDb) directoryReadFromDNAx(
 	txn, err := mdb.db.Begin()
 	if err != nil {
 		log.Printf(err.Error())
-		return errors.Newf("directoryReadFromDNAx: error opening transaction")
+		return fmt.Errorf("directoryReadFromDNAx: error opening transaction")
 	}
 
 	// build the top level directory
@@ -800,7 +808,7 @@ func (mdb *MetadataDb) directoryReadFromDNAx(
 	if err != nil {
 		txn.Rollback()
 		log.Printf(err.Error())
-		return errors.Newf("directoryReadFromDNAx: Error populating directory")
+		return fmt.Errorf("directoryReadFromDNAx: Error populating directory")
 	}
 
 	// create the faux sub directories. These have no additional depth, and are fully
@@ -828,7 +836,7 @@ func (mdb *MetadataDb) directoryReadFromDNAx(
 		if err != nil {
 			txn.Rollback()
 			log.Printf(err.Error())
-			return errors.Newf("directoryReadFromDNAx: populating faux directory %s", fauxDirPath)
+			return fmt.Errorf("directoryReadFromDNAx: populating faux directory %s", fauxDirPath)
 		}
 	}
 
@@ -844,7 +852,7 @@ func (mdb *MetadataDb) dirIsPopulated(inode int64) (bool, error) {
 	rows, err = mdb.db.Query(sqlStmt)
 	if err != nil {
 		log.Printf(err.Error())
-		return false, errors.Newf("lookupDirByName: query directories, %s", dirPath)
+		return false, fmt.Errorf("lookupDirByName: query directories, %s", dirPath)
 	}
 
 	var populated int
@@ -898,18 +906,23 @@ func (mdb *MetadataDb) ReadDirAll(dir Dir) (map[string]File, map[string]Dir, err
 
 
 // Search for a file/subdir in a directory
-func (mdb *MetadataDb) fastLookup(
-	dirFullName string,
-	dirOrFileName string) (Node, error) {
+// Look for file [filename] in directory [parent]/[dname].
+//
+// 1. Look if the directory has already been downloaded and placed in the DB
+// 2. If not, populate it
+// 3. Do a lookup in the directory.
+//
+// Note: the file might not exist.
+func (mdb *MetadataDb) LookupInDir(dir Dir, dirFullName string) (Node, bool, error) {
 	// point lookup in the namespace
 	sqlStmt := fmt.Sprintf(`
  		        SELECT obj_type,inode
                         FROM namespace
 			WHERE parent = '%s' AND name = '%s';`,
-		dirFullName, dirOrFileName)
+		dir.FullPath, dirOrFileName)
 	rows, err := mdb.db.Query(sqlStmt)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	var objType int
@@ -921,7 +934,7 @@ func (mdb *MetadataDb) fastLookup(
 	}
 	rows.Close()
 	if numRows == 0 {
-		return nil, fuse.ENOENT
+		return nil, false, nil
 	}
 	if numRows > 1 {
 		panic(fmt.Sprintf("Found %d files of the form %s/%s",
@@ -937,41 +950,6 @@ func (mdb *MetadataDb) fastLookup(
 	default:
 		panic(fmt.Sprintf("Invalid object type %d", objType))
 	}
-}
-
-// Look for file [filename] in directory [parent]/[dname].
-//
-// 1. Look if the directory has already been downloaded and placed in the DB
-// 2. If not, populate it
-// 3. Do a lookup in the directory.
-//
-// Note: the file might not exist.
-func (mdb *MetadataDb) LookupInDir(
-	parentInode int64,
-	dirOrFileName string) (Node, bool, error) {
-
-	retCode, _, err := mdb.directoryExists(parentDir)
-	if err != nil {
-		log.Printf("LookupInDir errow while figuring out if %s exists", parentDir)
-		return nil, err
-	}
-	switch retCode {
-	case dirDoesNotExist:
-		return nil, fuse.ENOENT
-	case dirExistsButNotPopulated:
-		// The directory exists, but has not been populated yet.
-		_, _, err := mdb.MetadataDbReadDirAll(parentDir)
-		if err != nil {
-			return nil, err
-		}
-	case dirExistsAndPopulated:
-		// The directory exists, and has already been populated.
-		// I think this is the normal path. There is nothing to do here.
-	default:
-		panic(fmt.Sprintf("Bad return code %d",retCode))
-	}
-
-	return mdb.fastLookup(parentDir, dirOrFileName)
 }
 
 // Build a toplevel directory for each project.
@@ -1017,6 +995,7 @@ func (mdb *MetadataDb) PopulateRoot(manifest Manifest) error {
 	// create individual files
 	for _, fl := range manifest.Files {
 		_, err := mdb.createDataObject(
+			false,
 			txn, FK_Regular, fl.ProjId, fl.FileId,
 			fl.Size, fl.CtimeSeconds, fl.MtimeSeconds,
 			fl.Parent, fl.Fname, "")
@@ -1069,46 +1048,38 @@ func (mdb *MetadataDb) projectIdAndFolder(dirname string) (string, string) {
 	panic(fmt.Sprintf("directory %s does not belong to any project", dirname))
 }
 
-func (mdb *MetadataDb) CreateFile(dir *Dir, fname string, localPath string) (*File, error) {
+// We know that the parent directory exists, is populated, and the file does not exist
+func (mdb *MetadataDb) CreateFile(dir *Dir, fname string, localPath string) (File, error) {
 	if mdb.options.Verbose {
 		log.Printf("CreateFile %s/%s  localPath=%s", dir.FullPath, fname, localPath)
 	}
 
-	// Check if the directory already contains [name].
-	_, err := mdb.LookupInDir(dir.FullPath, fname)
-	if err == nil {
-		// file already exists
-		return nil, fuse.EEXIST
-	}
-	if err != fuse.ENOENT {
-		// An error occured. We are expecting the file to -not- exist.
-		return nil, err
-	}
-
-	projId,folder := fsys.projectIdAndFolder(dir.FullPath)
-	if fsys.options.Verbose {
+	projId,folder := mdb.projectIdAndFolder(dir.FullPath)
+	if mdb.options.Verbose {
 		log.Printf("projId = %s", projId)
 	}
 
 	// now we know this is a new file
 	// 1. create it on the platform
-	httpClient := <- fsys.httpClientPool
+	httpClient := <- mdb.httpClientPool
 	fileId, err := DxFileNew(
-		httpClient, &fsys.dxEnv,
-		fsys.nonce.String(),
+		httpClient, &mdb.dxEnv,
+		mdb.nonce.String(),
 		projId, fname, folder)
-	fsys.httpClientPool <- httpClient
+	mdb.httpClientPool <- httpClient
 	if err != nil {
 		return nil, err
 	}
 
 	// 2. insert into the database
-	txn, err := fsys.db.Begin()
+	txn, err := mdb.db.Begin()
 	if err != nil {
-		return nil, printErrorStack(err)
+		log.Printf(err.Error())
+		return nil, fmt.Errorf("CreateFile error opening transaction")
 	}
 	nowSeconds := time.Now().Unix()
-	inode, err := fsys.createDataObject(
+	inode, err := mdb.createDataObject(
+		true,
 		txn,
 		FK_Regular,
 		projId,
@@ -1121,10 +1092,12 @@ func (mdb *MetadataDb) CreateFile(dir *Dir, fname string, localPath string) (*Fi
 		localPath)
 	if err != nil {
 		txn.Rollback()
-		return nil, printErrorStack(err)
+		log.Printf(err.Error())
+		return nil, fmt.Errorf("CreateFile error creating data object")
 	}
 	if err := txn.Commit(); err != nil {
-		return nil, err
+		log.Printf(err.Error())
+		return nil, fmt.Errorf("CreateFile commit failed")
 	}
 
 	// 3. return a File structure
@@ -1143,10 +1116,11 @@ func (mdb *MetadataDb) CreateFile(dir *Dir, fname string, localPath string) (*Fi
 	return file, nil
 }
 
-func (fsys *Filesys) MetadataDbUpdateFile(f File, fInfo os.FileInfo) error {
-	txn, err := fsys.db.Begin()
+func (mdb *MetadataDb) UpdateFile(f File, fInfo os.FileInfo) error {
+	txn, err := mdb.db.Begin()
 	if err != nil {
-		return printErrorStack(err)
+		log.Printf(err.Error())
+		return fmt.Errorf("UpdateFile error opening transaction")
 	}
 
 	modTimeSec := fInfo.ModTime().Unix()
@@ -1158,7 +1132,15 @@ func (fsys *Filesys) MetadataDbUpdateFile(f File, fInfo os.FileInfo) error {
 
 	if _, err := txn.Exec(sqlStmt); err != nil {
 		txn.Rollback()
-		return printErrorStack(err)
+		log.Printf(err.Error())
+		return fmt.Errorf("UpdateFile error executing transaction")
 	}
 	return txn.Commit()
+}
+
+func (mdb *MetadataDb) Shutdown() {
+	if err := mdb.dv,Close(); err != nil {
+		log.Printf(err.Error())
+		log.Printf("Error closing the sqlite database %s", mdb.dbFullPath)
+	}
 }

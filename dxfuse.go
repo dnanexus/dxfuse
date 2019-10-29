@@ -2,7 +2,6 @@ package dxfuse
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -49,28 +48,28 @@ func NewDxfuse(
 	for i:=0; i < HttpClientPoolSize; i++ {
 		httpIoPool <- dxda.NewHttpClient(true)
 	}
+	nonce := NewNonce()
 
 	fsys := &Filesys{
 		dxEnv : dxEnv,
 		options: options,
 		dbFullPath : DatabaseFile,
 		mutex : sync.Mutex{},
-		httpIoPool : httpIoPool,
-		baseDir2ProjectId : make(map[string]string),
-		projId2Desc : make(map[string]DxDescribePrj),
+		httpClientPool : httpIoPool,
 		fhTable : make(map[fuseops.HandleID]*FileHandle),
 		fhFreeList : make([]fuseops.HandleID, 0),
 		dhTable : make(map[fuseops.HandleID]*DirHandle),
 		dhFreeList : make([]fuseops.HandleID, 0),
-		nonce : nonceMake(),
+		nonce : nonce,
 		tmpFileCounter : 0,
 	}
 
 	// create the metadata database
-	fsys.mdb, err = NewMetadataDb(fsys.dbFullPath, dxEnv, options)
+	mdb, err := NewMetadataDb(fsys.dbFullPath, dxEnv, httpIoPool, nonce, options)
 	if err != nil {
 		return nil, err
 	}
+	fsys.mdb = mdb
 	if err := fsys.mdb.Init(); err != nil {
 		return nil, err
 	}
@@ -82,17 +81,17 @@ func NewDxfuse(
 	fsys.pgs = NewPrefetchGlobalState(options.VerboseLevel)
 
 	// describe all the projects, we need their upload parameters
-	httpClient := <- fsys.httpIoPool
+	httpClient := <- fsys.httpClientPool
 	defer func() {
 		fsys.httpClientPool <- httpClient
 	} ()
 
 	projId2Desc := make(map[string]DxDescribePrj)
 	for _, d := range manifest.Directories {
-		pDesc, err := DxDescribeProject(httpClient, &dxEnv, d.pId)
+		pDesc, err := DxDescribeProject(httpClient, &dxEnv, d.ProjId)
 		if err != nil {
-			log.Printf("Could not describe project %s, check permissions", pId)
-			return err
+			log.Printf("Could not describe project %s, check permissions", d.ProjId)
+			return nil, err
 		}
 		projId2Desc[pDesc.Id] = *pDesc
 	}
@@ -113,17 +112,14 @@ func (fsys *Filesys) Shutdown() {
 	// We do not remove the metadata database file, so it could be inspected offline.
 	log.Printf("shutting down dxfuse")
 
+	// stop any background operations the metadata database may be running.
+	fsys.mdb.Shutdown()
+
 	// stop the running threads in the prefetch module
 	fsys.pgs.Shutdown()
 
 	// complete pending uploads
 	fsys.fugs.Shutdown()
-
-	if err := fsys.db.Close(); err != nil {
-		log.Printf("Error closing the sqlite database %s, err=%s",
-			fsys.dbFullPath,
-			err.Error())
-	}
 }
 
 
@@ -133,10 +129,14 @@ func (fsys *Filesys) StatFS(ctx context.Context, op *fuseops.StatFSOp) error {
 
 func (fsys *Filesys) lookupFileByInode(inode int64) (File, error) {
 	// find the file by its inode
-	node, err := fsys.MetadataDbLookupByInode(inode)
+	node, ok, err := fsys.mdb.LookupByInode(inode)
 	if err != nil {
 		return File{}, err
 	}
+	if !ok {
+		return File{}, fuse.ENOENT
+	}
+
 	switch node.(type) {
 	case Dir:
 		// can't open a directory
@@ -150,40 +150,31 @@ func (fsys *Filesys) lookupFileByInode(inode int64) (File, error) {
 }
 
 
-func (fsys *Filesys) lookupDirByInode(inode int64) (Dir, error) {
-	// find the file by its inode
-	node, err := fsys.MetadataDbLookupByInode(inode)
-	if err != nil {
-		return Dir{}, err
-	}
-	switch node.(type) {
-	case Dir:
-		// cast to Dir type
-		return node.(Dir), nil
-	case File:
-		return Dir{}, fuse.ENOSYS
-	default:
-		panic(fmt.Sprintf("bad type for node %v", node))
-	}
-}
-
-
 func (fsys *Filesys) LookUpInode(ctx context.Context, op *fuseops.LookUpInodeOp) error {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
 
-	dir, err := fsys.lookupDirByInode(int64(op.Parent))
+	dir, ok, err := fsys.mdb.LookupDirByInode(int64(op.Parent))
 	if err != nil {
 		return err
 	}
-	node, err := fsys.LookupInDir(op.Parent, dir.FullPath, op.Name)
+	if !ok {
+		// parent directory does not exist
+		return fuse.ENOENT
+	}
+
+	node, ok, err := fsys.mdb.LookupInDir(dir, op.Name)
 	if err != nil {
 		return err
+	}
+	if !ok {
+		// file does not exist
+		return fuse.ENOENT
 	}
 
 	// Fill in the response.
 	op.Entry.Child = node.GetInode()
-	op.Entry.Attributes = node.Attrs(fsys)
+	op.Entry.Attributes = node.GetAttrs()
 
 	// We don't spontaneously mutate, so the kernel can cache as long as it wants
 	// (since it also handles invalidation).
@@ -198,17 +189,20 @@ func (fsys *Filesys) GetInodeAttributes(ctx context.Context, op *fuseops.GetInod
 	defer fsys.mutex.Unlock()
 
 	// Grab the inode.
-	node, err := fsys.MetadataDbLookupByInode(int64(op.Inode))
+	node, ok, err := fsys.mdb.LookupByInode(int64(op.Inode))
+	if err != nil {
+		log.Printf(err.Error())
+		return fmt.Errorf("GetInodeAttributes error")
+	}
+	if !ok {
+		return fuse.ENOENT
+	}
 	if fsys.options.Verbose {
 		log.Printf("GetInodeAttributes(inode=%d, %v)", int64(op.Inode), node)
 	}
-	if err != nil {
-		log.Printf("error = %s", err.Error())
-		return err
-	}
 
 	// Fill in the response.
-	op.Attributes = node.Attrs(fsys)
+	op.Attributes = node.GetAttrs()
 
 	// We don't spontaneously mutate, so the kernel can cache as long as it wants
 	// (since it also handles invalidation).
@@ -267,19 +261,35 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	}
 
 	// the parent is supposed to be a directory
-	dir, err := fsys.lookupDirByInode(int64(op.Parent))
+	dir, ok, err := fsys.mdb.LookupDirByInode(int64(op.Parent))
 	if err != nil {
 		return err
 	}
+	if !ok {
+		// parent directory does not exist
+		return fuse.ENOENT
+	}
+
+	// Check if the file already exists
+	_, ok, err = fsys.mdb.LookupInDir(dir, op.Name)
+	if err != nil {
+		return err
+	}
+	if ok {
+		// The file already exists
+		return fuse.EEXIST
+	}
+
+	// we now know that the parent directory exists, and the file
+	// does not.
 
 	// Create a temporary file in a protected directory, used only
 	// by dxfuse.
 	cnt := atomic.AddUint64(&fsys.tmpFileCounter, 1)
 	localPath := fmt.Sprintf("%s/%d_%s", CreatedFilesDir, cnt, op.Name)
 
-	file, err := fsys.MetadataDbCreateFile(&dir, op.Name, localPath)
+	file, err := fsys.mdb.CreateFile(&dir, op.Name, localPath)
 	if err != nil {
-		// The error here will be EEXIST, if the file already exists
 		return err
 	}
 
@@ -313,7 +323,7 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 
 	fh := FileHandle{
 		fKind : RW_File,
-		f : *file,
+		f : file,
 		url : nil,
 		localPath : &localPath,
 		fd : writer,
@@ -330,9 +340,9 @@ func (fsys *Filesys) openRegularFile(ctx context.Context, op *fuseops.OpenFileOp
 		f.ProjId, secondsInYear)
 
 	// used a shared http client
-	httpClient := <- fsys.httpIoPool
+	httpClient := <- fsys.httpClientPool
 	body, err := dxda.DxAPI(httpClient, &fsys.dxEnv, fmt.Sprintf("%s/download", f.Id), payload)
-	fsys.httpIoPool <- httpClient
+	fsys.httpClientPool <- httpClient
 	if err != nil {
 		return nil, err
 	}
@@ -444,7 +454,7 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 			return err
 		}
 		// update database entry
-		if err := fsys.MetadataDbUpdateFile(fh.f, fInfo); err != nil {
+		if err := fsys.mdb.UpdateFile(fh.f, fInfo); err != nil {
 			return err
 		}
 
@@ -504,9 +514,9 @@ func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp,
 	}
 
 	// Take an http client from the pool. Return it when done.
-	httpClient := <- fsys.httpIoPool
+	httpClient := <- fsys.httpClientPool
 	body,err := dxda.DxHttpRequest(httpClient, "GET", fh.url.URL, headers, []byte("{}"))
-	fsys.httpIoPool <- httpClient
+	fsys.httpClientPool <- httpClient
 	if err != nil {
 		return err
 	}
@@ -595,7 +605,7 @@ func (fsys *Filesys) readEntireDir(ctx context.Context, dir Dir) ([]fuseutil.Dir
 		log.Printf("ReadDirAll dir=(%s)\n", dir.FullPath)
 	}
 
-	dxObjs, subdirs, err := fsys.ReadDirAll(dir)
+	dxObjs, subdirs, err := fsys.mdb.ReadDirAll(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -659,9 +669,12 @@ func (fsys *Filesys) OpenDir(ctx context.Context, op *fuseops.OpenDirOp) error {
 	defer fsys.mutex.Unlock()
 
 	// the parent is supposed to be a directory
-	dir, err := fsys.LookupDirByInode(int64(op.Inode))
+	dir, ok, err := fsys.mdb.LookupDirByInode(int64(op.Inode))
 	if err != nil {
 		return err
+	}
+	if !ok {
+		return fuse.ENOENT
 	}
 
 	// Read the entire directory into memory, and sort
