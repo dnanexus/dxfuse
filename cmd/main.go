@@ -117,7 +117,8 @@ func mount(
 	// This should allow users other than root
 	// to access the mounted files
 	osMountOptions := make(map[string]string)
-	osMountOptions["allowOther"] = ""
+	// This doesn't work for some reason
+	osMountOptions["allow_other"] = ""
 
 	// Fuse mount
 	cfg := &fuse.MountConfig{
@@ -127,7 +128,6 @@ func mount(
 		DebugLogger : log.New(logf, "error: ", log.Flags()),
 		DisableWritebackCaching : true,
 		Options : osMountOptions,
-		Subtype : "fuse",
 	}
 
 	log.Printf("mounting dxfuse")

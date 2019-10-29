@@ -178,11 +178,15 @@ const (
 	minChunkSize = 16 * MiB
 )
 
-func NewFileUploadGlobalState(fsys *Filesys) *FileUploadGlobalState {
+func NewFileUploadGlobalState(
+	options Options,
+	dxEnv dxda.DXEnvironment,
+	projId2Desc map[string]DxDescribePrj) *FileUploadGlobalState {
+
 	fugs := &FileUploadGlobalState{
-		dxEnv : fsys.dxEnv,
-		options : fsys.options,
-		projId2Desc : fsys.projId2Desc,
+		dxEnv : dxEnv,
+		options : options,
+		projId2Desc : projId2Desc,
 		reqQueue : make(chan UploadReq),
 	}
 

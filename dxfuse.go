@@ -44,16 +44,10 @@ func NewDxfuse(
 		os.Mkdir(CreatedFilesDir, 0755)
 	}
 
-	// create a connection to the database, that will be kept open
-	db, err := sql.Open("sqlite3", DatabaseFile + "?mode=rwc")
-	if err != nil {
-		return nil, err
-	}
-
 	// initialize a pool of http-clients.
-	httpClientPool := make(chan *retryablehttp.Client, HttpClientPoolSize)
+	httpIoPool := make(chan *retryablehttp.Client, HttpClientPoolSize)
 	for i:=0; i < HttpClientPoolSize; i++ {
-		httpClientPool <- dxda.NewHttpClient(true)
+		httpIoPool <- dxda.NewHttpClient(true)
 	}
 
 	fsys := &Filesys{
@@ -61,9 +55,7 @@ func NewDxfuse(
 		options: options,
 		dbFullPath : DatabaseFile,
 		mutex : sync.Mutex{},
-		inodeCnt : InodeRoot + 2,
-		db : db,
-		httpClientPool : httpClientPool,
+		httpIoPool : httpIoPool,
 		baseDir2ProjectId : make(map[string]string),
 		projId2Desc : make(map[string]DxDescribePrj),
 		fhTable : make(map[fuseops.HandleID]*FileHandle),
@@ -75,19 +67,39 @@ func NewDxfuse(
 	}
 
 	// create the metadata database
-	if err := fsys.MetadataDbInit(); err != nil {
+	fsys.mdb, err = NewMetadataDb(fsys.dbFullPath, dxEnv, options)
+	if err != nil {
 		return nil, err
 	}
-
-	if err := fsys.MetadataDbPopulateRoot(manifest); err != nil {
+	if err := fsys.mdb.Init(); err != nil {
+		return nil, err
+	}
+	if err := fsys.mdb.PopulateRoot(manifest); err != nil {
 		return nil, err
 	}
 
 	// initialize prefetching state
 	fsys.pgs = NewPrefetchGlobalState(options.VerboseLevel)
 
+	// describe all the projects, we need their upload parameters
+	httpClient := <- fsys.httpIoPool
+	defer func() {
+		fsys.httpClientPool <- httpClient
+	} ()
+
+	projId2Desc := make(map[string]DxDescribePrj)
+	for _, d := range manifest.Directories {
+		pDesc, err := DxDescribeProject(httpClient, &dxEnv, d.pId)
+		if err != nil {
+			log.Printf("Could not describe project %s, check permissions", pId)
+			return err
+		}
+		projId2Desc[pDesc.Id] = *pDesc
+	}
+
+
 	// initialize background upload state
-	fsys.fugs = NewFileUploadGlobalState(fsys)
+	fsys.fugs = NewFileUploadGlobalState(options, dxEnv, projId2Desc)
 
 	return fsys, nil
 }
@@ -187,7 +199,11 @@ func (fsys *Filesys) GetInodeAttributes(ctx context.Context, op *fuseops.GetInod
 
 	// Grab the inode.
 	node, err := fsys.MetadataDbLookupByInode(int64(op.Inode))
+	if fsys.options.Verbose {
+		log.Printf("GetInodeAttributes(inode=%d, %v)", int64(op.Inode), node)
+	}
 	if err != nil {
+		log.Printf("error = %s", err.Error())
 		return err
 	}
 
@@ -314,9 +330,9 @@ func (fsys *Filesys) openRegularFile(ctx context.Context, op *fuseops.OpenFileOp
 		f.ProjId, secondsInYear)
 
 	// used a shared http client
-	httpClient := <- fsys.httpClientPool
+	httpClient := <- fsys.httpIoPool
 	body, err := dxda.DxAPI(httpClient, &fsys.dxEnv, fmt.Sprintf("%s/download", f.Id), payload)
-	fsys.httpClientPool <- httpClient
+	fsys.httpIoPool <- httpClient
 	if err != nil {
 		return nil, err
 	}
@@ -488,9 +504,9 @@ func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp,
 	}
 
 	// Take an http client from the pool. Return it when done.
-	httpClient := <- fsys.httpClientPool
+	httpClient := <- fsys.httpIoPool
 	body,err := dxda.DxHttpRequest(httpClient, "GET", fh.url.URL, headers, []byte("{}"))
-	fsys.httpClientPool <- httpClient
+	fsys.httpIoPool <- httpClient
 	if err != nil {
 		return err
 	}

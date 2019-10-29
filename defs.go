@@ -1,7 +1,6 @@
 package dxfuse
 
 import (
-	"database/sql"
 	"os"
 	"sync"
 	"time"
@@ -65,24 +64,18 @@ type Filesys struct {
 
 	// Lock for protecting shared access to the database
 	mutex sync.Mutex
-	inodeCnt int64
 
-	// an open handle to the database
-	db  *sql.DB
+	// pool for performing remote read IOs
+	httpIoPool chan(*retryablehttp.Client)
+
+	// metadata database
+	mdb *MetadataDb
 
 	// prefetch state for all files
 	pgs *PrefetchGlobalState
 
 	// background upload state
 	fugs *FileUploadGlobalState
-
-	// a pool of http clients, for short requests, such as file creation,
-	// or file describe.
-	httpClientPool chan(*retryablehttp.Client)
-
-	// mapping from mounted directory to project ID
-	baseDir2ProjectId map[string]string
-	projId2Desc map[string]DxDescribePrj
 
 	// all open files
 	fhTable map[fuseops.HandleID]*FileHandle
@@ -99,7 +92,7 @@ type Filesys struct {
 // A node is a generalization over files and directories
 type Node interface {
 	GetInode() fuseops.InodeID
-	Attrs(fsys *Filesys) fuseops.InodeAttributes
+	Attrs() fuseops.InodeAttributes
 }
 
 
@@ -111,17 +104,19 @@ type Dir struct {
 	Inode     int64
 	Ctime     time.Time // DNAx does not record times per directory.
 	Mtime     time.Time // we use the project creation time, and mtime as an approximation.
+	uid       uint32
+	gid       uint32
 }
 
-func (d Dir) Attrs(fsys *Filesys) (a fuseops.InodeAttributes) {
+func (d Dir) Attrs() (a fuseops.InodeAttributes) {
 	a.Size = 4096
 	a.Nlink = 1
 	a.Mode = os.ModeDir | 0555
 	a.Mtime = a.Mtime
 	a.Ctime = a.Ctime
 	a.Crtime = a.Ctime
-	a.Uid = fsys.options.Uid
-	a.Gid = fsys.options.Gid
+	a.Uid = d.uid
+	a.Gid = d.gid
 	return
 }
 
@@ -153,6 +148,8 @@ type File struct {
 	Ctime      time.Time
 	Mtime      time.Time
 	Nlink      int
+	Uid       uint32
+	Gid       uint32
 
 	// for a symlink, it holds the path.
 	// For a regular file, a path to a local copy (if any).
@@ -163,11 +160,11 @@ func (f File) Attrs(fsys *Filesys) (a fuseops.InodeAttributes) {
 	a.Size = uint64(f.Size)
 	a.Nlink = uint32(f.Nlink)
 	a.Mode = 0444   // What about files in write mode?
-	a.Mtime = a.Mtime
-	a.Ctime = a.Ctime
-	a.Crtime = a.Ctime
-	a.Uid = fsys.options.Uid
-	a.Gid = fsys.options.Gid
+	a.Mtime = f.Mtime
+	a.Ctime = f.Ctime
+	a.Crtime = f.Ctime
+	a.Uid = f.Uid
+	a.Gid = f.Gid
 	return
 }
 
