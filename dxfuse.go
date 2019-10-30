@@ -142,7 +142,7 @@ func (fsys *Filesys) LookUpInode(ctx context.Context, op *fuseops.LookUpInodeOp)
 	}
 	parentDir := node.(Dir)
 
-	node, ok, err = fsys.mdb.LookupInDir(parentDir, op.Name)
+	node, ok, err = fsys.mdb.LookupInDir(&parentDir, op.Name)
 	if err != nil {
 		return err
 	}
@@ -251,7 +251,7 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	parentDir := node.(Dir)
 
 	// Check if the file already exists
-	_, ok, err = fsys.mdb.LookupInDir(parentDir, op.Name)
+	_, ok, err = fsys.mdb.LookupInDir(&parentDir, op.Name)
 	if err != nil {
 		return err
 	}
@@ -609,7 +609,7 @@ func (fsys *Filesys) readEntireDir(ctx context.Context, dir Dir) ([]fuseutil.Dir
 		log.Printf("ReadDirAll dir=(%s)\n", dir.FullPath)
 	}
 
-	dxObjs, subdirs, err := fsys.mdb.ReadDirAll(dir)
+	dxObjs, subdirs, err := fsys.mdb.ReadDirAll(&dir)
 	if err != nil {
 		return nil, err
 	}

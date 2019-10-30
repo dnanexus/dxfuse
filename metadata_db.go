@@ -854,7 +854,7 @@ func (mdb *MetadataDb) directoryReadFromDNAx(
 
 
 // Add a directory with its contents to an exisiting database
-func (mdb *MetadataDb) ReadDirAll(dir Dir) (map[string]File, map[string]Dir, error) {
+func (mdb *MetadataDb) ReadDirAll(dir *Dir) (map[string]File, map[string]Dir, error) {
 	if mdb.options.Verbose {
 		log.Printf("ReadDirAll %s", dir.FullPath)
 	}
@@ -870,6 +870,7 @@ func (mdb *MetadataDb) ReadDirAll(dir Dir) (map[string]File, map[string]Dir, err
 		if err != nil {
 			return nil, nil, err
 		}
+		dir.Populated = true
 	}
 
 	// Now that the directory is in the database, we can read it with a local query.
@@ -885,7 +886,23 @@ func (mdb *MetadataDb) ReadDirAll(dir Dir) (map[string]File, map[string]Dir, err
 // 3. Do a lookup in the directory.
 //
 // Note: the file might not exist.
-func (mdb *MetadataDb) LookupInDir(dir Dir, dirOrFileName string) (Node, bool, error) {
+func (mdb *MetadataDb) LookupInDir(dir *Dir, dirOrFileName string) (Node, bool, error) {
+	if !dir.Populated {
+		files, dirs, err := mdb.ReadDirAll(dir)
+		if err != nil {
+			return nil, false, err
+		}
+		file, ok := files[dirOrFileName]
+		if ok {
+			return file, true, nil
+		}
+		dir, ok := dirs[dirOrFileName]
+		if ok {
+			return dir, true, nil
+		}
+		return nil, false, nil
+	}
+
 	// point lookup in the namespace
 	sqlStmt := fmt.Sprintf(`
  		        SELECT obj_type,inode
