@@ -527,17 +527,19 @@ func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp,
 }
 
 func (fsys *Filesys) ReadFile(ctx context.Context, op *fuseops.ReadFileOp) error {
-	// TODO: think about reducing the locking scope. We don't want
-	// to lock the entire filesystem when performing one read-IO.
 	fsys.mutex.Lock()
-	defer fsys.mutex.Unlock()
 
 	// Here, we start from the file handle
 	fh,ok := fsys.fhTable[op.Handle]
 	if !ok {
 		// invalid file handle. It doesn't exist in the table
+		fsys.mutex.Unlock()
 		return fuse.EINVAL
 	}
+	fsys.mutex.Unlock()
+
+	// TODO: is there a scenario where two threads will run into a conflict
+	// because one is holding the handle, and the other is mutating it?
 
 	switch fh.f.Kind {
 	case FK_Regular:
