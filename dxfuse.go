@@ -611,7 +611,6 @@ func (fsys *Filesys) readEntireDir(ctx context.Context, dir Dir) ([]fuseutil.Dir
 	}
 
 	var dEntries []fuseutil.Dirent
-	index := 0
 
 	// Add entries for Unix files, representing DNAx data objects
 	for oname, oDesc := range dxObjs {
@@ -627,31 +626,37 @@ func (fsys *Filesys) readEntireDir(ctx context.Context, dir Dir) ([]fuseutil.Dir
 			dType = fuseutil.DT_Block
 		}
 		dirEnt := fuseutil.Dirent{
-			Offset: fuseops.DirOffset(index),
+			Offset: 0,
 			Inode : fuseops.InodeID(oDesc.Inode),
 			Name : oname,
 			Type : dType,
 		}
 		dEntries = append(dEntries, dirEnt)
-		index++
 	}
 
 	// Add entries for subdirs
 	for subDirName, dirDesc := range subdirs {
 		dirEnt := fuseutil.Dirent{
-			Offset : fuseops.DirOffset(index),
+			Offset: 0,
 			Inode : fuseops.InodeID(dirDesc.Inode),
 			Name : subDirName,
 			Type : fuseutil.DT_Directory,
 		}
 		dEntries = append(dEntries, dirEnt)
-		index++
 	}
 
 	// directory entries need to be sorted
 	sort.Slice(dEntries, func(i, j int) bool { return dEntries[i].Name < dEntries[j].Name })
 	if fsys.options.Verbose {
 		log.Printf("dentries=%v", dEntries)
+	}
+
+	// fix the offsets. We need to do this -after- sorting, because the sort
+	// operation reorders the entries.
+	//
+	// The offsets are one-based, due to how OpenDir works.
+	for i := 0; i < len(dEntries); i++ {
+		dEntries[i].Offset = fuseops.DirOffset(i) + 1
 	}
 
 	return dEntries, nil
@@ -700,15 +705,22 @@ func (fsys *Filesys) ReadDir(ctx context.Context, op *fuseops.ReadDirOp) (err er
 	}
 
 	index := int(op.Offset)
-	if index >= len(dh.entries) {
+
+	if index > len(dh.entries) {
 		return fuse.EINVAL
 	}
-	for i := index; i < len(dh.entries); i++ {
+	var i int
+	op.BytesRead = 0
+	for i = index; i < len(dh.entries); i++ {
 		n := fuseutil.WriteDirent(op.Dst[op.BytesRead:], dh.entries[i])
 		if n == 0 {
 			break
 		}
 		op.BytesRead += n
+	}
+	if fsys.options.Verbose {
+		log.Printf("ReadDir  offset=%d  bytesRead=%d nEntriesReported=%d",
+			index, op.BytesRead, i)
 	}
 	return
 }

@@ -10,7 +10,7 @@ azure: dxfuse copy_all
 	dx build dxfuse_correctness -f --destination dxfuse_azure_westus:/applets/dxfuse_correctness
 
 dxfuse : ../*.go
-	go build -o dxfuse /go/src/github.com/dnanexus/dxfuse/cmd/main.go
+	go build -o dxfuse /go/src/github.com/dnanexus/dxfuse/main/main.go
 
 copy_all : dxfuse
 	mkdir -p dxfuse_benchmark/resources/usr/bin
