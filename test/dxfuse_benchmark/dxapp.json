@@ -17,6 +17,11 @@
     }
   ],
   "runSpec": {
+    "timeoutPolicy" : {
+      "*" : {
+        "hours" : 1
+      }
+    },
     "interpreter": "bash",
     "file": "code.sh",
     "distribution": "Ubuntu",

@@ -54,10 +54,13 @@ function check_cmd_line_utils {
     d=$(pwd)
 
     cd $dxfuseDir
-    files=$(find . -type f)
+    files=$(find dxWDL_source_code -type f)
     cd $d
 
     for f in $files; do
+        # we want to run these checks only on text files.
+        # can we devise a simple test for this? maybe
+        # $(file $f) == "ASCII TEXT" ?
         echo $f
 
         dxfuse_f=$dxfuseDir/$f

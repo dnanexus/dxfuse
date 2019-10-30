@@ -104,14 +104,14 @@ func NewDxfuse(
 	return fsys, nil
 }
 
-func (fsys *Filesys) Shutdown() {
+func (fsys *Filesys) Destroy() {
 	// Close the sql database.
 	//
 	// If there is an error, we report it. There is nothing actionable
 	// to do with it.
 	//
 	// We do not remove the metadata database file, so it could be inspected offline.
-	log.Printf("shutting down dxfuse")
+	log.Printf("Destroy: shutting down dxfuse")
 
 	// stop any background operations the metadata database may be running.
 	fsys.mdb.Shutdown()
