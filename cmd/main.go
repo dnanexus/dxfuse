@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"os/user"
 	"path/filepath"
 	"strconv"
@@ -95,6 +96,33 @@ func initUidGid(uid int, gid int) (uint32,uint32) {
 	return uint32(uid),uint32(gid)
 }
 
+
+func registerSIGINTHandler(mountPoint string, fsys *dxfuse.Filesys) {
+	// Register for SIGINT.
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, os.Interrupt)
+
+	// Start a goroutine that will unmount when the signal is received.
+	go func() {
+		for {
+			<-signalChan
+			log.Println("Received SIGINT, attempting to unmount...")
+
+			// We want to do a proper shutdown so that files will be uploaded
+			fsys.Shutdown()
+
+			err := fuse.Unmount(mountPoint)
+
+			if err != nil {
+				log.Printf("Failed to unmount in response to SIGINT: %v", err)
+			} else {
+				log.Printf("Successfully unmounted in response to SIGINT.")
+				return
+			}
+		}
+	}()
+}
+
 // Mount the filesystem:
 //  - setup the debug log to the FUSE kernel log (I think)
 //  - mount as read-only
@@ -114,18 +142,16 @@ func mount(
 	logf := initLog()
 	defer logf.Close()
 
-	// This should allow users other than root
-	// to access the mounted files
 	osMountOptions := make(map[string]string)
-	// This doesn't work for some reason
+	// Allow users other than root access the filesystem
 	osMountOptions["allow_other"] = ""
 
 	// Fuse mount
 	cfg := &fuse.MountConfig{
 		FSName : "dxfuse",
 		ReadOnly : *readOnly,
-		ErrorLogger : log.New(logf, "", log.Flags()),
-		DebugLogger : log.New(logf, "error: ", log.Flags()),
+		ErrorLogger : log.New(logf, "err:", log.Flags()),
+		DebugLogger : log.New(logf, "fuse_debug: ", log.Flags()),
 		DisableWritebackCaching : true,
 		Options : osMountOptions,
 	}
@@ -136,14 +162,15 @@ func mount(
 		log.Fatalf("Mount: %v", err)
 	}
 
+	// Let the user unmount with Ctrl-C (SIGINT).
+	registerSIGINTHandler(mfs.Dir(), fsys)
+
 	// Wait for it to be unmounted. This happens only after
 	// all requests have been served.
 	if err = mfs.Join(context.Background()); err != nil {
 		log.Fatalf("Join: %v", err)
 	}
 
-	// We want to do a proper shutdown so that files will be uploaded
-	fsys.Shutdown()
 	return nil
 }
 
