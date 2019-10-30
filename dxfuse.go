@@ -480,6 +480,10 @@ func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp,
 		// The file is empty
 		return nil
 	}
+	if fh.f.Size <= op.Offset {
+		// request is beyond the size of the file
+		return nil
+	}
 	endOfs := op.Offset + reqSize - 1
 
 	// make sure we don't go over the file size
@@ -506,7 +510,8 @@ func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp,
 	// add an extent in the file that we want to read
 	headers["Range"] = fmt.Sprintf("bytes=%d-%d", op.Offset, endOfs)
 	if fsys.options.Verbose {
-		log.Printf("Read  ofs=%d  len=%d\n", op.Offset, reqSize)
+		log.Printf("Read  ofs=%d len=%d endOfs=%d lastByteInFile=%d",
+			op.Offset, reqSize, endOfs, lastByteInFile)
 	}
 
 	// Take an http client from the pool. Return it when done.
@@ -555,7 +560,8 @@ func (fsys *Filesys) ReadFile(ctx context.Context, op *fuseops.ReadFileOp) error
 		return fsys.readRemoteFile(ctx, op, fh)
 
 	default:
-		return nil
+		// can only read files
+		return syscall.EPERM
 	}
 }
 
