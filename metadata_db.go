@@ -17,6 +17,10 @@ import (
 const (
 	nsDirType = 1
 	nsDataObjType = 2
+
+	dirReadOnlyMode = 0555 | os.ModeDir
+	dirReadWriteMode = 0777 | os.ModeDir
+	fileReadOnlyMode = 0444
 )
 
 type MetadataDb struct {
@@ -111,6 +115,7 @@ func (mdb *MetadataDb) init2(txn *sql.Tx) error {
 		size bigint,
                 ctime bigint,
                 mtime bigint,
+                mode int,
                 nlink int,
                 inline_data  string,
                 PRIMARY KEY (inode)
@@ -184,6 +189,7 @@ func (mdb *MetadataDb) init2(txn *sql.Tx) error {
                 populated int,
                 ctime bigint,
                 mtime bigint,
+                mode int,
                 PRIMARY KEY (inode)
 	);
 	`
@@ -199,9 +205,9 @@ func (mdb *MetadataDb) init2(txn *sql.Tx) error {
 	nowSeconds := time.Now().Unix()
 	sqlStmt = fmt.Sprintf(`
  		        INSERT INTO directories
-			VALUES ('%d', '%s', '%s', '%d', '%d', '%d');`,
+			VALUES ('%d', '%s', '%s', '%d', '%d', '%d', '%d');`,
 		InodeRoot, "", "", boolToInt(false),
-		nowSeconds, nowSeconds)
+		nowSeconds, nowSeconds, dirReadOnlyMode)
 	if _, err := txn.Exec(sqlStmt); err != nil {
 		log.Printf(err.Error())
 		return fmt.Errorf("Could not create root directory")
@@ -300,7 +306,7 @@ func (mdb *MetadataDb) lookupDataObjectById(txn *sql.Tx, fId string) (int64, int
 func (mdb *MetadataDb) lookupDataObjectByInode(oname string, inode int64) (File, bool, error) {
 	// point lookup in the files table
 	sqlStmt := fmt.Sprintf(`
- 		        SELECT kind,id,proj_id,size,ctime,mtime,nlink,inline_data
+ 		        SELECT kind,id,proj_id,size,ctime,mtime,mode,nlink,inline_data
                         FROM data_objects
 			WHERE inode = '%d';`,
 		inode)
@@ -317,7 +323,7 @@ func (mdb *MetadataDb) lookupDataObjectByInode(oname string, inode int64) (File,
 	for rows.Next() {
 		var ctime int64
 		var mtime int64
-		rows.Scan(&f.Kind,&f.Id, &f.ProjId, &f.Size, &ctime, &mtime, &f.Nlink, &f.InlineData)
+		rows.Scan(&f.Kind,&f.Id, &f.ProjId, &f.Size, &ctime, &mtime, &f.Mode, &f.Nlink, &f.InlineData)
 		f.Ctime = SecondsToTime(ctime)
 		f.Mtime = SecondsToTime(mtime)
 		numRows++
@@ -347,7 +353,7 @@ func (mdb *MetadataDb) lookupDirByInode(parent string, dname string, inode int64
 
 	// Extract information from the directories table
 	sqlStmt := fmt.Sprintf(`
- 		        SELECT proj_id, proj_folder, populated, ctime, mtime
+ 		        SELECT proj_id, proj_folder, populated, ctime, mtime, mode
                         FROM directories
 			WHERE inode = '%d';`,
 		inode)
@@ -362,11 +368,13 @@ func (mdb *MetadataDb) lookupDirByInode(parent string, dname string, inode int64
 		var populated int
 		var ctime int64
 		var mtime int64
+		var mode  int
 
-		rows.Scan(&d.ProjId, &d.ProjFolder, &populated, &ctime, &mtime)
+		rows.Scan(&d.ProjId, &d.ProjFolder, &populated, &ctime, &mtime, &mode)
 
 		d.Ctime = SecondsToTime(ctime)
 		d.Mtime = SecondsToTime(mtime)
+		d.Mode = os.FileMode(mode)
 		d.Populated = intToBool(populated)
 		numRows++
 	}
@@ -437,7 +445,7 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 
 	// Extract information for all the subdirectories
 	sqlStmt := fmt.Sprintf(`
- 		        SELECT directories.inode, directories.proj_id, namespace.name, directories.ctime, directories.mtime
+ 		        SELECT directories.inode, directories.proj_id, namespace.name, directories.ctime, directories.mtime, directories.mode
                         FROM directories
                         JOIN namespace
                         ON directories.inode = namespace.inode
@@ -457,7 +465,8 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 		var projId string
 		var ctime int64
 		var mtime int64
-		rows.Scan(&inode, &projId, &dname, &ctime, &mtime)
+		var mode int
+		rows.Scan(&inode, &projId, &dname, &ctime, &mtime, &mode)
 
 		subdirs[dname] = Dir{
 			Parent : dirFullName,
@@ -466,16 +475,17 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 			Inode : inode,
 			Ctime : SecondsToTime(ctime),
 			Mtime : SecondsToTime(mtime),
+			Mode : os.FileMode(mode),
 		}
 	}
 	rows.Close()
 
 	// Extract information for all the files
 	sqlStmt = fmt.Sprintf(`
- 		        SELECT data_objects.kind,data_objects.id,data_objects.proj_id,data_objects.inode,data_objects.size,data_objects.ctime,data_objects.mtime,data_objects.nlink,data_objects.inline_data,namespace.name
-                        FROM data_objects
+ 		        SELECT dos.kind, dos.id, dos.proj_id, dos.inode, dos.size, dos.ctime, dos.mtime, dos.mode, dos.nlink, dos.inline_data, namespace.name
+                        FROM data_objects as dos
                         JOIN namespace
-                        ON data_objects.inode = namespace.inode
+                        ON dos.inode = namespace.inode
 			WHERE namespace.parent = '%s' AND namespace.obj_type = '%d';
 			`, dirFullName, nsDataObjType)
 	rows, err = mdb.db.Query(sqlStmt)
@@ -492,9 +502,11 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 
 		var ctime int64
 		var mtime int64
-		rows.Scan(&f.Kind,&f.Id, &f.ProjId, &f.Inode, &f.Size, &ctime, &mtime, &f.Nlink, &f.InlineData,&f.Name)
+		var mode int
+		rows.Scan(&f.Kind,&f.Id, &f.ProjId, &f.Inode, &f.Size, &ctime, &mtime, &mode, &f.Nlink, &f.InlineData,&f.Name)
 		f.Ctime = SecondsToTime(ctime)
 		f.Mtime = SecondsToTime(mtime)
+		f.Mode = os.FileMode(mode)
 
 		files[f.Name] = f
 	}
@@ -518,6 +530,7 @@ func (mdb *MetadataDb) createDataObject(
 	size int64,
 	ctime int64,
 	mtime int64,
+	mode os.FileMode,
 	parentDir string,
 	fname string,
 	inlineData string) (int64, error) {
@@ -539,8 +552,8 @@ func (mdb *MetadataDb) createDataObject(
 		// Create an entry for the file
 		sqlStmt := fmt.Sprintf(`
  		        INSERT INTO data_objects
-			VALUES ('%d', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%s');`,
-			kind, objId, projId, inode, size, ctime, mtime, 1, inlineData)
+			VALUES ('%d', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%d', '%s');`,
+			kind, objId, projId, inode, size, ctime, mtime, int(mode), 1, inlineData)
 		if _, err := txn.Exec(sqlStmt); err != nil {
 			log.Printf(err.Error())
 			log.Printf("Error inserting into data objects table")
@@ -584,6 +597,7 @@ func (mdb *MetadataDb) createEmptyDir(
 	projFolder string,
 	ctime int64,
 	mtime int64,
+	mode os.FileMode,
 	dirPath string,
 	populated bool) (int64, error) {
 	if dirPath[0] != '/' {
@@ -609,10 +623,11 @@ func (mdb *MetadataDb) createEmptyDir(
 	}
 
 	// Create an entry for the subdirectory
+	mode = mode | os.ModeDir
 	sqlStmt = fmt.Sprintf(`
                        INSERT INTO directories
-                       VALUES ('%d', '%s', '%s', '%d', '%d', '%d');`,
-		inode, projId, projFolder, boolToInt(populated), ctime, mtime)
+                       VALUES ('%d', '%s', '%s', '%d', '%d', '%d', '%d');`,
+		inode, projId, projFolder, boolToInt(populated), ctime, mtime, int(mode))
 	if _, err := txn.Exec(sqlStmt); err != nil {
 		log.Printf("createEmptyDir: error inserting into directories table %d",
 			inode)
@@ -712,6 +727,7 @@ func (mdb *MetadataDb) populateDir(
 			o.Size,
 			o.CtimeSeconds,
 			o.MtimeSeconds,
+			fileReadOnlyMode,
 			dirPath,
 			o.Name,
 			inlineData)
@@ -731,7 +747,9 @@ func (mdb *MetadataDb) populateDir(
 		_, err := mdb.createEmptyDir(
 			txn,
 			projId, filepath.Clean(projFolder + "/" + subDirName),
-			ctime, mtime, filepath.Clean(dirPath + "/" + subDirName),
+			ctime, mtime,
+			dirReadWriteMode,
+			filepath.Clean(dirPath + "/" + subDirName),
 			false)
 		if err != nil {
 			log.Printf("Error creating empty directory %s while populating directory %s",
@@ -829,7 +847,10 @@ func (mdb *MetadataDb) directoryReadFromDNAx(
 
 		// create the directory in the namespace, as if it is unpopulated.
 		fauxDirInode, err := mdb.createEmptyDir(
-			txn, projId, "", ctimeApprox, mtimeApprox, fauxDirPath, true)
+			txn, projId, "",
+			ctimeApprox, mtimeApprox,
+			dirReadOnlyMode,    // faux directories are read only
+			fauxDirPath, true)
 		if err != nil {
 			txn.Rollback()
 			log.Printf(err.Error())
@@ -973,6 +994,7 @@ func (mdb *MetadataDb) PopulateRoot(manifest Manifest) error {
 			txn,
 			"", "",   // There is no backing project/folder
 			nowSeconds, nowSeconds,
+			dirReadOnlyMode, // skeleton directories are scaffolding, they cannot be modified.
 			d, true)
 		if err != nil {
 			txn.Rollback()
@@ -986,7 +1008,9 @@ func (mdb *MetadataDb) PopulateRoot(manifest Manifest) error {
 		_, err := mdb.createDataObject(
 			false,
 			txn, FK_Regular, fl.ProjId, fl.FileId,
-			fl.Size, fl.CtimeSeconds, fl.MtimeSeconds,
+			fl.Size,
+			fl.CtimeSeconds, fl.MtimeSeconds,
+			fileReadOnlyMode,
 			fl.Parent, fl.Fname, "")
 		if err != nil {
 			txn.Rollback()
@@ -1002,6 +1026,7 @@ func (mdb *MetadataDb) PopulateRoot(manifest Manifest) error {
 			txn,
 			d.ProjId, d.Folder,
 			d.CtimeSeconds, d.MtimeSeconds,
+			dirReadWriteMode,
 			d.Dirname, false)
 		if err != nil {
 			txn.Rollback()
@@ -1021,7 +1046,7 @@ func (mdb *MetadataDb) PopulateRoot(manifest Manifest) error {
 }
 
 // We know that the parent directory exists, is populated, and the file does not exist
-func (mdb *MetadataDb) CreateFile(dir *Dir, fname string, localPath string) (File, error) {
+func (mdb *MetadataDb) CreateFile(dir *Dir, fname string, mode os.FileMode, localPath string) (File, error) {
 	if mdb.options.Verbose {
 		log.Printf("CreateFile %s/%s  localPath=%s proj=%d",
 			dir.FullPath, fname, localPath, dir.ProjId)
@@ -1057,6 +1082,7 @@ func (mdb *MetadataDb) CreateFile(dir *Dir, fname string, localPath string) (Fil
 		0,    /* the file is empty */
 		nowSeconds,
 		nowSeconds,
+		mode,
 		dir.FullPath,
 		fname,
 		localPath)
@@ -1080,6 +1106,7 @@ func (mdb *MetadataDb) CreateFile(dir *Dir, fname string, localPath string) (Fil
 		Inode : inode,
 		Ctime : SecondsToTime(nowSeconds),
 		Mtime : SecondsToTime(nowSeconds),
+		Mode : mode,
 		Nlink : 1,
 		InlineData : localPath,
 	}, nil
@@ -1095,9 +1122,9 @@ func (mdb *MetadataDb) UpdateFile(f File, fInfo os.FileInfo) error {
 	modTimeSec := fInfo.ModTime().Unix()
 	sqlStmt := fmt.Sprintf(`
  		        UPDATE data_objects
-                        SET size = '%d', mtime='%d'
+                        SET size = '%d', mtime='%d', mode='%d'
 			WHERE inode = '%d';`,
-		fInfo.Size(), modTimeSec, f.Inode)
+		fInfo.Size(), modTimeSec, f.Inode, int(f.Mode))
 
 	if _, err := txn.Exec(sqlStmt); err != nil {
 		txn.Rollback()

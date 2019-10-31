@@ -268,7 +268,7 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	cnt := atomic.AddUint64(&fsys.tmpFileCounter, 1)
 	localPath := fmt.Sprintf("%s/%d_%s", CreatedFilesDir, cnt, op.Name)
 
-	file, err := fsys.mdb.CreateFile(&parentDir, op.Name, localPath)
+	file, err := fsys.mdb.CreateFile(&parentDir, op.Name, op.Mode, localPath)
 	if err != nil {
 		return err
 	}

@@ -19,9 +19,9 @@ const (
 	maxDeltaTime = 5 * 60 * time.Second
 
 	prefetchMinIoSize = (256 * KiB)     // threshold for deciding the file is sequentially accessed
-	prefetchMaxIoSize = (4 * MiB)     // size of prefetch IO
+	prefetchMaxIoSize = (16 * MiB)     // size of prefetch IO
 	prefetchIoFactor = 4
-	maxNumChunksReadAhead = 8
+	maxNumChunksReadAhead = 12
 
 	numSlotsInChunk = 64
 
@@ -29,7 +29,7 @@ const (
 	// Limit the total number of streams we are tracking and prefetching.
 	maxNumEntriesInTable = 8
 
-	numPrefetchThreads = 10
+	numPrefetchThreads = maxNumChunksReadAhead + 4
 	minFileSize = 8 * MiB     // do not track files smaller than this size
 )
 

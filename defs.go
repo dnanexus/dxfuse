@@ -105,6 +105,7 @@ type Dir struct {
 	Inode       int64
 	Ctime       time.Time // DNAx does not record times per directory.
 	Mtime       time.Time // we use the project creation time, and mtime as an approximation.
+	Mode        os.FileMode  // uint32
 	Uid         uint32
 	Gid         uint32
 
@@ -117,9 +118,9 @@ type Dir struct {
 func (d Dir) GetAttrs() (a fuseops.InodeAttributes) {
 	a.Size = 4096
 	a.Nlink = 1
-	a.Mode = os.ModeDir | 0555
 	a.Mtime = a.Mtime
 	a.Ctime = a.Ctime
+	a.Mode = os.ModeDir | d.Mode
 	a.Crtime = a.Ctime
 	a.Uid = d.Uid
 	a.Gid = d.Gid
@@ -153,9 +154,10 @@ type File struct {
 	Inode      int64
 	Ctime      time.Time
 	Mtime      time.Time
+	Mode       os.FileMode  // uint32
 	Nlink      int
-	Uid       uint32
-	Gid       uint32
+	Uid        uint32
+	Gid        uint32
 
 	// for a symlink, it holds the path.
 	// For a regular file, a path to a local copy (if any).
@@ -165,9 +167,9 @@ type File struct {
 func (f File) GetAttrs() (a fuseops.InodeAttributes) {
 	a.Size = uint64(f.Size)
 	a.Nlink = uint32(f.Nlink)
-	a.Mode = 0444   // What about files in write mode?
 	a.Mtime = f.Mtime
 	a.Ctime = f.Ctime
+	a.Mode = f.Mode
 	a.Crtime = f.Ctime
 	a.Uid = f.Uid
 	a.Gid = f.Gid
