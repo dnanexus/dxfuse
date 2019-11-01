@@ -17,10 +17,6 @@ import (
 const (
 	nsDirType = 1
 	nsDataObjType = 2
-
-	dirReadOnlyMode = 0555 | os.ModeDir
-	dirReadWriteMode = 0777 | os.ModeDir
-	fileReadOnlyMode = 0444
 )
 
 type MetadataDb struct {
@@ -909,7 +905,8 @@ func (mdb *MetadataDb) ReadDirAll(dir *Dir) (map[string]File, map[string]Dir, er
 // Note: the file might not exist.
 func (mdb *MetadataDb) LookupInDir(dir *Dir, dirOrFileName string) (Node, bool, error) {
 	if !dir.Populated {
-		files, dirs, err := mdb.ReadDirAll(dir)
+		mdb.ReadDirAll(dir)
+/*		files, dirs, err := mdb.ReadDirAll(dir)
 		if err != nil {
 			return nil, false, err
 		}
@@ -921,7 +918,7 @@ func (mdb *MetadataDb) LookupInDir(dir *Dir, dirOrFileName string) (Node, bool, 
 		if ok {
 			return dir, true, nil
 		}
-		return nil, false, nil
+		return nil, false, nil*/
 	}
 
 	// point lookup in the namespace
@@ -956,7 +953,12 @@ func (mdb *MetadataDb) LookupInDir(dir *Dir, dirOrFileName string) (Node, bool, 
 	case nsDirType:
 		return mdb.lookupDirByInode(dir.FullPath, dirOrFileName, inode)
 	case nsDataObjType:
-		return mdb.lookupDataObjectByInode(dirOrFileName, inode)
+		file, ok, err := mdb.lookupDataObjectByInode(dirOrFileName, inode)
+		if ok && err == nil {
+			log.Printf("lookupDataObjectByInode: %v", file)
+			log.Printf("size: %d", file.Size)
+		}
+		return file, ok, err
 	default:
 		panic(fmt.Sprintf("Invalid object type %d", objType))
 	}
@@ -1048,7 +1050,7 @@ func (mdb *MetadataDb) PopulateRoot(manifest Manifest) error {
 // We know that the parent directory exists, is populated, and the file does not exist
 func (mdb *MetadataDb) CreateFile(dir *Dir, fname string, mode os.FileMode, localPath string) (File, error) {
 	if mdb.options.Verbose {
-		log.Printf("CreateFile %s/%s  localPath=%s proj=%d",
+		log.Printf("CreateFile %s/%s  localPath=%s proj=%s",
 			dir.FullPath, fname, localPath, dir.ProjId)
 	}
 
@@ -1113,18 +1115,24 @@ func (mdb *MetadataDb) CreateFile(dir *Dir, fname string, mode os.FileMode, loca
 }
 
 func (mdb *MetadataDb) UpdateFile(f File, fInfo os.FileInfo) error {
+	if mdb.options.Verbose {
+		log.Printf("Update file=%v  info=%v", f, fInfo)
+	}
+
 	txn, err := mdb.db.Begin()
 	if err != nil {
 		log.Printf(err.Error())
 		return fmt.Errorf("UpdateFile error opening transaction")
 	}
 
+	size := fInfo.Size()
 	modTimeSec := fInfo.ModTime().Unix()
+	mode := int(f.Mode)
 	sqlStmt := fmt.Sprintf(`
  		        UPDATE data_objects
                         SET size = '%d', mtime='%d', mode='%d'
 			WHERE inode = '%d';`,
-		fInfo.Size(), modTimeSec, f.Inode, int(f.Mode))
+		size, modTimeSec, mode, f.Inode)
 
 	if _, err := txn.Exec(sqlStmt); err != nil {
 		txn.Rollback()

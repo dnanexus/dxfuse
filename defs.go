@@ -30,6 +30,13 @@ const (
 	MiB                   = 1024 * KiB
 	GiB                   = 1024 * MiB
 )
+const (
+	// It turns out that in order for regular users to be able to create file,
+	// we need to use 777 permissions for directories.
+	dirReadOnlyMode = 0555 | os.ModeDir
+	dirReadWriteMode = 0777 | os.ModeDir
+	fileReadOnlyMode = 0444
+)
 
 // A URL generated with the /file-xxxx/download API call, that is
 // used to download file ranges.

@@ -366,24 +366,10 @@ func (fugs *FileUploadGlobalState) uploadIoWorker() {
 
 // enqueue a request to upload the file. This will happen in the background. Since
 // we don't erase the local file, there is no rush.
-func (fugs *FileUploadGlobalState) UploadFile(fh FileHandle, fInfo os.FileInfo) error {
-	if fInfo.Size() > 0 {
-		// flush and close the local file
-		if err := fh.fd.Sync(); err != nil {
-			return err
-		}
-		if err := fh.fd.Close(); err != nil {
-			return err
-		}
-		fh.fd = nil
-
-		// We leave the local file in place. This allows reading from
-		// it, without accessing the network.
-	}
-
-	projDesc, ok := fugs.projId2Desc[fh.f.ProjId]
+func (fugs *FileUploadGlobalState) UploadFile(f File, fInfo os.FileInfo) error {
+	projDesc, ok := fugs.projId2Desc[f.ProjId]
 	if !ok {
-		panic(fmt.Sprintf("project %s not found", fh.f.ProjId))
+		panic(fmt.Sprintf("project %s not found", f.ProjId))
 	}
 
 	partSize, err := fugs.calcPartSize(projDesc.UploadParams, fInfo.Size())
@@ -396,10 +382,10 @@ to the platform due to part size constraints. Error=%s`,
 	}
 
 	fugs.reqQueue <- UploadReq{
-		id : fh.f.Id,
+		id : f.Id,
 		partSize : partSize,
 		uploadParams : projDesc.UploadParams,
-		localPath : fh.f.InlineData,
+		localPath : f.InlineData,
 		fInfo : fInfo,
 	}
 	return nil

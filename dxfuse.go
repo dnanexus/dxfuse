@@ -128,6 +128,22 @@ func (fsys *Filesys) StatFS(ctx context.Context, op *fuseops.StatFSOp) error {
 	return nil
 }
 
+func (fsys *Filesys) calcExpirationTime(a fuseops.InodeAttributes) time.Time {
+	if !a.Mode.IsDir() && a.Mode != 0444 {
+		// A file created locally. It is probably being written to,
+		// so there is no sense in caching for a long time
+		if fsys.options.Verbose {
+			log.Printf("Setting zero attribute expiration time")
+		}
+
+		return time.Now().Add(1 * time.Second)
+	}
+
+	// We don't spontaneously mutate, so the kernel can cache as long as it wants
+	// (since it also handles invalidation).
+	return time.Now().Add(365 * 24 * time.Hour)
+}
+
 func (fsys *Filesys) LookUpInode(ctx context.Context, op *fuseops.LookUpInodeOp) error {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
@@ -157,7 +173,7 @@ func (fsys *Filesys) LookUpInode(ctx context.Context, op *fuseops.LookUpInodeOp)
 
 	// We don't spontaneously mutate, so the kernel can cache as long as it wants
 	// (since it also handles invalidation).
-	op.Entry.AttributesExpiration = time.Now().Add(365 * 24 * time.Hour)
+	op.Entry.AttributesExpiration = fsys.calcExpirationTime(op.Entry.Attributes)
 	op.Entry.EntryExpiration = op.Entry.AttributesExpiration
 
 	return nil
@@ -182,10 +198,7 @@ func (fsys *Filesys) GetInodeAttributes(ctx context.Context, op *fuseops.GetInod
 
 	// Fill in the response.
 	op.Attributes = node.GetAttrs()
-
-	// We don't spontaneously mutate, so the kernel can cache as long as it wants
-	// (since it also handles invalidation).
-	op.AttributesExpiration = time.Now().Add(365 * 24 * time.Hour)
+	op.AttributesExpiration = fsys.calcExpirationTime(op.Attributes)
 
 	return nil
 }
@@ -288,12 +301,12 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 
 	// We need a short time window, because the file attributes are likely to
 	// soon change. We are writing new content into the file.
-	shortTimeWin := now.Add(5)
+	tWindow := fsys.calcExpirationTime(childAttrs)
 	op.Entry = fuseops.ChildInodeEntry{
 		Child : fuseops.InodeID(file.Inode),
 		Attributes : childAttrs,
-		AttributesExpiration : shortTimeWin,
-		EntryExpiration : shortTimeWin,
+		AttributesExpiration : tWindow,
+		EntryExpiration : tWindow,
 	}
 
 	writer, err := os.OpenFile(localPath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0644)
@@ -445,17 +458,34 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 		if fsys.options.Verbose {
 			log.Printf("Close new file(%s)", fh.f.Name)
 		}
+
+		// flush and close the local file
+		// We leave the local file in place. This allows reading from
+		// it, without accessing the network.
+		if err := fh.fd.Sync(); err != nil {
+			return err
+		}
+		// make this file read only
+		if err := fh.fd.Chmod(fileReadOnlyMode); err != nil {
+			return err
+		}
+
 		fInfo, err := fh.fd.Stat()
 		if err != nil {
 			return err
 		}
+		if err := fh.fd.Close(); err != nil {
+			return err
+		}
+		fh.fd = nil
+
 		// update database entry
 		if err := fsys.mdb.UpdateFile(fh.f, fInfo); err != nil {
 			return err
 		}
 
 		// initiate a background request to upload the file to the cloud
-		return fsys.fugs.UploadFile(*fh, fInfo)
+		return fsys.fugs.UploadFile(fh.f, fInfo)
 
 	case RO_LocalCopy:
 		// Read-only file with a local copy

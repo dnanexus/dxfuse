@@ -135,7 +135,7 @@ func submit(
 	for _, descRawTop := range(reply.Results) {
 		descRaw := descRawTop.Describe
 		if descRaw.State != "closed" {
-			log.Printf("File %s is not closed, it is [" + descRaw.State + "], dropping")
+			log.Printf("File %s is not closed, it is %s, dropping", descRaw.Id, descRaw.State)
 			continue
 		}
 		symlinkUrl := ""
