@@ -459,6 +459,11 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 			log.Printf("Close new file(%s)", fh.f.Name)
 		}
 
+		// make this file read only
+		if err := fh.fd.Chmod(fileReadOnlyMode); err != nil {
+			return err
+		}
+
 		fInfo, err := fh.fd.Stat()
 		if err != nil {
 			return err
@@ -466,29 +471,14 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 		fileSize := fInfo.Size()
 		modTime := fInfo.ModTime()
 
-		// make this file read only
-		if err := fh.fd.Chmod(fileReadOnlyMode); err != nil {
-			return err
-		}
-
-		// flush and close the local file
-		// We leave the local file in place. This allows reading from
-		// it, without accessing the network.
-		if err := fh.fd.Sync(); err != nil {
-			return err
-		}
-		if err := fh.fd.Close(); err != nil {
-			return err
-		}
-		fh.fd = nil
-
-		// update database entry
+		// update database entry. Make sure to change its mode to read-only, so users
+		// can't modify it now.
 		if err := fsys.mdb.UpdateFile(fh.f, fileSize, modTime, fileReadOnlyMode); err != nil {
 			return err
 		}
 
-		// initiate a background request to upload the file to the cloud
-		return fsys.fugs.UploadFile(fh.f, fileSize)
+		// enqueue a request to upload the file to the cloud
+		return fsys.fugs.UploadFile(fh.fd, fh.f, fileSize)
 
 	case RO_LocalCopy:
 		// Read-only file with a local copy

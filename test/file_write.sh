@@ -2,19 +2,10 @@
 
 mountpoint="/tmp/MNT"
 projectName="dxfuse_test_data"
-unmountSeqDone=0
+content="nothing much"
 
-function finish {
-    if [[ unmountSeqDone -eq 0 ]]; then
-        echo "unmounting dxfuse"
-        sudo umount $mountpoint
-        unmountSeqDone=1
-    fi
-}
-#trap finish EXIT
+dx rm $projectName:/A.txt || true
 
-
-#main() {
 # Get all the DX environment variables, so that dxfuse can use them
 echo "loading the dx environment"
 
@@ -35,12 +26,26 @@ sleep 2
 
 baseDir="$mountpoint/$projectName"
 
-echo "nothing much" > $baseDir/A.txt
-sleep 1
+echo $content > $baseDir/A.txt
 ls -l $baseDir/A.txt
 
-#    sleep 3
-#    finish
-#}
+sudo umount $mountpoint
 
-#main
+# 1. wait for the file to achieve the closed state
+file_state=$(dx describe dxfuse_test_data:/A.txt --json | grep state | awk '{ gsub("[,\"]", "", $2); print $2 }')
+if [ "$file_state" != "closed" ]; then
+    sleep 2
+fi
+
+dx ls -l $projectName:/A.txt
+
+# 2. compare the data
+content2=$(dx cat $projectName:/A.txt)
+if [[ "$content" == "$content2" ]]; then
+    echo "correct"
+else
+    echo "bad content"
+    echo "should be: $content"
+    echo "found: $content2"
+fi
+dx rm $projectName:/A.txt

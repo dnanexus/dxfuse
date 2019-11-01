@@ -366,7 +366,19 @@ func (fugs *FileUploadGlobalState) uploadIoWorker() {
 
 // enqueue a request to upload the file. This will happen in the background. Since
 // we don't erase the local file, there is no rush.
-func (fugs *FileUploadGlobalState) UploadFile(f File, fileSize int64) error {
+func (fugs *FileUploadGlobalState) UploadFile(fd *os.File, f File, fileSize int64) error {
+	if fileSize > 0 {
+		// flush and close the local file
+		// We leave the local file in place. This allows reading from
+		// it, without accessing the network.
+		if err := fd.Sync(); err != nil {
+			return err
+		}
+		if err := fd.Close(); err != nil {
+			return err
+		}
+	}
+
 	projDesc, ok := fugs.projId2Desc[f.ProjId]
 	if !ok {
 		panic(fmt.Sprintf("project %s not found", f.ProjId))
