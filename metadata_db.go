@@ -1114,9 +1114,9 @@ func (mdb *MetadataDb) CreateFile(dir *Dir, fname string, mode os.FileMode, loca
 	}, nil
 }
 
-func (mdb *MetadataDb) UpdateFile(f File, fInfo os.FileInfo) error {
+func (mdb *MetadataDb) UpdateFile(f File, fileSize int64, modTime time.Time, mode os.FileMode) error {
 	if mdb.options.Verbose {
-		log.Printf("Update file=%v  info=%v", f, fInfo)
+		log.Printf("Update file=%v size=%d mode=%d", f, fileSize, mode)
 	}
 
 	txn, err := mdb.db.Begin()
@@ -1125,14 +1125,12 @@ func (mdb *MetadataDb) UpdateFile(f File, fInfo os.FileInfo) error {
 		return fmt.Errorf("UpdateFile error opening transaction")
 	}
 
-	size := fInfo.Size()
-	modTimeSec := fInfo.ModTime().Unix()
-	mode := int(f.Mode)
+	modTimeSec := modTime.Unix()
 	sqlStmt := fmt.Sprintf(`
  		        UPDATE data_objects
                         SET size = '%d', mtime='%d', mode='%d'
 			WHERE inode = '%d';`,
-		size, modTimeSec, mode, f.Inode)
+		fileSize, modTimeSec, int(mode), f.Inode)
 
 	if _, err := txn.Exec(sqlStmt); err != nil {
 		txn.Rollback()

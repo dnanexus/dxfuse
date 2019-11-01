@@ -162,7 +162,7 @@ type UploadReq struct {
 	partSize     int64
 	uploadParams FileUploadParameters
 	localPath    string
-	fInfo        os.FileInfo
+	fileSize     int64
 }
 
 type FileUploadGlobalState struct {
@@ -266,7 +266,7 @@ func (fugs *FileUploadGlobalState) uploadFileDataSequentially(
 	}
 	defer fReader.Close()
 
-	fileSize := upReq.fInfo.Size()
+	fileSize := upReq.fileSize
 	ofs := int64(0)
 
 	// chunk indexes start at 1 (not zero)
@@ -336,7 +336,7 @@ func (fugs *FileUploadGlobalState) uploadIoWorker() {
 			fugs.wg.Done()
 			return
 		}
-		fileSize := upReq.fInfo.Size()
+		fileSize := upReq.fileSize
 
 		if fugs.options.Verbose {
 			log.Printf("Upload file-size=%d part-size=%d", fileSize, upReq.partSize)
@@ -366,13 +366,13 @@ func (fugs *FileUploadGlobalState) uploadIoWorker() {
 
 // enqueue a request to upload the file. This will happen in the background. Since
 // we don't erase the local file, there is no rush.
-func (fugs *FileUploadGlobalState) UploadFile(f File, fInfo os.FileInfo) error {
+func (fugs *FileUploadGlobalState) UploadFile(f File, fileSize int64) error {
 	projDesc, ok := fugs.projId2Desc[f.ProjId]
 	if !ok {
 		panic(fmt.Sprintf("project %s not found", f.ProjId))
 	}
 
-	partSize, err := fugs.calcPartSize(projDesc.UploadParams, fInfo.Size())
+	partSize, err := fugs.calcPartSize(projDesc.UploadParams, fileSize)
 	if err != nil {
 		log.Printf(`
 There is a problem with the file size, it cannot be uploaded
@@ -386,7 +386,7 @@ to the platform due to part size constraints. Error=%s`,
 		partSize : partSize,
 		uploadParams : projDesc.UploadParams,
 		localPath : f.InlineData,
-		fInfo : fInfo,
+		fileSize : fileSize,
 	}
 	return nil
 }
