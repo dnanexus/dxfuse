@@ -20,14 +20,14 @@ mkdir -p $mountpoint
 
 # Start the dxfuse daemon in the background, and wait for it to initilize.
 echo "Mounting dxfuse"
-sudo -E /go/bin/dxfuse -verbose $mountpoint $projectName &
+sudo -E /go/bin/dxfuse -verbose 1 $mountpoint $projectName &
 sleep 2
 
 baseDir="$mountpoint/$projectName"
 
 # copy files
-echo "copying small files"
-cp $baseDir/correctness/small/*  $baseDir/$target_dir/
+#echo "copying small files"
+#cp $baseDir/correctness/small/*  $baseDir/$target_dir/
 
 # check if they arrived
 ls -l $baseDir/$target_dir
@@ -37,6 +37,8 @@ cp $baseDir/correctness/large/*  $baseDir/$target_dir/
 
 # check if they arrived
 ls -l $baseDir/$target_dir
+
+sleep 10
 
 sudo umount $mountpoint
 

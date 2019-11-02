@@ -266,13 +266,17 @@ func (fugs *FileUploadGlobalState) uploadFileDataSequentially(
 	}
 	defer fReader.Close()
 
-	fileSize := upReq.fileSize
+	if upReq.fileSize == 0 {
+		panic("The file is empty")
+	}
+	fileEndOfs := upReq.fileSize - 1
 	ofs := int64(0)
 
 	// chunk indexes start at 1 (not zero)
 	cIndex := 1
-	for ofs < fileSize {
-		chunkLen := MinInt64(ofs + upReq.partSize , fileSize)
+	for ofs <= fileEndOfs {
+		chunkEndOfs := MinInt64(ofs + upReq.partSize - 1, fileEndOfs)
+		chunkLen := chunkEndOfs - ofs
 		buf := make([]byte, chunkLen)
 		len, err := fReader.ReadAt(buf, ofs)
 		if err != nil {
@@ -285,6 +289,9 @@ func (fugs *FileUploadGlobalState) uploadFileDataSequentially(
 		chunk := Chunk {
 			index : cIndex,
 			data : buf,
+		}
+		if fugs.options.Verbose {
+			log.Printf("Uploading chunk=%d len=%d", cIndex, chunkLen)
 		}
 		if err := DxFileUploadPart(httpClient, &fugs.dxEnv, upReq.id, chunk); err != nil {
 			return err
