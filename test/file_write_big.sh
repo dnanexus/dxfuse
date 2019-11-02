@@ -38,8 +38,6 @@ cp $baseDir/correctness/large/*  $baseDir/$target_dir/
 # check if they arrived
 ls -l $baseDir/$target_dir
 
-sleep 10
-
 sudo umount $mountpoint
 
 # 1. wait for the file to achieve the closed state

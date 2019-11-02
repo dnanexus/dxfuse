@@ -435,6 +435,13 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 }
 
 
+func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) error {
+	if fsys.options.Verbose {
+		log.Printf("Flush inode %d", op.Inode)
+	}
+	return nil
+}
+
 func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseFileHandleOp) error {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
