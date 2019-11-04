@@ -126,6 +126,7 @@ func NewPrefetchGlobalState(verboseLevel int) *PrefetchGlobalState {
 	}
 
 	// limit the number of prefetch IOs
+	pgs.wg.Add(numPrefetchThreads)
 	for i := 0; i < numPrefetchThreads; i++ {
 		go pgs.prefetchIoWorker()
 	}
@@ -259,7 +260,6 @@ func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq
 func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 	// reuse this http client. The idea is to be able to reuse http connections.
 	client := dxda.NewHttpClient(true)
-	pgs.wg.Add(1)
 
 	for true {
 		ioReq, ok := <-pgs.ioQueue
@@ -317,7 +317,6 @@ func (pgs *PrefetchGlobalState) isWorthIt(pfm *PrefetchFileMetadata, now time.Ti
 }
 
 func (pgs *PrefetchGlobalState) tableCleanupWorker() {
-	pgs.wg.Add(1)
 	for true {
 		// sleep 60
 		time.Sleep(60 * time.Second)

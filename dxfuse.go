@@ -63,6 +63,7 @@ func NewDxfuse(
 		dhFreeList : make([]fuseops.HandleID, 0),
 		nonce : nonce,
 		tmpFileCounter : 0,
+		shutdownCalled : false,
 	}
 
 	// create the metadata database
@@ -104,14 +105,23 @@ func NewDxfuse(
 	return fsys, nil
 }
 
-func (fsys *Filesys) Destroy() {
+func (fsys *Filesys) Shutdown() {
+	if fsys.shutdownCalled {
+		// shutdown has already been called.
+		// We are not waiting for anything, and just
+		// unmounting the filesystem here.
+		log.Printf("Shutdown called a second time, skipping the normal sequence")
+		return
+	}
+	fsys.shutdownCalled = true
+
 	// Close the sql database.
 	//
 	// If there is an error, we report it. There is nothing actionable
 	// to do with it.
 	//
 	// We do not remove the metadata database file, so it could be inspected offline.
-	log.Printf("Destroy: shutting down dxfuse")
+	log.Printf("Shutting down dxfuse")
 
 	// stop any background operations the metadata database may be running.
 	fsys.mdb.Shutdown()

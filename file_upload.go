@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/dnanexus/dxda"
 	"github.com/hashicorp/go-retryablehttp"
@@ -26,6 +27,11 @@ type RequestNewFile struct {
 type ReplyNewFile struct {
 	Id string `json:"id"`
 }
+
+const (
+	fileCloseWaitTime = 5 * time.Second
+	fileCloseMaxWaitTime = 10 * time.Minute
+)
 
 func DxFileNew(
 	httpClient *retryablehttp.Client,
@@ -76,10 +82,11 @@ func DxFileNew(
 	return reply.Id, nil
 }
 
-func DxFileClose(
+func DxFileCloseAndWait(
 	httpClient *retryablehttp.Client,
 	dxEnv *dxda.DXEnvironment,
-	fid string) error {
+	fid string,
+	verbose bool) error {
 
 	_, err := dxda.DxAPI(httpClient,
 		dxEnv,
@@ -101,6 +108,36 @@ The file has size larger than fileUploadParameters.maximumFileSize bytes
 */
 	}
 
+        // wait for file to achieve closed state
+	start := time.Now()
+	deadline := start.Add(fileCloseMaxWaitTime)
+        for true {
+		fDesc, err := DxDescribe(httpClient, dxEnv, fid, false)
+		if err != nil {
+			return err
+		}
+		switch fDesc.State {
+			case "closed":
+			// done. File is closed.
+			return nil
+		case "closing":
+			// not done yet.
+			if verbose {
+				elapsed := time.Now().Sub(start)
+				log.Printf("Waited %s for file %s to close", elapsed.String(), fid)
+			}
+			time.Sleep(fileCloseWaitTime)
+
+			// don't wait too long
+			if time.Now().After(deadline) {
+				return fmt.Errorf("Waited %s for file %s to close, stopping the wait",
+					fileCloseMaxWaitTime.String(), fid)
+			}
+			continue
+		default:
+			return fmt.Errorf("data object %s has bad state %s", fid, fDesc.State)
+		}
+	}
 	return nil
 }
 
@@ -191,6 +228,7 @@ func NewFileUploadGlobalState(
 	}
 
 	// limit the number of prefetch IOs
+	fugs.wg.Add(numUploadThreads)
 	for i := 0; i < numUploadThreads; i++ {
 		go fugs.uploadIoWorker()
 	}
@@ -326,16 +364,11 @@ func (fugs *FileUploadGlobalState) createEmptyFile(
 	if fugs.options.Verbose {
 		log.Printf("Closing %s", upReq.id)
 	}
-	err := DxFileClose(httpClient, &fugs.dxEnv, upReq.id)
-	if err != nil {
-		log.Printf("failed to close file %s, error = %s", upReq.id, err.Error())
-	}
 }
 
 func (fugs *FileUploadGlobalState) uploadIoWorker() {
 	// A fixed http client. The idea is to be able to reuse http connections.
 	client := dxda.NewHttpClient(true)
-	fugs.wg.Add(1)
 
 	for true {
 		upReq, ok := <-fugs.reqQueue
@@ -352,19 +385,18 @@ func (fugs *FileUploadGlobalState) uploadIoWorker() {
 		if fileSize == 0 {
 			// Create an empty file, and continue to the next request
 			fugs.createEmptyFile(client, upReq)
-			continue
-		}
-
-		// loop over the parts, and upload them
-		if err := fugs.uploadFileDataSequentially(client, upReq); err != nil {
-			log.Printf("upload error to file %s, error = %s", upReq.id, err.Error())
-			continue
+		} else {
+			// loop over the parts, and upload them
+			if err := fugs.uploadFileDataSequentially(client, upReq); err != nil {
+				log.Printf("upload error to file %s, error = %s", upReq.id, err.Error())
+				continue
+			}
 		}
 
 		if fugs.options.Verbose {
 			log.Printf("Closing %s", upReq.id)
 		}
-		err := DxFileClose(client, &fugs.dxEnv, upReq.id)
+		err := DxFileCloseAndWait(client, &fugs.dxEnv, upReq.id, fugs.options.Verbose)
 		if err != nil {
 			log.Printf("failed to close file %s, error = %s", upReq.id, err.Error())
 		}

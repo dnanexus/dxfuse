@@ -95,6 +95,9 @@ type Filesys struct {
 
 	nonce *Nonce
 	tmpFileCounter uint64
+
+	// is the the system shutting down (unmounting)
+	shutdownCalled bool
 }
 
 // A node is a generalization over files and directories

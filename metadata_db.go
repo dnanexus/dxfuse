@@ -781,9 +781,9 @@ func (mdb *MetadataDb) directoryReadFromDNAx(
 		log.Printf("directoryReadFromDNAx: describe folder %s:%s", projId, projFolder)
 	}
 
-	// describe all the files
+	// describe all (closed) files
 	httpClient := <- mdb.httpClientPool
-	dxDir, err := DxDescribeFolder(httpClient, &mdb.dxEnv, projId, projFolder)
+	dxDir, err := DxDescribeFolder(httpClient, &mdb.dxEnv, projId, projFolder, true)
 	mdb.httpClientPool <- httpClient
 	if err != nil {
 		fmt.Printf(err.Error())

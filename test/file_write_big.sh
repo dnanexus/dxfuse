@@ -35,15 +35,9 @@ ls -l $baseDir/$target_dir
 echo "copying large files"
 cp $baseDir/correctness/large/*  $baseDir/$target_dir/
 
-# check if they arrived
 ls -l $baseDir/$target_dir
 
 sudo umount $mountpoint
 
-# 1. wait for the file to achieve the closed state
-#file_state=$(dx describe dxfuse_test_data:/A.txt --json | grep state | awk '{ gsub("[,\"]", "", $2); print $2 }')
-#if [ "$file_state" != "closed" ]; then
-#    sleep 2
-#fi
-
+sleep 1
 dx ls -l $projectName:/$target_dir

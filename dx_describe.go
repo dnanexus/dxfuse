@@ -21,6 +21,7 @@ type DxDescribeDataObject struct {
 	Id             string
 	ProjId         string
 	Name           string
+	State          string
 	Folder         string
 	Size           int64
 	CtimeSeconds   int64
@@ -90,7 +91,8 @@ type DxDescribeRaw struct {
 func submit(
 	httpClient *retryablehttp.Client,
 	dxEnv *dxda.DXEnvironment,
-	fileIds []string) (map[string]DxDescribeDataObject, error) {
+	fileIds []string,
+	closedFilesOnly bool) (map[string]DxDescribeDataObject, error) {
 
 	// Limit the number of fields returned, because by default we
 	// get too much information, which is a burden on the server side.
@@ -134,9 +136,12 @@ func submit(
 	var files = make(map[string]DxDescribeDataObject)
 	for _, descRawTop := range(reply.Results) {
 		descRaw := descRawTop.Describe
-		if descRaw.State != "closed" {
-			log.Printf("File %s is not closed, it is %s, dropping", descRaw.Id, descRaw.State)
-			continue
+
+		if closedFilesOnly {
+			if descRaw.State != "closed" {
+				log.Printf("File %s is not closed, it is %s, dropping", descRaw.Id, descRaw.State)
+				continue
+			}
 		}
 		symlinkUrl := ""
 		if descRaw.SymlinkPath != nil {
@@ -147,6 +152,7 @@ func submit(
 			Id :  descRaw.Id,
 			ProjId : descRaw.ProjId,
 			Name : descRaw.Name,
+			State : descRaw.State,
 			Folder : descRaw.Folder,
 			Size : descRaw.Size,
 			CtimeSeconds : descRaw.CreatedMillisec / 1000,
@@ -162,7 +168,8 @@ func submit(
 func DxDescribeBulkObjects(
 	httpClient *retryablehttp.Client,
 	dxEnv *dxda.DXEnvironment,
-	objIds []string) (map[string]DxDescribeDataObject, error) {
+	objIds []string,
+	closedFilesOnly bool) (map[string]DxDescribeDataObject, error) {
 	var gMap = make(map[string]DxDescribeDataObject)
 	if len(objIds) == 0 {
 		return gMap, nil
@@ -181,7 +188,7 @@ func DxDescribeBulkObjects(
 	batches = append(batches, objIds)
 
 	for _, objIdBatch := range(batches) {
-		m, err := submit(httpClient, dxEnv, objIdBatch)
+		m, err := submit(httpClient, dxEnv, objIdBatch, closedFilesOnly)
 		if err != nil {
 			return nil, err
 		}
@@ -257,7 +264,8 @@ func DxDescribeFolder(
 	httpClient *retryablehttp.Client,
 	dxEnv *dxda.DXEnvironment,
 	projectId string,
-	folder string) (*DxFolder, error) {
+	folder string,
+	closedFilesOnly bool) (*DxFolder, error) {
 
 	// The listFolder API call returns a list of object ids and folders.
 	// We could describe the objects right here, but we do that separately.
@@ -274,7 +282,7 @@ func DxDescribeFolder(
 			numElementsInDir, MaxDirSize)
 	}
 
-	dxObjs, err := DxDescribeBulkObjects(httpClient, dxEnv, folderInfo.objIds)
+	dxObjs, err := DxDescribeBulkObjects(httpClient, dxEnv, folderInfo.objIds, closedFilesOnly)
 	if err != nil {
 		log.Printf("describeBulkObjects(%v) error %s", folderInfo.objIds, err.Error())
 		return nil, err
@@ -350,4 +358,23 @@ func DxDescribeProject(
 		UploadParams : reply.UploadParams,
 	}
 	return &prj, nil
+}
+
+// Describe just one object. Retrieve state even if the object is not closed.
+func DxDescribe(
+	httpClient *retryablehttp.Client,
+	dxEnv *dxda.DXEnvironment,
+	objId string,
+	closedFilesOnly bool) (DxDescribeDataObject, error) {
+	var objectIds []string
+	objectIds = append(objectIds, objId)
+	m, err := DxDescribeBulkObjects(httpClient, dxEnv, objectIds, closedFilesOnly)
+	if err != nil {
+		return DxDescribeDataObject{}, err
+	}
+	oDesc, ok := m[objId]
+	if !ok {
+		return DxDescribeDataObject{}, fmt.Errorf("Object %s not found", objId)
+	}
+	return oDesc, nil
 }

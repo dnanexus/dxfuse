@@ -302,7 +302,7 @@ func (m *Manifest) FillInMissingFields(dxEnv dxda.DXEnvironment) error {
 	for fId, _  := range fileIds {
 		fileIdList = append(fileIdList, fId)
 	}
-	dataObjs, err := DxDescribeBulkObjects(tmpHttpClient, &dxEnv, fileIdList)
+	dataObjs, err := DxDescribeBulkObjects(tmpHttpClient, &dxEnv, fileIdList, true)
 	if err != nil {
 		return err
 	}
