@@ -1,6 +1,7 @@
 package dxfuse
 
 import (
+	"context"
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
@@ -34,6 +35,7 @@ const (
 )
 
 func DxFileNew(
+	ctx context.Context,
 	httpClient *retryablehttp.Client,
 	dxEnv *dxda.DXEnvironment,
 	nonceStr string,
@@ -52,7 +54,7 @@ func DxFileNew(
 	if err != nil {
 		return "", err
 	}
-	repJs, err := dxda.DxAPI(httpClient, dxEnv, "file/new", string(payload))
+	repJs, err := dxda.DxAPI(ctx, httpClient, dxEnv, "file/new", string(payload))
 	if err != nil {
 		log.Printf(err.Error())
 		return "", err
@@ -83,12 +85,15 @@ func DxFileNew(
 }
 
 func DxFileCloseAndWait(
+	ctx context.Context,
 	httpClient *retryablehttp.Client,
 	dxEnv *dxda.DXEnvironment,
 	fid string,
 	verbose bool) error {
 
-	_, err := dxda.DxAPI(httpClient,
+	_, err := dxda.DxAPI(
+		ctx,
+		httpClient,
 		dxEnv,
 		fmt.Sprintf("%s/close", fid),
 		"{}")
@@ -112,7 +117,7 @@ The file has size larger than fileUploadParameters.maximumFileSize bytes
 	start := time.Now()
 	deadline := start.Add(fileCloseMaxWaitTime)
         for true {
-		fDesc, err := DxDescribe(httpClient, dxEnv, fid, false)
+		fDesc, err := DxDescribe(ctx, httpClient, dxEnv, fid, false)
 		if err != nil {
 			return err
 		}
@@ -159,6 +164,7 @@ type Chunk struct {
 }
 
 func DxFileUploadPart(
+	ctx context.Context,
 	httpClient *retryablehttp.Client,
 	dxEnv *dxda.DXEnvironment,
 	fileId string,
@@ -176,7 +182,8 @@ func DxFileUploadPart(
 	if err != nil {
 		return err
 	}
-	replyJs, err := dxda.DxAPI(httpClient,
+	replyJs, err := dxda.DxAPI(ctx,
+		httpClient,
 		dxEnv,
 		fmt.Sprintf("%s/upload", fileId),
 		string(reqJson))
@@ -190,7 +197,7 @@ func DxFileUploadPart(
 		return err
 	}
 
-	_, err = dxda.DxHttpRequest(httpClient,"PUT", reply.Url, reply.Headers, chunk.data)
+	_, err = dxda.DxHttpRequest(ctx, httpClient,"PUT", reply.Url, reply.Headers, chunk.data)
 	return err
 }
 
@@ -208,6 +215,7 @@ type FileUploadGlobalState struct {
 	projId2Desc  map[string]DxDescribePrj
 	reqQueue     chan UploadReq
 	wg           sync.WaitGroup
+	ctx          context.Context
 }
 
 const (
@@ -225,6 +233,7 @@ func NewFileUploadGlobalState(
 		options : options,
 		projId2Desc : projId2Desc,
 		reqQueue : make(chan UploadReq),
+		ctx : context.TODO(),
 	}
 
 	// limit the number of prefetch IOs
@@ -237,7 +246,7 @@ func NewFileUploadGlobalState(
 }
 
 func (fugs *FileUploadGlobalState) Shutdown() {
-	// signal all io load threads to stop
+	// signal all upload threads to stop
 	close(fugs.reqQueue)
 
 	// wait for all of them to complete
@@ -331,7 +340,7 @@ func (fugs *FileUploadGlobalState) uploadFileDataSequentially(
 		if fugs.options.Verbose {
 			log.Printf("Uploading chunk=%d len=%d", cIndex, chunkLen)
 		}
-		if err := DxFileUploadPart(httpClient, &fugs.dxEnv, upReq.id, chunk); err != nil {
+		if err := DxFileUploadPart(fugs.ctx, httpClient, &fugs.dxEnv, upReq.id, chunk); err != nil {
 			return err
 		}
 		ofs += upReq.partSize
@@ -351,7 +360,7 @@ func (fugs *FileUploadGlobalState) createEmptyFile(
 			index: 1,
 			data : make([]byte, 0),
 		}
-		err := DxFileUploadPart(httpClient, &fugs.dxEnv, upReq.id, chunk)
+		err := DxFileUploadPart(fugs.ctx, httpClient, &fugs.dxEnv, upReq.id, chunk)
 		if err != nil {
 			log.Printf("error uploading empty chunk to file %s, error = %s",
 				upReq.id, err.Error())
@@ -396,7 +405,7 @@ func (fugs *FileUploadGlobalState) uploadIoWorker() {
 		if fugs.options.Verbose {
 			log.Printf("Closing %s", upReq.id)
 		}
-		err := DxFileCloseAndWait(client, &fugs.dxEnv, upReq.id, fugs.options.Verbose)
+		err := DxFileCloseAndWait(fugs.ctx, client, &fugs.dxEnv, upReq.id, fugs.options.Verbose)
 		if err != nil {
 			log.Printf("failed to close file %s, error = %s", upReq.id, err.Error())
 		}

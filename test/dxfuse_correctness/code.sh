@@ -162,7 +162,6 @@ main() {
         mkdir -p $d
     done
 
-    # download with dxfuse
     # Start the dxfuse daemon in the background, and wait for it to initilize.
     echo "Mounting dxfuse"
     sudo -E dxfuse $mountpoint $DX_PROJECT_CONTEXT_ID &

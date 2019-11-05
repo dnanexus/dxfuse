@@ -75,11 +75,11 @@ func NewDxfuse(
 	if err := fsys.mdb.Init(); err != nil {
 		return nil, err
 	}
-	if err := fsys.mdb.PopulateRoot(manifest); err != nil {
+	ctx := context.TODO()
+	if err := fsys.mdb.PopulateRoot(ctx, manifest); err != nil {
 		return nil, err
 	}
 
-	// initialize prefetching state
 	fsys.pgs = NewPrefetchGlobalState(options.VerboseLevel)
 
 	// describe all the projects, we need their upload parameters
@@ -90,7 +90,7 @@ func NewDxfuse(
 
 	projId2Desc := make(map[string]DxDescribePrj)
 	for _, d := range manifest.Directories {
-		pDesc, err := DxDescribeProject(httpClient, &dxEnv, d.ProjId)
+		pDesc, err := DxDescribeProject(ctx, httpClient, &dxEnv, d.ProjId)
 		if err != nil {
 			log.Printf("Could not describe project %s, check permissions", d.ProjId)
 			return nil, err
@@ -158,7 +158,7 @@ func (fsys *Filesys) LookUpInode(ctx context.Context, op *fuseops.LookUpInodeOp)
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
 
-	node, ok, err := fsys.mdb.LookupByInode(int64(op.Parent))
+	node, ok, err := fsys.mdb.LookupByInode(ctx, int64(op.Parent))
 	if err != nil {
 		return err
 	}
@@ -168,7 +168,7 @@ func (fsys *Filesys) LookUpInode(ctx context.Context, op *fuseops.LookUpInodeOp)
 	}
 	parentDir := node.(Dir)
 
-	node, ok, err = fsys.mdb.LookupInDir(&parentDir, op.Name)
+	node, ok, err = fsys.mdb.LookupInDir(ctx, &parentDir, op.Name)
 	if err != nil {
 		return err
 	}
@@ -194,7 +194,7 @@ func (fsys *Filesys) GetInodeAttributes(ctx context.Context, op *fuseops.GetInod
 	defer fsys.mutex.Unlock()
 
 	// Grab the inode.
-	node, ok, err := fsys.mdb.LookupByInode(int64(op.Inode))
+	node, ok, err := fsys.mdb.LookupByInode(ctx, int64(op.Inode))
 	if err != nil {
 		log.Printf(err.Error())
 		return fmt.Errorf("GetInodeAttributes error")
@@ -263,7 +263,7 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	}
 
 	// the parent is supposed to be a directory
-	node, ok, err := fsys.mdb.LookupByInode(int64(op.Parent))
+	node, ok, err := fsys.mdb.LookupByInode(ctx, int64(op.Parent))
 	if err != nil {
 		return err
 	}
@@ -274,7 +274,7 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	parentDir := node.(Dir)
 
 	// Check if the file already exists
-	_, ok, err = fsys.mdb.LookupInDir(&parentDir, op.Name)
+	_, ok, err = fsys.mdb.LookupInDir(ctx, &parentDir, op.Name)
 	if err != nil {
 		return err
 	}
@@ -291,7 +291,7 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	cnt := atomic.AddUint64(&fsys.tmpFileCounter, 1)
 	localPath := fmt.Sprintf("%s/%d_%s", CreatedFilesDir, cnt, op.Name)
 
-	file, err := fsys.mdb.CreateFile(&parentDir, op.Name, op.Mode, localPath)
+	file, err := fsys.mdb.CreateFile(ctx, &parentDir, op.Name, op.Mode, localPath)
 	if err != nil {
 		return err
 	}
@@ -344,7 +344,7 @@ func (fsys *Filesys) openRegularFile(ctx context.Context, op *fuseops.OpenFileOp
 
 	// used a shared http client
 	httpClient := <- fsys.httpClientPool
-	body, err := dxda.DxAPI(httpClient, &fsys.dxEnv, fmt.Sprintf("%s/download", f.Id), payload)
+	body, err := dxda.DxAPI(ctx, httpClient, &fsys.dxEnv, fmt.Sprintf("%s/download", f.Id), payload)
 	fsys.httpClientPool <- httpClient
 	if err != nil {
 		return nil, err
@@ -389,7 +389,7 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 	defer fsys.mutex.Unlock()
 
 	// find the file by its inode
-	node, ok, err := fsys.mdb.LookupByInode(int64(op.Inode))
+	node, ok, err := fsys.mdb.LookupByInode(ctx, int64(op.Inode))
 	if err != nil {
 		return err
 	}
@@ -489,7 +489,7 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 		}
 
 		// update database entry
-		if err := fsys.mdb.UpdateFile(fh.f, fileSize, modTime, fileReadOnlyMode); err != nil {
+		if err := fsys.mdb.UpdateFile(ctx, fh.f, fileSize, modTime, fileReadOnlyMode); err != nil {
 			return err
 		}
 
@@ -555,7 +555,7 @@ func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp,
 
 	// Take an http client from the pool. Return it when done.
 	httpClient := <- fsys.httpClientPool
-	body,err := dxda.DxHttpRequest(httpClient, "GET", fh.url.URL, headers, []byte("{}"))
+	body,err := dxda.DxHttpRequest(ctx, httpClient, "GET", fh.url.URL, headers, []byte("{}"))
 	fsys.httpClientPool <- httpClient
 	if err != nil {
 		return err
@@ -648,7 +648,7 @@ func (fsys *Filesys) readEntireDir(ctx context.Context, dir Dir) ([]fuseutil.Dir
 		log.Printf("ReadDirAll dir=(%s)\n", dir.FullPath)
 	}
 
-	dxObjs, subdirs, err := fsys.mdb.ReadDirAll(&dir)
+	dxObjs, subdirs, err := fsys.mdb.ReadDirAll(ctx, &dir)
 	if err != nil {
 		return nil, err
 	}
@@ -717,7 +717,7 @@ func (fsys *Filesys) OpenDir(ctx context.Context, op *fuseops.OpenDirOp) error {
 	defer fsys.mutex.Unlock()
 
 	// the parent is supposed to be a directory
-	node, ok, err := fsys.mdb.LookupByInode(int64(op.Inode))
+	node, ok, err := fsys.mdb.LookupByInode(ctx, int64(op.Inode))
 	if err != nil {
 		return err
 	}

@@ -1,6 +1,7 @@
 package dxfuse
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/dnanexus/dxda"
@@ -21,6 +22,7 @@ type FindProjectReply struct {
 // Find the project-id for a project name. Return nil if
 // the project does not exist
 func DxFindProject(
+	ctx context.Context,
 	dxEnv *dxda.DXEnvironment,
 	projName string) (string, error) {
 
@@ -34,7 +36,7 @@ func DxFindProject(
 	}
 
 	httpClient := dxda.NewHttpClient(false)
-	repJs, err := dxda.DxAPI(httpClient, dxEnv, "system/findProjects", string(payload))
+	repJs, err := dxda.DxAPI(ctx, httpClient, dxEnv, "system/findProjects", string(payload))
 	if err != nil {
 		return "", err
 	}

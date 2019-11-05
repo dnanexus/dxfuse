@@ -1,6 +1,7 @@
 package dxfuse
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -390,7 +391,7 @@ func (mdb *MetadataDb) lookupDirByInode(parent string, dname string, inode int64
 }
 
 // search for a file with a particular inode
-func (mdb *MetadataDb) LookupByInode(inode int64) (Node, bool, error) {
+func (mdb *MetadataDb) LookupByInode(ctx context.Context, inode int64) (Node, bool, error) {
 	// point lookup in the namespace table
 	sqlStmt := fmt.Sprintf(`
  		        SELECT parent,name,obj_type
@@ -770,6 +771,7 @@ func (mdb *MetadataDb) populateDir(
 // 1. The directory has not been queried yet.
 // 2. The global lock is held
 func (mdb *MetadataDb) directoryReadFromDNAx(
+	ctx context.Context,
 	dinode int64,
 	projId string,
 	projFolder string,
@@ -783,7 +785,7 @@ func (mdb *MetadataDb) directoryReadFromDNAx(
 
 	// describe all (closed) files
 	httpClient := <- mdb.httpClientPool
-	dxDir, err := DxDescribeFolder(httpClient, &mdb.dxEnv, projId, projFolder, true)
+	dxDir, err := DxDescribeFolder(ctx, httpClient, &mdb.dxEnv, projId, projFolder, true)
 	mdb.httpClientPool <- httpClient
 	if err != nil {
 		fmt.Printf(err.Error())
@@ -871,13 +873,14 @@ func (mdb *MetadataDb) directoryReadFromDNAx(
 
 
 // Add a directory with its contents to an exisiting database
-func (mdb *MetadataDb) ReadDirAll(dir *Dir) (map[string]File, map[string]Dir, error) {
+func (mdb *MetadataDb) ReadDirAll(ctx context.Context, dir *Dir) (map[string]File, map[string]Dir, error) {
 	if mdb.options.Verbose {
 		log.Printf("ReadDirAll %s", dir.FullPath)
 	}
 
 	if !dir.Populated {
 		err := mdb.directoryReadFromDNAx(
+			ctx,
 			dir.Inode,
 			dir.ProjId,
 			dir.ProjFolder,
@@ -903,22 +906,9 @@ func (mdb *MetadataDb) ReadDirAll(dir *Dir) (map[string]File, map[string]Dir, er
 // 3. Do a lookup in the directory.
 //
 // Note: the file might not exist.
-func (mdb *MetadataDb) LookupInDir(dir *Dir, dirOrFileName string) (Node, bool, error) {
+func (mdb *MetadataDb) LookupInDir(ctx context.Context, dir *Dir, dirOrFileName string) (Node, bool, error) {
 	if !dir.Populated {
-		mdb.ReadDirAll(dir)
-/*		files, dirs, err := mdb.ReadDirAll(dir)
-		if err != nil {
-			return nil, false, err
-		}
-		file, ok := files[dirOrFileName]
-		if ok {
-			return file, true, nil
-		}
-		dir, ok := dirs[dirOrFileName]
-		if ok {
-			return dir, true, nil
-		}
-		return nil, false, nil*/
+		mdb.ReadDirAll(ctx, dir)
 	}
 
 	// point lookup in the namespace
@@ -965,7 +955,7 @@ func (mdb *MetadataDb) LookupInDir(dir *Dir, dirOrFileName string) (Node, bool, 
 }
 
 // Build a toplevel directory for each project.
-func (mdb *MetadataDb) PopulateRoot(manifest Manifest) error {
+func (mdb *MetadataDb) PopulateRoot(ctx context.Context, manifest Manifest) error {
 	log.Printf("Populating root directory")
 
 	for _, d := range manifest.Directories {
@@ -1048,7 +1038,12 @@ func (mdb *MetadataDb) PopulateRoot(manifest Manifest) error {
 }
 
 // We know that the parent directory exists, is populated, and the file does not exist
-func (mdb *MetadataDb) CreateFile(dir *Dir, fname string, mode os.FileMode, localPath string) (File, error) {
+func (mdb *MetadataDb) CreateFile(
+	ctx context.Context,
+	dir *Dir,
+	fname string,
+	mode os.FileMode,
+	localPath string) (File, error) {
 	if mdb.options.Verbose {
 		log.Printf("CreateFile %s/%s  localPath=%s proj=%s",
 			dir.FullPath, fname, localPath, dir.ProjId)
@@ -1058,6 +1053,7 @@ func (mdb *MetadataDb) CreateFile(dir *Dir, fname string, mode os.FileMode, loca
 	// 1. create it on the platform
 	httpClient := <- mdb.httpClientPool
 	fileId, err := DxFileNew(
+		ctx,
 		httpClient, &mdb.dxEnv,
 		mdb.nonce.String(),
 		dir.ProjId,
@@ -1114,7 +1110,12 @@ func (mdb *MetadataDb) CreateFile(dir *Dir, fname string, mode os.FileMode, loca
 	}, nil
 }
 
-func (mdb *MetadataDb) UpdateFile(f File, fileSize int64, modTime time.Time, mode os.FileMode) error {
+func (mdb *MetadataDb) UpdateFile(
+	ctx context.Context,
+	f File,
+	fileSize int64,
+	modTime time.Time,
+	mode os.FileMode) error {
 	if mdb.options.Verbose {
 		log.Printf("Update file=%v size=%d mode=%d", f, fileSize, mode)
 	}

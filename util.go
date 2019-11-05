@@ -46,11 +46,11 @@ type DxDownloadURL struct {
 }
 
 type Options struct {
-	ReadOnly       bool
-	Verbose        bool
-	VerboseLevel   int
-	Uid            uint32
-	Gid            uint32
+	ReadOnly            bool
+	Verbose             bool
+	VerboseLevel        int
+	Uid                 uint32
+	Gid                 uint32
 }
 
 
@@ -219,7 +219,9 @@ type DirHandle struct {
 	entries []fuseutil.Dirent
 }
 
+
 // Utility functions
+
 func MaxInt64(x, y int64) int64 {
     if x < y {
         return y
@@ -228,6 +230,20 @@ func MaxInt64(x, y int64) int64 {
 }
 
 func MinInt64(x, y int64) int64 {
+    if x > y {
+        return y
+    }
+    return x
+}
+
+func MaxInt(x, y int) int {
+    if x < y {
+        return y
+    }
+    return x
+}
+
+func MinInt(x, y int) int {
     if x > y {
         return y
     }

@@ -26,11 +26,8 @@ sleep 2
 baseDir="$mountpoint/$projectName"
 
 # copy files
-#echo "copying small files"
-#cp $baseDir/correctness/small/*  $baseDir/$target_dir/
-
-# check if they arrived
-ls -l $baseDir/$target_dir
+echo "copying small files"
+cp $baseDir/correctness/small/*  $baseDir/$target_dir/
 
 echo "copying large files"
 cp $baseDir/correctness/large/*  $baseDir/$target_dir/

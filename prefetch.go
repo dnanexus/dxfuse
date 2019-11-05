@@ -4,10 +4,11 @@ package dxfuse
 // it can never return. This means that to check if a file is being streamed, all
 // we need to do is check the map.
 import (
-	//"context"
+	"context"
 	"fmt"
 	"log"
 	"math/bits"
+	"runtime"
 	"sync"
 	"time"
 
@@ -19,17 +20,24 @@ const (
 	maxDeltaTime = 5 * 60 * time.Second
 
 	prefetchMinIoSize = (256 * KiB)     // threshold for deciding the file is sequentially accessed
-	prefetchMaxIoSize = (16 * MiB)     // size of prefetch IO
+	prefetchMaxIoSizeFat = (16 * MiB)   // maximal size of prefetch IO for a fat stream
+	prefetchMaxIoSizeThin = (2 * MiB)   // size of prefetch IO
 	prefetchIoFactor = 4
-	maxNumChunksReadAhead = 12
+	maxNumChunksReadAhead = 8
 
 	numSlotsInChunk = 64
 
 	// An active stream can use a significant amount of memory to store prefetched data.
 	// Limit the total number of streams we are tracking and prefetching.
-	maxNumEntriesInTable = 8
+	maxNumEntriesInTable = 10
 
-	numPrefetchThreads = maxNumChunksReadAhead + 4
+	// A fat stream can use the maximal prefetch window. We can support a handful of
+	// those.
+	maxNumFatStreams = 1
+
+	// maximum number of prefetch threads, regardless of machine size
+	maxNumPrefetchThreads = 32
+
 	minFileSize = 8 * MiB     // do not track files smaller than this size
 )
 
@@ -105,24 +113,52 @@ type PrefetchFileMetadata struct {
 
 	// Allow user reads to wait until prefetch IOs complete
 	cond                *sync.Cond
+
+	// is this a fat stream? If so, we get to use a lot more memory
+	// and asyncronous operations.
+	fat                  bool
 }
 
 // global limits
 type PrefetchGlobalState struct {
-	verbose      bool
-	verboseLevel int
-	mutex        sync.Mutex  // Lock used to control the files table
-	files        map[*FileHandle](*PrefetchFileMetadata) // tracking state per file-id
-	ioQueue      chan IoReq    // queue of IOs to prefetch
-	wg           sync.WaitGroup
+	verbose       bool
+	verboseLevel  int
+	mutex         sync.Mutex  // Lock used to control the files table
+	files         map[*FileHandle](*PrefetchFileMetadata) // tracking state per file-id
+	ioQueue       chan IoReq    // queue of IOs to prefetch
+	wg            sync.WaitGroup
+	numFatStreams int
+	numPrefetchThreads int
+	ctx           context.Context
 }
 
 func NewPrefetchGlobalState(verboseLevel int) *PrefetchGlobalState {
+	// calculate how much memory will be used in the worst cast
+	fatStreamBytes := maxNumChunksReadAhead * prefetchMaxIoSizeFat
+	regStreamBytes := 3 * prefetchMaxIoSizeThin
+
+	totalMemoryBytes := fatStreamBytes * maxNumFatStreams
+	totalMemoryBytes += regStreamBytes * (maxNumEntriesInTable - maxNumFatStreams)
+	log.Printf("maximal memory usage: %dMiB", totalMemoryBytes / MiB)
+
+	// We want to:
+	// 1) allow all streams to have a worker available
+	// 2) not have more than two workers per CPU
+	// 3) not go over an overall limit, regardless of machine size
+	numCPUs := runtime.NumCPU()
+	numThinStreams := maxNumEntriesInTable - maxNumFatStreams
+	numPrefetchThreads := (maxNumFatStreams * maxNumChunksReadAhead) + numThinStreams
+	numPrefetchThreads = MinInt(numPrefetchThreads, numCPUs * 2)
+	numPrefetchThreads = MinInt(numPrefetchThreads, maxNumPrefetchThreads)
+	log.Printf("num prefetch worker threads: %d", numPrefetchThreads)
+
 	pgs := &PrefetchGlobalState{
 		verbose : verboseLevel >= 1,
 		verboseLevel : verboseLevel,
 		files : make(map[*FileHandle](*PrefetchFileMetadata)),
 		ioQueue : make(chan IoReq),
+		numPrefetchThreads: numPrefetchThreads,
+		ctx : context.TODO(),
 	}
 
 	// limit the number of prefetch IOs
@@ -181,7 +217,7 @@ func (pgs *PrefetchGlobalState) readData(
 	}
 	headers["Range"] = fmt.Sprintf("bytes=%d-%d", startByte, endByte)
 
-	data, err := dxda.DxHttpRequest(client, "GET", url.URL, headers, []byte("{}"))
+	data, err := dxda.DxHttpRequest(pgs.ctx, client, "GET", url.URL, headers, []byte("{}"))
 	if pgs.verbose {
 		if err == nil {
 			log.Printf("prefetch: IO returned correctly len=%d", len(data))
@@ -218,7 +254,7 @@ func findIovecIndex(pfm *PrefetchFileMetadata, ioReq IoReq) int {
 	return -1
 }
 
-// We are holding the global code at this point.
+// We are holding the global lock at this point.
 // Wake up waiting IOs, if any.
 func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq IoReq) {
 	if pfm.state == PFM_IO_ERROR {
@@ -411,6 +447,10 @@ func (pgs *PrefetchGlobalState) RemoveStreamEntry(fh *FileHandle) {
 		if pgs.verbose {
 			log.Printf("prefetch: RemoveStreamEntry %s", fh.f.Name)
 		}
+		if pfm.fat {
+			pgs.numFatStreams -= 1
+			check(pgs.numFatStreams >= 0)
+		}
 
 		// wake up any waiting synchronous user IOs
 		pfm.cond.Broadcast()
@@ -537,7 +577,7 @@ func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIn
 				shouldPrefetch : true,
 				submitted : false,
 			}
-			check(emptyIov.ioSize <= prefetchMaxIoSize)
+			check(emptyIov.ioSize <= prefetchMaxIoSizeFat)
 			pfm.cache.iovecs = append(pfm.cache.iovecs, emptyIov)
 
 			if pgs.verboseLevel >= 2 {
@@ -625,13 +665,33 @@ func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 	}
 
 	// increase read ahead io size, using a bounded exponential formula
-	if pfm.cache.prefetchIoSize < prefetchMaxIoSize {
+	if pfm.cache.prefetchIoSize < prefetchMaxIoSizeFat {
 		pfm.cache.prefetchIoSize =
-			MinInt64(prefetchMaxIoSize, pfm.cache.prefetchIoSize * prefetchIoFactor)
+			MinInt64(prefetchMaxIoSizeFat, pfm.cache.prefetchIoSize * prefetchIoFactor)
 	}
-	if pfm.cache.prefetchIoSize == prefetchMaxIoSize {
-		// if we are at the maximal io size, start issuing asynchronous
-		// readahead requests.
+	if !pfm.fat &&
+		pfm.cache.prefetchIoSize > prefetchMaxIoSizeThin {
+		if pgs.numFatStreams >= maxNumFatStreams {
+			// we are already using all the fat streams. Limit the IO
+			// size for a thin stream, and use at most one async request.
+			pfm.cache.prefetchIoSize = prefetchMaxIoSizeThin
+		} else {
+			// this has just become a fat stream.
+			pfm.fat = true
+			pgs.numFatStreams++
+			if pgs.verboseLevel >= 1 {
+				log.Printf(
+					"Just passed the threshold for a fat stream. prefetch=%dMiB, #FatStreams=%d",
+					pfm.cache.prefetchIoSize/MiB, pgs.numFatStreams)
+			}
+		}
+	}
+
+	if pfm.fat &&
+		pfm.cache.prefetchIoSize == prefetchMaxIoSizeFat {
+		// this is a fat stream, and we are at the maximal io
+		// size. Start issuing multiple asynchronous readahead
+		// requests.
 		pfm.cache.numChunksReadAhead = maxNumChunksReadAhead
 		pfm.cache.maxNumIovecs = maxNumChunksReadAhead + 2
 	}
