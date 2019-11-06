@@ -1,4 +1,4 @@
-#!/bin/bash -ex
+#!/bin/bash -e
 
 TOTAL_NUM_FILES=4
 
@@ -39,7 +39,9 @@ function check_parallel_cat {
     done
 
     # compare resulting files
+    echo "comparing files"
     for f in $files; do
+        b_name=$(basename $f)
         diff $f $target_dir/$b_name
     done
 }
@@ -52,9 +54,6 @@ rm -f ENV
 dx env --bash > ENV
 source ENV >& /dev/null
 
-#dx rm -r $projectName:/$target_dir || true
-#dx mkdir -p $projectName:/$target_dir
-
 # create a fresh mountpoint
 mkdir -p $mountpoint
 
@@ -63,11 +62,11 @@ mkdir -p $target_dir
 
 # Start the dxfuse daemon in the background, and wait for it to initilize.
 echo "Mounting dxfuse"
-sudo -E /go/bin/dxfuse $mountpoint $projectName &
-sleep 5
+sudo -E /go/bin/dxfuse -verbose 1 $mountpoint $projectName &
+sleep 2
 ls -l "$mountpoint/$projectName"
 
 # run test
 check_parallel_cat
 
-sudo umount $mountpoint
+#sudo umount $mountpoint

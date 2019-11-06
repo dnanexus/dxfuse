@@ -17,23 +17,17 @@ import (
 )
 
 const (
-	maxDeltaTime = 5 * 60 * time.Second
+	maxDeltaTime = 2 * 60 * time.Second
 
-	prefetchMinIoSize = (256 * KiB)     // threshold for deciding the file is sequentially accessed
-	prefetchMaxIoSizeFat = (16 * MiB)   // maximal size of prefetch IO for a fat stream
-	prefetchMaxIoSizeThin = (2 * MiB)   // size of prefetch IO
+	prefetchMinIoSize = (256 * KiB)   // threshold for deciding the file is sequentially accessed
+	prefetchMaxIoSize = (16 * MiB)    // maximal size of prefetch IO
 	prefetchIoFactor = 4
-	maxNumChunksReadAhead = 8
 
 	numSlotsInChunk = 64
 
 	// An active stream can use a significant amount of memory to store prefetched data.
 	// Limit the total number of streams we are tracking and prefetching.
 	maxNumEntriesInTable = 10
-
-	// A fat stream can use the maximal prefetch window. We can support a handful of
-	// those.
-	maxNumFatStreams = 1
 
 	// maximum number of prefetch threads, regardless of machine size
 	maxNumPrefetchThreads = 32
@@ -99,9 +93,10 @@ type PrefetchFileMetadata struct {
 	fh                  *FileHandle
 	state                int
 
-	// Last time an IO hit this file
-	lastIo               time.Time
-	sequentiallyAccessed bool  // estimate if this file is sequentially accessed
+
+	lastIoTimestamp      time.Time  // Last time an IO hit this file
+	hiUserAccessOfs      int64      // highest file offset accessed by the user
+	sequentiallyAccessed bool       // estimate if this file is sequentially accessed
 	numIOs               int
 	numPrefetchIOs       int
 
@@ -113,10 +108,17 @@ type PrefetchFileMetadata struct {
 
 	// Allow user reads to wait until prefetch IOs complete
 	cond                *sync.Cond
+}
 
-	// is this a fat stream? If so, we get to use a lot more memory
-	// and asyncronous operations.
-	fat                  bool
+func time2string(t time.Time) string {
+	return fmt.Sprintf("%02d:%02d:%02d", t.Hour(), t.Minute(), t.Second())
+}
+
+// write a log message, and add a header
+func (pfm PrefetchFileMetadata) log(a string, args ...interface{}) {
+	msg := fmt.Sprintf(a, args...)
+	now := time.Now()
+	log.Printf("%s prefetch(%s): %s", time2string(now), pfm.fh.f.Name, msg)
 }
 
 // global limits
@@ -127,30 +129,37 @@ type PrefetchGlobalState struct {
 	files         map[*FileHandle](*PrefetchFileMetadata) // tracking state per file-id
 	ioQueue       chan IoReq    // queue of IOs to prefetch
 	wg            sync.WaitGroup
-	numFatStreams int
 	numPrefetchThreads int
-	ctx           context.Context
+	maxNumChunksReadAhead int
+}
+
+// write a log message, and add a header
+func (pgs PrefetchGlobalState) log(a string, args ...interface{}) {
+	msg := fmt.Sprintf(a, args...)
+	now := time.Now()
+	log.Printf("%s prefetch: %s", time2string(now), msg)
 }
 
 func NewPrefetchGlobalState(verboseLevel int) *PrefetchGlobalState {
-	// calculate how much memory will be used in the worst cast
-	fatStreamBytes := maxNumChunksReadAhead * prefetchMaxIoSizeFat
-	regStreamBytes := 3 * prefetchMaxIoSizeThin
-
-	totalMemoryBytes := fatStreamBytes * maxNumFatStreams
-	totalMemoryBytes += regStreamBytes * (maxNumEntriesInTable - maxNumFatStreams)
-	log.Printf("maximal memory usage: %dMiB", totalMemoryBytes / MiB)
-
 	// We want to:
 	// 1) allow all streams to have a worker available
 	// 2) not have more than two workers per CPU
 	// 3) not go over an overall limit, regardless of machine size
 	numCPUs := runtime.NumCPU()
-	numThinStreams := maxNumEntriesInTable - maxNumFatStreams
-	numPrefetchThreads := (maxNumFatStreams * maxNumChunksReadAhead) + numThinStreams
-	numPrefetchThreads = MinInt(numPrefetchThreads, numCPUs * 2)
-	numPrefetchThreads = MinInt(numPrefetchThreads, maxNumPrefetchThreads)
-	log.Printf("num prefetch worker threads: %d", numPrefetchThreads)
+	numPrefetchThreads := MinInt(numCPUs * 2, maxNumPrefetchThreads)
+
+	// don't allow a single stream to hog all the threads.
+	maxNumChunksReadAhead := MinInt(8, numPrefetchThreads - 2)
+	maxNumChunksReadAhead = MaxInt(1, maxNumChunksReadAhead)
+
+	// calculate how much memory will be used in the worst cast
+	streamBytes := 3 * prefetchMaxIoSize
+	totalMemoryBytes := streamBytes * maxNumEntriesInTable
+	totalMemoryBytes += maxNumChunksReadAhead * prefetchMaxIoSize
+
+	log.Printf("maximal memory usage: %dMiB", totalMemoryBytes / MiB)
+	log.Printf("number of prefetch worker threads: %d", numPrefetchThreads)
+	log.Printf("maximal number of read-ahead chunks: %d", maxNumChunksReadAhead)
 
 	pgs := &PrefetchGlobalState{
 		verbose : verboseLevel >= 1,
@@ -158,7 +167,7 @@ func NewPrefetchGlobalState(verboseLevel int) *PrefetchGlobalState {
 		files : make(map[*FileHandle](*PrefetchFileMetadata)),
 		ioQueue : make(chan IoReq),
 		numPrefetchThreads: numPrefetchThreads,
-		ctx : context.TODO(),
+		maxNumChunksReadAhead : maxNumChunksReadAhead,
 	}
 
 	// limit the number of prefetch IOs
@@ -206,7 +215,7 @@ func (pgs *PrefetchGlobalState) readData(
 	// http request.
 	if pgs.verbose {
 		len := endByte - startByte + 1
-		log.Printf("prefetch: reading extent from DNAx  ofs=%d len=%d", startByte, len)
+		pgs.log("reading extent from DNAx ofs=%d len=%d", startByte, len)
 	}
 
 	headers := make(map[string]string)
@@ -217,12 +226,13 @@ func (pgs *PrefetchGlobalState) readData(
 	}
 	headers["Range"] = fmt.Sprintf("bytes=%d-%d", startByte, endByte)
 
-	data, err := dxda.DxHttpRequest(pgs.ctx, client, "GET", url.URL, headers, []byte("{}"))
+	ctx := context.TODO()
+	data, err := dxda.DxHttpRequest(ctx, client, "GET", url.URL, headers, []byte("{}"))
 	if pgs.verbose {
 		if err == nil {
-			log.Printf("prefetch: IO returned correctly len=%d", len(data))
+			pgs.log("IO returned correctly len=%d", len(data))
 		} else {
-			log.Printf("prefetch: IO returned with error %s", err.Error())
+			pgs.log("IO returned with error %s", err.Error())
 		}
 	}
 	return data, err
@@ -258,8 +268,8 @@ func findIovecIndex(pfm *PrefetchFileMetadata, ioReq IoReq) int {
 // Wake up waiting IOs, if any.
 func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq IoReq) {
 	if pfm.state == PFM_IO_ERROR {
-		log.Printf("Dropping prefetch IO, file has encountered an error (%s, %s)",
-			ioReq.fh.f.Id, ioReq.fh.f.Name)
+		pfm.log("Dropping prefetch IO, file has encountered an error (%s)",
+			ioReq.fh.f.Id)
 		return
 	}
 
@@ -267,8 +277,8 @@ func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq
 	// size, so we need to scan.
 	iovIdx := findIovecIndex(pfm, ioReq)
 	if iovIdx == -1 {
-		log.Printf("Dropping prefetch IO, matching entry in cache not found")
-		log.Printf("ioReq=%v len(cache.iovecs)=%d", ioReq, len(pfm.cache.iovecs))
+		pfm.log("Dropping prefetch IO, matching entry in cache not found, ioReq=%v len(cache.iovecs)=%d",
+			ioReq, len(pfm.cache.iovecs))
 		return
 	}
 	check(pfm.cache.iovecs[iovIdx].data == nil)
@@ -283,7 +293,7 @@ func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq
 	// if we are extending the contiguous filled chunks, then signal
 	contigLen := numContiguousChunks(pfm)
 	if pgs.verboseLevel >= 2 {
-		log.Printf("contiguity of cache chunks: %d  iovIdx=%d", contigLen, iovIdx)
+		pgs.log("contiguity of cache chunks: %d  iovIdx=%d", contigLen, iovIdx)
 	}
 	if contigLen >= iovIdx + 1 {
 		// Note: the contiguous length may extend -beyond- the current
@@ -314,10 +324,10 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 		pfm, ok := pgs.files[ioReq.fh]
 		if !ok {
 			// file is not tracked anymore
-			log.Printf("Dropping prefetch IO, file is no longer tracked (%s)", ioReq.fh.f.Id)
+			pfm.log("Dropping prefetch IO, file is no longer tracked")
 		} else {
 			if err != nil {
-				log.Printf("Prefetch error ofs=%d len=%d error=%s",
+				pfm.log("Prefetch error ofs=%d len=%d error=%s",
 					ioReq.startByte, ioReq.endByte, err.Error())
 				pfm.state = PFM_IO_ERROR
 				pfm.cond.Broadcast()
@@ -342,7 +352,7 @@ func (pgs *PrefetchGlobalState) isWorthIt(pfm *PrefetchFileMetadata, now time.Ti
 		return false
 	}
 
-	if now.After(pfm.lastIo.Add(maxDeltaTime)) {
+	if now.After(pfm.lastIoTimestamp.Add(maxDeltaTime)) {
 		// File has not been accessed recently
 		return false
 	}
@@ -371,7 +381,7 @@ func (pgs *PrefetchGlobalState) tableCleanupWorker() {
 
 		numUnworthy := len(toRemove)
 		if pgs.verbose && numUnworthy > 0 {
-			log.Printf("prefetch: tableCleanupWorkder removing %d unworthy streams",
+			pgs.log("tableCleanupWorkder removing %d unworthy streams",
 				numUnworthy)
 		}
 
@@ -387,7 +397,8 @@ func (pgs *PrefetchGlobalState) tableCleanupWorker() {
 func (pgs *PrefetchGlobalState) newPrefetchFileMetadata(fh *FileHandle) *PrefetchFileMetadata {
 	var entry PrefetchFileMetadata
 	entry.fh = fh
-	entry.lastIo = time.Now()
+	entry.lastIoTimestamp = time.Now()
+	entry.hiUserAccessOfs = 0
 	entry.sequentiallyAccessed = false
 	entry.numIOs = 0
 	entry.numPrefetchIOs = 0
@@ -434,7 +445,7 @@ func (pgs *PrefetchGlobalState) CreateStreamEntry(fh *FileHandle) {
 	}
 
 	if pgs.verbose {
-		log.Printf("prefetch: CreateStreamEntry %s", fh.f.Name)
+		pgs.log("CreateStreamEntry %s", fh.f.Name)
 	}
 	pgs.files[fh] = pgs.newPrefetchFileMetadata(fh)
 }
@@ -445,11 +456,7 @@ func (pgs *PrefetchGlobalState) RemoveStreamEntry(fh *FileHandle) {
 
 	if pfm, ok := pgs.files[fh]; ok {
 		if pgs.verbose {
-			log.Printf("prefetch: RemoveStreamEntry %s", fh.f.Name)
-		}
-		if pfm.fat {
-			pgs.numFatStreams -= 1
-			check(pgs.numFatStreams >= 0)
+			pgs.log("RemoveStreamEntry %s", fh.f.Name)
 		}
 
 		// wake up any waiting synchronous user IOs
@@ -460,7 +467,7 @@ func (pgs *PrefetchGlobalState) RemoveStreamEntry(fh *FileHandle) {
 	}
 }
 
-func markRangeInIovec(iovec *Iovec, startOfs int64, endOfs int64) {
+func (pfm *PrefetchFileMetadata) markRangeInIovec(iovec *Iovec, startOfs int64, endOfs int64) {
 	startOfsBoth := MaxInt64(iovec.startByte, startOfs)
 	endOfsBoth := MinInt64(iovec.endByte, endOfs)
 
@@ -470,7 +477,7 @@ func markRangeInIovec(iovec *Iovec, startOfs int64, endOfs int64) {
 	endSlot := (endOfsBoth - iovec.startByte) / slotSize
 	check(startSlot >= 0)
 	if !(endSlot >= 0 && endSlot <= numSlotsInChunk) {
-		log.Printf("offset(%d -- %d),  slots=(%d -- %d), iovec=(%d -- %d)",
+		pfm.log("offset(%d -- %d),  slots=(%d -- %d), iovec=(%d -- %d)",
 			startOfs, endOfs,
 			startSlot, endSlot,
 			iovec.startByte, iovec.endByte)
@@ -496,7 +503,7 @@ func (pgs *PrefetchGlobalState) findCoveredRange(
 
 	if pgs.verboseLevel >= 2 {
 		for i, iovec := range pfm.cache.iovecs {
-			log.Printf("cache %d -> [%d -- %d]", i, iovec.startByte, iovec.endByte)
+			pfm.log("cache %d -> [%d -- %d]", i, iovec.startByte, iovec.endByte)
 		}
 	}
 
@@ -524,7 +531,7 @@ func (pgs *PrefetchGlobalState) findCoveredRange(
 	}
 
 	if pgs.verboseLevel >= 2 {
-		log.Printf("findCoverRange: first,last=(%d,%d)  IO=[%d -- %d]",
+		pfm.log("findCoverRange: first,last=(%d,%d)  IO=[%d -- %d]",
 			first, last, startOfs, endOfs)
 	}
 
@@ -535,7 +542,7 @@ func (pgs *PrefetchGlobalState) findCoveredRange(
 // Setup cache state for the next prefetch.
 //
 // 1) we want there to be numChunksReadAhead chunks ahead of us.
-// 2) we don't want the entire file-cache to go above MAX_NUM_IOVECS_IN_FILE_CACHE
+// 2) we don't want the cache for the file to go over pfm.cache.maxNumIovecs
 //
 // For example, if there are currently 2 chunks in cache, and the current IO falls
 // in the second location then:
@@ -549,7 +556,7 @@ func (pgs *PrefetchGlobalState) findCoveredRange(
 // additional readahead IOs.
 func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIndex int) {
 	if pgs.verbose {
-		log.Printf("moveCacheWindow  iovIndex=%d  len(iovecs)=%d",
+		pfm.log("moveCacheWindow  iovIndex=%d  len(iovecs)=%d",
 			iovIndex, len(pfm.cache.iovecs))
 	}
 	nIovecs := len(pfm.cache.iovecs)
@@ -577,11 +584,11 @@ func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIn
 				shouldPrefetch : true,
 				submitted : false,
 			}
-			check(emptyIov.ioSize <= prefetchMaxIoSizeFat)
+			check(emptyIov.ioSize <= prefetchMaxIoSize)
 			pfm.cache.iovecs = append(pfm.cache.iovecs, emptyIov)
 
 			if pgs.verboseLevel >= 2 {
-				log.Printf("Adding chunk %d [%d -- %d]", i, emptyIov.startByte, emptyIov.endByte)
+				pfm.log("Adding chunk %d [%d -- %d]", i, emptyIov.startByte, emptyIov.endByte)
 			}
 		}
 	}
@@ -593,6 +600,12 @@ func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIn
 		// reduce memory consumption.
 		start := nIovecs - pfm.cache.maxNumIovecs
 		for i := 0; i < start; i++ {
+			if pfm.cache.iovecs[i].endByte < pfm.hiUserAccessOfs  {
+				// don't discard data that hasn't been read yet.
+				break
+			}
+			// the user has already passed this point in the file.
+			// it can be discarded.
 			pfm.cache.iovecs[i].data = nil
 			if pfm.state == PFM_PREFETCH_IN_PROGRESS &&
 				pfm.cache.iovecs[i].submitted &&
@@ -642,7 +655,7 @@ func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 		return
 	}
 	for i := first; i <= last; i++ {
-		markRangeInIovec(pfm.cache.iovecs[i], startOfs, endOfs)
+		pfm.markRangeInIovec(pfm.cache.iovecs[i], startOfs, endOfs)
 	}
 
 	// find the iovec in cache where this IO falls. We use the right edge
@@ -650,7 +663,7 @@ func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 	currentIovec := pfm.cache.iovecs[last]
 	numAccessed := bits.OnesCount64(currentIovec.touched)
 	if pgs.verboseLevel >= 2 {
-		log.Printf("prefetch touch: ofs=%d  len=%d  numAccessed=%d",
+		pfm.log("touch: ofs=%d  len=%d  numAccessed=%d",
 			startOfs, endOfs - startOfs, numAccessed)
 	}
 	if numAccessed < numSlotsInChunk {
@@ -665,35 +678,21 @@ func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 	}
 
 	// increase read ahead io size, using a bounded exponential formula
-	if pfm.cache.prefetchIoSize < prefetchMaxIoSizeFat {
+	if pfm.cache.prefetchIoSize < prefetchMaxIoSize {
 		pfm.cache.prefetchIoSize =
-			MinInt64(prefetchMaxIoSizeFat, pfm.cache.prefetchIoSize * prefetchIoFactor)
+			MinInt64(prefetchMaxIoSize, pfm.cache.prefetchIoSize * prefetchIoFactor)
 	}
-	if !pfm.fat &&
-		pfm.cache.prefetchIoSize > prefetchMaxIoSizeThin {
-		if pgs.numFatStreams >= maxNumFatStreams {
-			// we are already using all the fat streams. Limit the IO
-			// size for a thin stream, and use at most one async request.
-			pfm.cache.prefetchIoSize = prefetchMaxIoSizeThin
-		} else {
-			// this has just become a fat stream.
-			pfm.fat = true
-			pgs.numFatStreams++
-			if pgs.verboseLevel >= 1 {
-				log.Printf(
-					"Just passed the threshold for a fat stream. prefetch=%dMiB, #FatStreams=%d",
-					pfm.cache.prefetchIoSize/MiB, pgs.numFatStreams)
-			}
+	if pfm.cache.prefetchIoSize == prefetchMaxIoSize {
+		// normally, we give one read-head request to each stream. However,
+		// if there is only one open stream, we give it a lot more. This
+		// is an optimization for the special case of a single open file.
+		nReadAhead := 1
+		nStreams := len(pgs.files)
+		if nStreams == 1 {
+			nReadAhead = pgs.maxNumChunksReadAhead
 		}
-	}
-
-	if pfm.fat &&
-		pfm.cache.prefetchIoSize == prefetchMaxIoSizeFat {
-		// this is a fat stream, and we are at the maximal io
-		// size. Start issuing multiple asynchronous readahead
-		// requests.
-		pfm.cache.numChunksReadAhead = maxNumChunksReadAhead
-		pfm.cache.maxNumIovecs = maxNumChunksReadAhead + 2
+		pfm.cache.numChunksReadAhead = nReadAhead
+		pfm.cache.maxNumIovecs = nReadAhead + 2
 	}
 
 	pgs.moveCacheWindow(pfm, last)
@@ -736,7 +735,7 @@ func (pgs *PrefetchGlobalState) getDataFromCache(
 	// cached data. nil is returned for such cases.
 	//
 	if pgs.verbose {
-		log.Printf("Data is in cache, but falls on an iovec boundary ofs=%d len=%d",
+		pfm.log("Data is in cache, but falls on an iovec boundary ofs=%d len=%d",
 			startOfs, (endOfs - startOfs))
 	}
 	return nil
@@ -761,7 +760,8 @@ func (pgs *PrefetchGlobalState) cacheLookup1(fh *FileHandle, startOfs int64, end
 	}
 
 	// accounting and statistics
-	pfm.lastIo = now
+	pfm.lastIoTimestamp = now
+	pfm.hiUserAccessOfs = MaxInt64(pfm.hiUserAccessOfs, startOfs)
 	pfm.numIOs++
 
 	switch pfm.state {
@@ -777,7 +777,7 @@ func (pgs *PrefetchGlobalState) cacheLookup1(fh *FileHandle, startOfs int64, end
 			// the cached area. The file is not accessed
 			// sequentially
 			if pgs.verbose {
-				log.Printf("IO outside cache  io=[%d -- %d]  cache=[%d -- %d]",
+				pfm.log("IO outside cache  io=[%d -- %d]  cache=[%d -- %d]",
 					startOfs, endOfs, pfm.cache.startByte, pfm.cache.endByte)
 				pfm.sequentiallyAccessed = false
 			}
@@ -796,11 +796,11 @@ func (pgs *PrefetchGlobalState) cacheLookup1(fh *FileHandle, startOfs int64, end
 			// data is not in cache yet, we are waiting for a
 			// prefetch IO.
 			if pgs.verbose {
-				log.Printf("prefetch: went to sleep io=[%d -- %d]", startOfs, endOfs)
+				pfm.log("went to sleep io=[%d -- %d]", startOfs, endOfs)
 			}
 			pfm.cond.Wait()
 			if pgs.verbose {
-				log.Printf("prefetch: woke up from waiting")
+				pfm.log("woke up from waiting")
 			}
 		}
 		return nil, DATA_IN_CACHE

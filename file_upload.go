@@ -215,7 +215,6 @@ type FileUploadGlobalState struct {
 	projId2Desc  map[string]DxDescribePrj
 	reqQueue     chan UploadReq
 	wg           sync.WaitGroup
-	ctx          context.Context
 }
 
 const (
@@ -233,7 +232,6 @@ func NewFileUploadGlobalState(
 		options : options,
 		projId2Desc : projId2Desc,
 		reqQueue : make(chan UploadReq),
-		ctx : context.TODO(),
 	}
 
 	// limit the number of prefetch IOs
@@ -340,7 +338,8 @@ func (fugs *FileUploadGlobalState) uploadFileDataSequentially(
 		if fugs.options.Verbose {
 			log.Printf("Uploading chunk=%d len=%d", cIndex, chunkLen)
 		}
-		if err := DxFileUploadPart(fugs.ctx, httpClient, &fugs.dxEnv, upReq.id, chunk); err != nil {
+		ctx := context.TODO()
+		if err := DxFileUploadPart(ctx, httpClient, &fugs.dxEnv, upReq.id, chunk); err != nil {
 			return err
 		}
 		ofs += upReq.partSize
@@ -360,7 +359,8 @@ func (fugs *FileUploadGlobalState) createEmptyFile(
 			index: 1,
 			data : make([]byte, 0),
 		}
-		err := DxFileUploadPart(fugs.ctx, httpClient, &fugs.dxEnv, upReq.id, chunk)
+		ctx := context.TODO()
+		err := DxFileUploadPart(ctx, httpClient, &fugs.dxEnv, upReq.id, chunk)
 		if err != nil {
 			log.Printf("error uploading empty chunk to file %s, error = %s",
 				upReq.id, err.Error())
@@ -405,7 +405,8 @@ func (fugs *FileUploadGlobalState) uploadIoWorker() {
 		if fugs.options.Verbose {
 			log.Printf("Closing %s", upReq.id)
 		}
-		err := DxFileCloseAndWait(fugs.ctx, client, &fugs.dxEnv, upReq.id, fugs.options.Verbose)
+		ctx := context.TODO()
+		err := DxFileCloseAndWait(ctx, client, &fugs.dxEnv, upReq.id, fugs.options.Verbose)
 		if err != nil {
 			log.Printf("failed to close file %s, error = %s", upReq.id, err.Error())
 		}

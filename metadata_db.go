@@ -36,7 +36,6 @@ type MetadataDb struct {
 	baseDir2ProjectId map[string]string
 
 	inodeCnt          int64
-	nonce             *Nonce
 	options           Options
 }
 
@@ -44,7 +43,6 @@ func NewMetadataDb(
 	dbFullPath string,
 	dxEnv dxda.DXEnvironment,
 	httpClientPool chan(*retryablehttp.Client),
-	nonce *Nonce,
 	options Options) (*MetadataDb, error) {
 	// create a connection to the database, that will be kept open
 	db, err := sql.Open("sqlite3", dbFullPath + "?mode=rwc")
@@ -59,7 +57,6 @@ func NewMetadataDb(
 		dxEnv : dxEnv,
 		baseDir2ProjectId: make(map[string]string),
 		inodeCnt : InodeRoot + 1,
-		nonce: nonce,
 		options : options,
 	}, nil
 }
@@ -1041,6 +1038,7 @@ func (mdb *MetadataDb) PopulateRoot(ctx context.Context, manifest Manifest) erro
 func (mdb *MetadataDb) CreateFile(
 	ctx context.Context,
 	dir *Dir,
+	fileId string,
 	fname string,
 	mode os.FileMode,
 	localPath string) (File, error) {
@@ -1049,22 +1047,7 @@ func (mdb *MetadataDb) CreateFile(
 			dir.FullPath, fname, localPath, dir.ProjId)
 	}
 
-	// now we know this is a new file
-	// 1. create it on the platform
-	httpClient := <- mdb.httpClientPool
-	fileId, err := DxFileNew(
-		ctx,
-		httpClient, &mdb.dxEnv,
-		mdb.nonce.String(),
-		dir.ProjId,
-		fname,
-		dir.ProjFolder)
-	mdb.httpClientPool <- httpClient
-	if err != nil {
-		return File{}, err
-	}
-
-	// 2. insert into the database
+	// insert into the database
 	txn, err := mdb.db.Begin()
 	if err != nil {
 		log.Printf(err.Error())

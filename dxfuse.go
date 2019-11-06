@@ -67,7 +67,7 @@ func NewDxfuse(
 	}
 
 	// create the metadata database
-	mdb, err := NewMetadataDb(fsys.dbFullPath, dxEnv, httpIoPool, nonce, options)
+	mdb, err := NewMetadataDb(fsys.dbFullPath, dxEnv, httpIoPool, options)
 	if err != nil {
 		return nil, err
 	}
@@ -291,7 +291,33 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	cnt := atomic.AddUint64(&fsys.tmpFileCounter, 1)
 	localPath := fmt.Sprintf("%s/%d_%s", CreatedFilesDir, cnt, op.Name)
 
-	file, err := fsys.mdb.CreateFile(ctx, &parentDir, op.Name, op.Mode, localPath)
+	// create the file object on the platform.
+	httpClient := <- fsys.httpClientPool
+	fileId, err := DxFileNew(
+		ctx, httpClient, &fsys.dxEnv, fsys.nonce.String(),
+		parentDir.ProjId, op.Name, parentDir.ProjFolder)
+	fsys.httpClientPool <- httpClient
+	if err != nil {
+		// convert the dnanexus error code to a filesystem error code
+		dxErrCode := DxErrorParse(err)
+		log.Printf("Error in creating file (%s:%s/%s) on dnanexus: %s",
+			parentDir.ProjId, parentDir.ProjFolder, op.Name,
+			err.Error())
+		switch dxErrCode {
+		case InvalidInput:
+			return fuse.EINVAL
+		case PermissionDenied:
+			return syscall.EPERM
+		case InvalidType:
+			return fuse.EINVAL
+		case ResourceNotFound:
+			return fuse.ENOENT
+		default:
+			return err
+		}
+	}
+
+	file, err := fsys.mdb.CreateFile(ctx, &parentDir, fileId, op.Name, op.Mode, localPath)
 	if err != nil {
 		return err
 	}

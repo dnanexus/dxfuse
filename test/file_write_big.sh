@@ -21,6 +21,7 @@ mkdir -p $mountpoint
 # Start the dxfuse daemon in the background, and wait for it to initilize.
 echo "Mounting dxfuse"
 sudo -E /go/bin/dxfuse -verbose 1 $mountpoint $projectName &
+dxfuse_pid=$!
 sleep 2
 
 baseDir="$mountpoint/$projectName"
@@ -36,5 +37,7 @@ ls -l $baseDir/$target_dir
 
 sudo umount $mountpoint
 
-sleep 1
+# wait until the filesystem is done running
+wait $dxfuse_pid
+
 dx ls -l $projectName:/$target_dir
