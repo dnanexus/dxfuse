@@ -17,11 +17,16 @@ type DxError struct {
 func DxErrorParse(err error) int {
 	msg := err.Error()
 
+	// This check should be done on the returned http body.
 	for _, dxe := range(apiErrors) {
 		if strings.Contains(msg, dxe.defaultMessage) {
 			return dxe.code
 		}
 	}
+	if strings.Contains(msg, "Unauthorized") {
+		return Unauthorized
+	}
+
 	return OtherError
 }
 

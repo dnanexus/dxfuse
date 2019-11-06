@@ -9,6 +9,7 @@ import (
 
 type FindProjectRequest struct {
 	Name  string `json:"name"`
+	Level string `json:"level"`
 }
 
 type FindResult struct {
@@ -28,6 +29,7 @@ func DxFindProject(
 
 	request := FindProjectRequest{
 		Name : projName,
+		Level : "VIEW",
 	}
 	var payload []byte
 	payload, err := json.Marshal(request)

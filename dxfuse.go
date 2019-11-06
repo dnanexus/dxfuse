@@ -312,6 +312,8 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 			return fuse.EINVAL
 		case ResourceNotFound:
 			return fuse.ENOENT
+		case Unauthorized:
+			return syscall.EPERM
 		default:
 			return err
 		}
