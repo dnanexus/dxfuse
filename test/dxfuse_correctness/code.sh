@@ -191,6 +191,66 @@ function check_parallel_cat {
         b_name=$(basename $f)
         diff $f $target_dir/$b_name
     done
+
+    rm -r $target_dir
+}
+
+function check_small_file_write {
+    content="nothing much"
+    writeDir=$mountpoint/$projName
+
+    dx rm $projName:/A.txt >& /dev/null || true
+
+    # create a small file through the filesystem interface
+    echo $content > $writeDir/A.txt
+    ls -l $writeDir/A.txt
+
+    # wait for the file to achieve the closed state
+    while true; do
+        file_state=$(dx describe $projName:/A.txt --json | grep state | awk '{ gsub("[,\"]", "", $2); print $2 }')
+        if [[ "$file_state" == "closed" ]]; then
+            break
+        fi
+        sleep 3
+    done
+
+    echo "file is closed"
+    dx ls -l $projName:/A.txt
+
+    # compare the data
+    content2=$(dx cat $projName:/A.txt)
+    if [[ "$content" == "$content2" ]]; then
+        echo "correct"
+    else
+        echo "bad content"
+        echo "should be: $content"
+        echo "found: $content2"
+    fi
+}
+
+# copy files
+function write_files {
+    target_dir="write_test_dir"
+    baseDir="$mountpoint/$projName"
+
+    dx rm -r $projName:/$target_dir || true
+    dx mkdir -p $projName:/$target_dir
+
+    ls -l $baseDir/$target_dir
+
+    echo "copying small files"
+    cp $baseDir/correctness/small/*  $baseDir/$target_dir/
+
+    # compare resulting files
+    echo "comparing files"
+    files=$(find $top_dir -type $baseDir/correctness/small)
+    for f in $files; do
+        b_name=$(basename $f)
+        diff $f $target_dir/$b_name
+    done
+
+#    echo "copying large files"
+#    cp $baseDir/correctness/large/*  $baseDir/$target_dir/
 }
 
 main() {
@@ -211,44 +271,50 @@ main() {
     dxfuse_pid=$!
     sleep 2
 
-    echo "download recursively with dx download"
-    dx download --no-progress -o $dxTrgDir -r  "$DX_PROJECT_CONTEXT_ID:/$dxDirOnProject"
+#    echo "download recursively with dx download"
+#    dx download --no-progress -o $dxTrgDir -r  "$DX_PROJECT_CONTEXT_ID:/$dxDirOnProject"
+#
+#    # do not exit immediately if there are differences; we want to see the files
+#    # that aren't the same
+#    diff -r --brief $dxpyDir $dxfuseDir > diff.txt || true
+#    if [[ -s diff.txt ]]; then
+#        echo "Difference in basic file structure"
+#        cat diff.txt
+#        exit 1
+#    fi
+#
+#    # find
+#    echo "find"
+#    check_find
+#
+#    # grep
+#    echo "grep"
+#    check_grep
+#
+#    # tree
+#    echo "tree"
+#    check_tree
+#
+#    # ls
+#    echo "ls -R"
+#    check_ls
+#
+#    # find
+#    echo "head, tail, wc"
+#    check_cmd_line_utils
+#
+#    echo "parallel downloads"
+#    check_parallel_cat
+#
+    echo "can write to a small file"
+    check_small_file_write
+#    write_files
 
-    # do not exit immediately if there are differences; we want to see the files
-    # that aren't the same
-    diff -r --brief $dxpyDir $dxfuseDir > diff.txt || true
-    if [[ -s diff.txt ]]; then
-        echo "Difference in basic file structure"
-        cat diff.txt
-        exit 1
-    fi
-
-    # find
-    echo "find"
-    check_find
-
-    # grep
-    echo "grep"
-    check_grep
-
-    # tree
-    echo "tree"
-    check_tree
-
-    # ls
-    echo "ls -R"
-    check_ls
-
-    # find
-    echo "head, tail, wc"
-    check_cmd_line_utils
-
-    echo "parallel downloads"
-    check_parallel_cat
-
-    echo "unmounting dxfuse"
-    sudo umount $mountpoint
+#    echo "unmounting dxfuse"
+#    sudo umount $mountpoint
 
     # wait until the filesystem is done running
-    wait $dxfuse_pid
+#    wait $dxfuse_pid
+
+    sleep 100000
 }

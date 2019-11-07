@@ -298,23 +298,31 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 		parentDir.ProjId, op.Name, parentDir.ProjFolder)
 	fsys.httpClientPool <- httpClient
 	if err != nil {
-		// convert the dnanexus error code to a filesystem error code
-		dxErrCode := DxErrorParse(err)
-		log.Printf("Error in creating file (%s:%s/%s) on dnanexus: %s",
-			parentDir.ProjId, parentDir.ProjFolder, op.Name,
-			err.Error())
-		switch dxErrCode {
-		case InvalidInput:
-			return fuse.EINVAL
-		case PermissionDenied:
-			return syscall.EPERM
-		case InvalidType:
-			return fuse.EINVAL
-		case ResourceNotFound:
-			return fuse.ENOENT
-		case Unauthorized:
-			return syscall.EPERM
+		switch err.(type) {
+		case *dxda.DxError:
+			// A dnanexus error
+			dxErr := err.(*dxda.DxError)
+			log.Printf("Error in creating file (%s:%s/%s) on dnanexus: %s",
+				parentDir.ProjId, parentDir.ProjFolder, op.Name,
+				dxErr.Error())
+			switch dxErr.EType {
+			case "InvalidInput":
+				return fuse.EINVAL
+			case "PermissionDenied":
+				return syscall.EPERM
+			case "InvalidType":
+				return fuse.EINVAL
+			case "ResourceNotFound":
+				return fuse.ENOENT
+			case "Unauthorized":
+				return syscall.EPERM
+			default:
+				log.Printf("unexpected dnanexus error type (%s), returning EIO which will unmount the filesystem",
+					dxErr.EType)
+				return fuse.EIO
+			}
 		default:
+			// A "regular" error
 			return err
 		}
 	}
@@ -372,7 +380,7 @@ func (fsys *Filesys) openRegularFile(ctx context.Context, op *fuseops.OpenFileOp
 
 	// used a shared http client
 	httpClient := <- fsys.httpClientPool
-	body, err := dxda.DxAPI(ctx, httpClient, &fsys.dxEnv, fmt.Sprintf("%s/download", f.Id), payload)
+	body, err := dxda.DxAPI(ctx, httpClient, NumRetriesDefault, &fsys.dxEnv, fmt.Sprintf("%s/download", f.Id), payload)
 	fsys.httpClientPool <- httpClient
 	if err != nil {
 		return nil, err
@@ -583,7 +591,7 @@ func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp,
 
 	// Take an http client from the pool. Return it when done.
 	httpClient := <- fsys.httpClientPool
-	body,err := dxda.DxHttpRequest(ctx, httpClient, "GET", fh.url.URL, headers, []byte("{}"))
+	body,err := dxda.DxHttpRequest(ctx, httpClient, NumRetriesDefault, "GET", fh.url.URL, headers, []byte("{}"))
 	fsys.httpClientPool <- httpClient
 	if err != nil {
 		return err

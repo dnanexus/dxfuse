@@ -54,7 +54,7 @@ func DxFileNew(
 	if err != nil {
 		return "", err
 	}
-	repJs, err := dxda.DxAPI(ctx, httpClient, dxEnv, "file/new", string(payload))
+	repJs, err := dxda.DxAPI(ctx, httpClient, NumRetriesDefault, dxEnv, "file/new", string(payload))
 	if err != nil {
 		log.Printf(err.Error())
 		return "", err
@@ -94,6 +94,7 @@ func DxFileCloseAndWait(
 	_, err := dxda.DxAPI(
 		ctx,
 		httpClient,
+		NumRetriesDefault,
 		dxEnv,
 		fmt.Sprintf("%s/close", fid),
 		"{}")
@@ -182,8 +183,10 @@ func DxFileUploadPart(
 	if err != nil {
 		return err
 	}
-	replyJs, err := dxda.DxAPI(ctx,
+	replyJs, err := dxda.DxAPI(
+		ctx,
 		httpClient,
+		NumRetriesDefault,
 		dxEnv,
 		fmt.Sprintf("%s/upload", fileId),
 		string(reqJson))
@@ -197,7 +200,7 @@ func DxFileUploadPart(
 		return err
 	}
 
-	_, err = dxda.DxHttpRequest(ctx, httpClient,"PUT", reply.Url, reply.Headers, chunk.data)
+	_, err = dxda.DxHttpRequest(ctx, httpClient, NumRetriesDefault, "PUT", reply.Url, reply.Headers, chunk.data)
 	return err
 }
 

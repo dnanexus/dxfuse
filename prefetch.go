@@ -213,9 +213,9 @@ func (pgs *PrefetchGlobalState) readData(
 	url DxDownloadURL) ([]byte, error) {
 	// The data has not been prefetched. Get the data from DNAx with an
 	// http request.
+	expectedLen := endByte - startByte + 1
 	if pgs.verbose {
-		len := endByte - startByte + 1
-		pgs.log("reading extent from DNAx ofs=%d len=%d", startByte, len)
+		pgs.log("reading extent from DNAx ofs=%d len=%d", startByte, expectedLen)
 	}
 
 	headers := make(map[string]string)
@@ -226,16 +226,28 @@ func (pgs *PrefetchGlobalState) readData(
 	}
 	headers["Range"] = fmt.Sprintf("bytes=%d-%d", startByte, endByte)
 
-	ctx := context.TODO()
-	data, err := dxda.DxHttpRequest(ctx, client, "GET", url.URL, headers, []byte("{}"))
-	if pgs.verbose {
-		if err == nil {
-			pgs.log("IO returned correctly len=%d", len(data))
-		} else {
-			pgs.log("IO returned with error %s", err.Error())
+	for tCnt := 0; tCnt < 3; tCnt++ {
+		ctx := context.TODO()
+		data, err := dxda.DxHttpRequest(ctx, client, NumRetriesDefault, "GET", url.URL, headers, []byte("{}"))
+		recvLen := int64(len(data))
+
+		if recvLen != expectedLen {
+			// retry (only) in the case of short read
+			log.Printf("received length is wrong, got %d, expected %d. Retrying.", recvLen, expectedLen)
+			continue
 		}
+
+		if pgs.verbose {
+			if err == nil {
+				pgs.log("IO returned correctly")
+			} else {
+				pgs.log("IO returned with error %s", err.Error())
+			}
+		}
+		return data, err
 	}
-	return data, err
+
+	return nil, fmt.Errorf("Did not receive the data")
 }
 
 

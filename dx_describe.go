@@ -125,7 +125,7 @@ func submit(
 	}
 	//fmt.Printf("payload = %s", string(payload))
 
-	repJs, err := dxda.DxAPI(ctx, httpClient, dxEnv, "system/describeDataObjects", string(payload))
+	repJs, err := dxda.DxAPI(ctx, httpClient, NumRetriesDefault, dxEnv, "system/describeDataObjects", string(payload))
 	if err != nil {
 		return nil, err
 	}
@@ -244,7 +244,7 @@ func listFolder(
 		return nil, err
 	}
 	dxRequest := fmt.Sprintf("%s/listFolder", projectId)
-	repJs, err := dxda.DxAPI(ctx, httpClient, dxEnv, dxRequest , string(payload))
+	repJs, err := dxda.DxAPI(ctx, httpClient, NumRetriesDefault, dxEnv, dxRequest , string(payload))
 	if err != nil {
 		return nil, err
 	}
@@ -343,7 +343,7 @@ func DxDescribeProject(
 	}
 
 	dxRequest := fmt.Sprintf("%s/describe", projectId)
-	repJs, err := dxda.DxAPI(ctx, httpClient, dxEnv, dxRequest, string(payload))
+	repJs, err := dxda.DxAPI(ctx, httpClient, NumRetriesDefault, dxEnv, dxRequest, string(payload))
 	if err != nil {
 		return nil, err
 	}
