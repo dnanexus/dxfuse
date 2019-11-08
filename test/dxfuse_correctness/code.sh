@@ -2,7 +2,7 @@
 
 # The following line causes bash to exit at any point if there is any error
 # and to output each line as it is executed -- useful for debugging
-set -e -o pipefail
+#set -e -o pipefail
 
 ######################################################################
 ## constants
@@ -201,6 +201,8 @@ function check_small_file_write {
 
     dx rm $projName:/A.txt >& /dev/null || true
 
+    echo "writeDir = $writeDir"
+
     # create a small file through the filesystem interface
     echo $content > $writeDir/A.txt
     ls -l $writeDir/A.txt
@@ -231,26 +233,27 @@ function check_small_file_write {
 # copy files
 function write_files {
     target_dir="write_test_dir"
-    baseDir="$mountpoint/$projName"
+    writeDir=$mountpoint/$projName
 
-    dx rm -r $projName:/$target_dir || true
+    dx rm -r $projName:/$target_dir >& /dev/null || true
     dx mkdir -p $projName:/$target_dir
 
-    ls -l $baseDir/$target_dir
+    echo "writeDir = $writeDir"
+    ls -l $writeDir/$target_dir
 
     echo "copying small files"
-    cp $baseDir/correctness/small/*  $baseDir/$target_dir/
+    cp $writeDir/correctness/small/*  $writeDir/$target_dir/
 
     # compare resulting files
     echo "comparing files"
-    files=$(find $top_dir -type $baseDir/correctness/small)
+    files=$(find $top_dir -type $writeDir/correctness/small)
     for f in $files; do
         b_name=$(basename $f)
         diff $f $target_dir/$b_name
     done
 
 #    echo "copying large files"
-#    cp $baseDir/correctness/large/*  $baseDir/$target_dir/
+#    cp $writeDir/correctness/large/*  $writeDir/$target_dir/
 }
 
 main() {
@@ -310,11 +313,9 @@ main() {
     check_small_file_write
 #    write_files
 
-#    echo "unmounting dxfuse"
-#    sudo umount $mountpoint
+    echo "unmounting dxfuse"
+    sudo umount $mountpoint
 
     # wait until the filesystem is done running
-#    wait $dxfuse_pid
-
-    sleep 100000
+    wait $dxfuse_pid
 }

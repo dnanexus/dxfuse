@@ -152,7 +152,9 @@ func NewPrefetchGlobalState(verboseLevel int) *PrefetchGlobalState {
 	maxNumChunksReadAhead := MinInt(8, numPrefetchThreads - 2)
 	maxNumChunksReadAhead = MaxInt(1, maxNumChunksReadAhead)
 
-	// calculate how much memory will be used in the worst cast
+	// calculate how much memory will be used in the worst cast.
+	// Each stream uses three chunks, which could go as high as prefetchMaxIoSize.
+	// In addition, we are spreading around maxNumChunksReadAhead chunks.
 	streamBytes := 3 * prefetchMaxIoSize
 	totalMemoryBytes := streamBytes * maxNumEntriesInTable
 	totalMemoryBytes += maxNumChunksReadAhead * prefetchMaxIoSize
@@ -695,14 +697,12 @@ func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 			MinInt64(prefetchMaxIoSize, pfm.cache.prefetchIoSize * prefetchIoFactor)
 	}
 	if pfm.cache.prefetchIoSize == prefetchMaxIoSize {
-		// normally, we give one read-head request to each stream. However,
-		// if there is only one open stream, we give it a lot more. This
-		// is an optimization for the special case of a single open file.
-		nReadAhead := 1
+		// Give each stream at least one read-ahead request. If there
+		// are only a few streams, we can give more.
 		nStreams := len(pgs.files)
-		if nStreams == 1 {
-			nReadAhead = pgs.maxNumChunksReadAhead
-		}
+		nReadAhead := pgs.maxNumChunksReadAhead / nStreams
+		nReadAhead = MaxInt(1, nReadAhead)
+
 		pfm.cache.numChunksReadAhead = nReadAhead
 		pfm.cache.maxNumIovecs = nReadAhead + 2
 	}

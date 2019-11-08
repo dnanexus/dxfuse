@@ -29,7 +29,52 @@ type ReplyNewFile struct {
 	Id string `json:"id"`
 }
 
+type RequestUploadChunk struct {
+	Size  int     `json:"size"`
+	Index int     `json:"index"`
+	Md5   string  `json:"md5"`
+}
+
+type ReplyUploadChunk struct {
+	Url     string            `json:"url"`
+	Expires int64             `json:"expires"`
+	Headers map[string]string `json:"headers"`
+}
+
+type Chunk struct {
+	fileId  string
+	index   int
+	data  []byte
+	fwg     sync.WaitGroup
+
+	// output from the operation
+	err     error
+}
+
+type FileUploadReq struct {
+	id           string
+	partSize     int64
+	uploadParams FileUploadParameters
+	localPath    string
+	fileSize     int64
+}
+
+type FileUploadGlobalState struct {
+	dxEnv           dxda.DXEnvironment
+	options         Options
+	projId2Desc     map[string]DxDescribePrj
+	fileUploadQueue chan FileUploadReq
+	chunkQueue      chan *Chunk
+	wg              sync.WaitGroup
+}
+
 const (
+	chunkMaxQueueSize = 10
+
+	numFileThreads = 4
+	numBulkDataThreads = 8
+	minChunkSize = 16 * MiB
+
 	fileCloseWaitTime = 5 * time.Second
 	fileCloseMaxWaitTime = 10 * time.Minute
 )
@@ -56,24 +101,8 @@ func DxFileNew(
 	}
 	repJs, err := dxda.DxAPI(ctx, httpClient, NumRetriesDefault, dxEnv, "file/new", string(payload))
 	if err != nil {
-		log.Printf(err.Error())
 		return "", err
 	}
-	// TODO: triage the errors
-/*
-	switch status {
-		InvalidInput
-		A nonce was reused in a request but some of the other inputs had changed signifying a new and different request
-
-		PermissionDenied
-		    UPLOAD access required
-		InvalidType
-		    project is not a project ID
-		ResourceNotFound
-		    The specified project is not found
-		    The route in folder does not exist, and parents is false
-
-	}*/
 
 	var reply ReplyNewFile
 	if err := json.Unmarshal(repJs, &reply); err != nil {
@@ -99,19 +128,7 @@ func DxFileCloseAndWait(
 		fmt.Sprintf("%s/close", fid),
 		"{}")
 	if err != nil {
-		log.Printf(err.Error())
 		return err
-	// Triage errors
-	/*
-	PermissionDenied
-UPLOAD access required
-InvalidState
-fileUploadParameters.emptyLastPartAllowed is true and there are zero parts
-At least one part is in the "pending" state
-There exists a part, other than the one with the highest part index, whose size is less than fileUploadParameters.minimumPartSize bytes
-fileUploadParameters.emptyLastPartAllowed is false and the part with the highest index has 0 bytes
-The file has size larger than fileUploadParameters.maximumFileSize bytes
-*/
 	}
 
         // wait for file to achieve closed state
@@ -123,7 +140,7 @@ The file has size larger than fileUploadParameters.maximumFileSize bytes
 			return err
 		}
 		switch fDesc.State {
-			case "closed":
+		case "closed":
 			// done. File is closed.
 			return nil
 		case "closing":
@@ -147,34 +164,18 @@ The file has size larger than fileUploadParameters.maximumFileSize bytes
 	return nil
 }
 
-type RequestUploadChunk struct {
-	Size  int     `json:"size"`
-	Index int     `json:"index"`
-	Md5   string  `json:"md5"`
-}
-
-type ReplyUploadChunk struct {
-	Url     string            `json:"url"`
-	Expires int64             `json:"expires"`
-	Headers map[string]string `json:"headers"`
-}
-
-type Chunk struct {
-	index int
-	data []byte
-}
-
-func DxFileUploadPart(
+func dxFileUploadPart(
 	ctx context.Context,
 	httpClient *retryablehttp.Client,
 	dxEnv *dxda.DXEnvironment,
 	fileId string,
-	chunk Chunk) error {
+	index int,
+	data []byte) error {
 
-	md5Sum := md5.Sum(chunk.data)
+	md5Sum := md5.Sum(data)
 	uploadReq := RequestUploadChunk{
-		Size: len(chunk.data),
-		Index: chunk.index,
+		Size: len(data),
+		Index: index,
 		Md5: hex.EncodeToString(md5Sum[:]),
 	}
 	log.Printf("%v", uploadReq)
@@ -200,47 +201,39 @@ func DxFileUploadPart(
 		return err
 	}
 
-	_, err = dxda.DxHttpRequest(ctx, httpClient, NumRetriesDefault, "PUT", reply.Url, reply.Headers, chunk.data)
+	_, err = dxda.DxHttpRequest(ctx, httpClient, NumRetriesDefault, "PUT", reply.Url, reply.Headers, data)
 	return err
 }
-
-type UploadReq struct {
-	id           string
-	partSize     int64
-	uploadParams FileUploadParameters
-	localPath    string
-	fileSize     int64
-}
-
-type FileUploadGlobalState struct {
-	dxEnv        dxda.DXEnvironment
-	options      Options
-	projId2Desc  map[string]DxDescribePrj
-	reqQueue     chan UploadReq
-	wg           sync.WaitGroup
-}
-
-const (
-	numUploadThreads = 10
-	minChunkSize = 16 * MiB
-)
 
 func NewFileUploadGlobalState(
 	options Options,
 	dxEnv dxda.DXEnvironment,
 	projId2Desc map[string]DxDescribePrj) *FileUploadGlobalState {
 
+	// the chunk queue size should be at least the size of the thread
+	// pool.
+	chunkQueueSize := MaxInt(numBulkDataThreads, chunkMaxQueueSize)
+
 	fugs := &FileUploadGlobalState{
 		dxEnv : dxEnv,
 		options : options,
 		projId2Desc : projId2Desc,
-		reqQueue : make(chan UploadReq),
+		fileUploadQueue : make(chan FileUploadReq),
+
+		// limit the size of the chunk queue, so we don't spend
+		// have too many chunks stored in memory.
+		chunkQueue : make(chan *Chunk, chunkQueueSize),
 	}
 
-	// limit the number of prefetch IOs
-	fugs.wg.Add(numUploadThreads)
-	for i := 0; i < numUploadThreads; i++ {
-		go fugs.uploadIoWorker()
+	// Create a bunch of threads
+	fugs.wg.Add(numFileThreads)
+	for i := 0; i < numFileThreads; i++ {
+		go fugs.createFileWorker()
+	}
+
+	fugs.wg.Add(numBulkDataThreads)
+	for i := 0; i < numBulkDataThreads; i++ {
+		go fugs.bulkDataWorker()
 	}
 
 	return fugs
@@ -248,11 +241,45 @@ func NewFileUploadGlobalState(
 
 func (fugs *FileUploadGlobalState) Shutdown() {
 	// signal all upload threads to stop
-	close(fugs.reqQueue)
+	close(fugs.fileUploadQueue)
+	close(fugs.chunkQueue)
 
 	// wait for all of them to complete
 	fugs.wg.Wait()
 }
+
+
+// A worker dedicated to performing data-upload operations
+func (fugs *FileUploadGlobalState) bulkDataWorker() {
+	// A fixed http client. The idea is to be able to reuse http connections.
+	client := dxda.NewHttpClient(true)
+
+	for true {
+		chunk, ok := <- fugs.chunkQueue
+		if !ok {
+			fugs.wg.Done()
+			return
+		}
+		if fugs.options.Verbose {
+			log.Printf("Uploading chunk=%d len=%d", chunk.index, len(chunk.data))
+		}
+
+		// upload the data, and store the error code in the chunk
+		// data structure.
+		chunk.err = dxFileUploadPart(
+			context.TODO(),
+			client,
+			&fugs.dxEnv,
+			chunk.fileId, chunk.index, chunk.data)
+
+		// release the memory used by the chunk, we no longer
+		// need it. The file-thread is going to check the error code,
+		// so the struct itself remains alive.
+		chunk.data = nil
+		chunk.fwg.Done()
+	}
+}
+
 
 func divideRoundUp(x int64, y int64) int64 {
 	return (x + y - 1) / y
@@ -304,10 +331,8 @@ func (fugs *FileUploadGlobalState) calcPartSize(param FileUploadParameters, file
 	return param.MaximumPartSize, nil
 }
 
-func (fugs *FileUploadGlobalState) uploadFileDataSequentially(
-	httpClient *retryablehttp.Client,
-	upReq UploadReq) error {
-
+// Upload the parts by putting them into a queue of chunk parts
+func (fugs *FileUploadGlobalState) uploadFileDataInParallel(upReq FileUploadReq) error {
 	fReader, err := os.OpenFile(upReq.localPath, os.O_RDONLY, os.ModeExclusive)
 	if err != nil {
 		return err
@@ -321,7 +346,9 @@ func (fugs *FileUploadGlobalState) uploadFileDataSequentially(
 	ofs := int64(0)
 
 	// chunk indexes start at 1 (not zero)
+	var fileWg sync.WaitGroup
 	cIndex := 1
+	fileParts := make([]*Chunk, 0)
 	for ofs <= fileEndOfs {
 		chunkEndOfs := MinInt64(ofs + upReq.partSize - 1, fileEndOfs)
 		chunkLen := chunkEndOfs - ofs
@@ -331,39 +358,51 @@ func (fugs *FileUploadGlobalState) uploadFileDataSequentially(
 			return err
 		}
 		if int64(len) != chunkLen {
-			return errors.New(fmt.Sprintf("short read, got %d bytes instead of %d",
+			panic(fmt.Sprintf("short read, got %d bytes instead of %d",
 				len, chunkLen))
 		}
-		chunk := Chunk {
+
+		// enqueue an upload request
+		chunk := &Chunk{
+			fileId : upReq.id,
 			index : cIndex,
 			data : buf,
+			fwg : fileWg,
+			err : nil,
 		}
-		if fugs.options.Verbose {
-			log.Printf("Uploading chunk=%d len=%d", cIndex, chunkLen)
-		}
-		ctx := context.TODO()
-		if err := DxFileUploadPart(ctx, httpClient, &fugs.dxEnv, upReq.id, chunk); err != nil {
-			return err
-		}
+		fileWg.Add(1)
+		fugs.chunkQueue <- chunk
+		fileParts = append(fileParts, chunk)
+
 		ofs += upReq.partSize
 		cIndex++
 	}
-	return nil
+
+	// wait for all requests to complete
+	fileWg.Wait()
+
+	// check the error codes
+	var finalErr error
+	for _, chunk := range(fileParts) {
+		if chunk.err != nil {
+			log.Printf("failed to upload file %s part %d, error=%s",
+				chunk.fileId, chunk.index, chunk.err.Error())
+			finalErr = chunk.err
+		}
+	}
+
+	return finalErr
 }
 
 func (fugs *FileUploadGlobalState) createEmptyFile(
 	httpClient *retryablehttp.Client,
-	upReq UploadReq) {
+	upReq FileUploadReq) {
 	// The file is empty
 	if upReq.uploadParams.EmptyLastPartAllowed {
 		// we need to upload an empty part, only
 		// then can we close the file
-		chunk := Chunk{
-			index: 1,
-			data : make([]byte, 0),
-		}
 		ctx := context.TODO()
-		err := DxFileUploadPart(ctx, httpClient, &fugs.dxEnv, upReq.id, chunk)
+		err := dxFileUploadPart(ctx, httpClient, &fugs.dxEnv, upReq.id, 1, make([]byte, 0))
 		if err != nil {
 			log.Printf("error uploading empty chunk to file %s, error = %s",
 				upReq.id, err.Error())
@@ -378,12 +417,12 @@ func (fugs *FileUploadGlobalState) createEmptyFile(
 	}
 }
 
-func (fugs *FileUploadGlobalState) uploadIoWorker() {
+func (fugs *FileUploadGlobalState) createFileWorker() {
 	// A fixed http client. The idea is to be able to reuse http connections.
 	client := dxda.NewHttpClient(true)
 
 	for true {
-		upReq, ok := <-fugs.reqQueue
+		upReq, ok := <-fugs.fileUploadQueue
 		if !ok {
 			fugs.wg.Done()
 			return
@@ -399,7 +438,7 @@ func (fugs *FileUploadGlobalState) uploadIoWorker() {
 			fugs.createEmptyFile(client, upReq)
 		} else {
 			// loop over the parts, and upload them
-			if err := fugs.uploadFileDataSequentially(client, upReq); err != nil {
+			if err := fugs.uploadFileDataInParallel(upReq); err != nil {
 				log.Printf("upload error to file %s, error = %s", upReq.id, err.Error())
 				continue
 			}
@@ -445,7 +484,7 @@ to the platform due to part size constraints. Error=%s`,
 		return fuse.EINVAL
 	}
 
-	fugs.reqQueue <- UploadReq{
+	fugs.fileUploadQueue <- FileUploadReq{
 		id : f.Id,
 		partSize : partSize,
 		uploadParams : projDesc.UploadParams,

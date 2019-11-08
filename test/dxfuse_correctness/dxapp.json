@@ -24,9 +24,9 @@
       "*" : {
         "hours" : 1
       }
-    },
-    "access": {
-      "project": "CONTRIBUTE"
     }
+  },
+  "access": {
+    "project": "CONTRIBUTE"
   }
 }
