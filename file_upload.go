@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"sync"
@@ -45,7 +46,7 @@ type Chunk struct {
 	fileId  string
 	index   int
 	data  []byte
-	fwg     sync.WaitGroup
+	fwg     *sync.WaitGroup
 
 	// output from the operation
 	err     error
@@ -251,7 +252,7 @@ func (fugs *FileUploadGlobalState) Shutdown() {
 
 // A worker dedicated to performing data-upload operations
 func (fugs *FileUploadGlobalState) bulkDataWorker() {
-	// A fixed http client. The idea is to be able to reuse http connections.
+	// A fixed http client
 	client := dxda.NewHttpClient(true)
 
 	for true {
@@ -331,22 +332,46 @@ func (fugs *FileUploadGlobalState) calcPartSize(param FileUploadParameters, file
 	return param.MaximumPartSize, nil
 }
 
-// Upload the parts by putting them into a queue of chunk parts
-func (fugs *FileUploadGlobalState) uploadFileDataInParallel(upReq FileUploadReq) error {
-	fReader, err := os.OpenFile(upReq.localPath, os.O_RDONLY, os.ModeExclusive)
+// Upload the parts. The first chunk is uploaded synchronously, the
+// others are uploaded by worker threads.
+//
+// note: chunk indexes start at 1 (not zero)
+func (fugs *FileUploadGlobalState) uploadFileData(
+	client *retryablehttp.Client,
+	upReq FileUploadReq) error {
+	if upReq.fileSize == 0 {
+		panic("The file is empty")
+	}
+
+	fReader, err := os.Open(upReq.localPath)
 	if err != nil {
 		return err
 	}
 	defer fReader.Close()
 
-	if upReq.fileSize == 0 {
-		panic("The file is empty")
+	if upReq.fileSize <= upReq.partSize {
+		// This is a small file, upload it synchronously.
+		// This ensures that only large chunks are uploaded by the bulk-threads,
+		// improving fairness.
+		data, err := ioutil.ReadAll(fReader)
+		if err != nil {
+			return err
+		}
+		if int64(len(data)) != upReq.fileSize {
+			panic(fmt.Sprintf("short read, got %d bytes instead of %d",
+				len(data), upReq.fileSize))
+		}
+		return dxFileUploadPart(
+			context.TODO(),
+			client,
+			&fugs.dxEnv,
+			upReq.id, 1, data)
 	}
+
+	// a large file, with more than a single chunk
+	var fileWg sync.WaitGroup
 	fileEndOfs := upReq.fileSize - 1
 	ofs := int64(0)
-
-	// chunk indexes start at 1 (not zero)
-	var fileWg sync.WaitGroup
 	cIndex := 1
 	fileParts := make([]*Chunk, 0)
 	for ofs <= fileEndOfs {
@@ -361,15 +386,14 @@ func (fugs *FileUploadGlobalState) uploadFileDataInParallel(upReq FileUploadReq)
 			panic(fmt.Sprintf("short read, got %d bytes instead of %d",
 				len, chunkLen))
 		}
-
-		// enqueue an upload request
 		chunk := &Chunk{
 			fileId : upReq.id,
 			index : cIndex,
 			data : buf,
-			fwg : fileWg,
+			fwg : &fileWg,
 			err : nil,
 		}
+		// enqueue an upload request
 		fileWg.Add(1)
 		fugs.chunkQueue <- chunk
 		fileParts = append(fileParts, chunk)
@@ -438,7 +462,7 @@ func (fugs *FileUploadGlobalState) createFileWorker() {
 			fugs.createEmptyFile(client, upReq)
 		} else {
 			// loop over the parts, and upload them
-			if err := fugs.uploadFileDataInParallel(upReq); err != nil {
+			if err := fugs.uploadFileData(client, upReq); err != nil {
 				log.Printf("upload error to file %s, error = %s", upReq.id, err.Error())
 				continue
 			}
@@ -457,19 +481,7 @@ func (fugs *FileUploadGlobalState) createFileWorker() {
 
 // enqueue a request to upload the file. This will happen in the background. Since
 // we don't erase the local file, there is no rush.
-func (fugs *FileUploadGlobalState) UploadFile(fd *os.File, f File, fileSize int64) error {
-	if fileSize > 0 {
-		// flush and close the local file
-		// We leave the local file in place. This allows reading from
-		// it, without accessing the network.
-		if err := fd.Sync(); err != nil {
-			return err
-		}
-		if err := fd.Close(); err != nil {
-			return err
-		}
-	}
-
+func (fugs *FileUploadGlobalState) UploadFile(f File, fileSize int64) error {
 	projDesc, ok := fugs.projId2Desc[f.ProjId]
 	if !ok {
 		panic(fmt.Sprintf("project %s not found", f.ProjId))

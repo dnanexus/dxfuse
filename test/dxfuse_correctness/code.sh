@@ -197,15 +197,15 @@ function check_parallel_cat {
 
 function check_small_file_write {
     content="nothing much"
-    writeDir=$mountpoint/$projName
+    write_dir=$mountpoint/$projName
 
     dx rm $projName:/A.txt >& /dev/null || true
 
-    echo "writeDir = $writeDir"
+    echo "write_dir = $write_dir"
 
     # create a small file through the filesystem interface
-    echo $content > $writeDir/A.txt
-    ls -l $writeDir/A.txt
+    echo $content > $write_dir/A.txt
+    ls -l $write_dir/A.txt
 
     # wait for the file to achieve the closed state
     while true; do
@@ -233,27 +233,37 @@ function check_small_file_write {
 # copy files
 function write_files {
     target_dir="write_test_dir"
-    writeDir=$mountpoint/$projName
+    top_dir=$mountpoint/$projName
+    write_dir=$top_dir/$target_dir
 
     dx rm -r $projName:/$target_dir >& /dev/null || true
     dx mkdir -p $projName:/$target_dir
 
-    echo "writeDir = $writeDir"
-    ls -l $writeDir/$target_dir
+    echo "write_dir = $write_dir"
+    ls -l $write_dir
 
     echo "copying small files"
-    cp $writeDir/correctness/small/*  $writeDir/$target_dir/
+    cp $top_dir/correctness/small/*  $write_dir/
+    ls -l $write_dir
 
     # compare resulting files
     echo "comparing files"
-    files=$(find $top_dir -type $writeDir/correctness/small)
+    files=$(find $top_dir/correctness/small -type f)
     for f in $files; do
         b_name=$(basename $f)
-        diff $f $target_dir/$b_name
+        diff $f $write_dir/$b_name
     done
 
-#    echo "copying large files"
-#    cp $writeDir/correctness/large/*  $writeDir/$target_dir/
+    echo "copying large files"
+    cp $top_dir/correctness/large/*  $write_dir/
+
+    # compare resulting files
+    echo "comparing files"
+    files=$(find $top_dir/correctness/large -type f)
+    for f in $files; do
+        b_name=$(basename $f)
+        diff $f $write_dir/$b_name
+    done
 }
 
 main() {
@@ -311,7 +321,7 @@ main() {
 #
     echo "can write to a small file"
     check_small_file_write
-#    write_files
+    write_files
 
     echo "unmounting dxfuse"
     sudo umount $mountpoint

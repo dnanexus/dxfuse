@@ -32,7 +32,7 @@ const (
 	// maximum number of prefetch threads, regardless of machine size
 	maxNumPrefetchThreads = 32
 
-	minFileSize = 8 * MiB     // do not track files smaller than this size
+	minFileSize = 2 * MiB     // do not track files smaller than this size
 )
 
 // enumerate type for the state of a PFM (file metadata)

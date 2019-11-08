@@ -355,7 +355,9 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 		EntryExpiration : tWindow,
 	}
 
-	writer, err := os.OpenFile(localPath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0644)
+	// Note: we can't open the file in exclusive mode, because another process
+	// may read it before it is closed.
+	writer, err := os.OpenFile(localPath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return err
 	}
@@ -371,9 +373,27 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	return nil
 }
 
-
 func (fsys *Filesys) openRegularFile(ctx context.Context, op *fuseops.OpenFileOp, f File) (*FileHandle, error) {
-	// create a download URL for this file
+	if f.InlineData != "" {
+		// a regular file that has a local copy
+		reader, err := os.Open(f.InlineData)
+		if err != nil {
+			log.Printf("Could not open local file %s, err=%s", f.InlineData, err.Error())
+			return nil, err
+		}
+		fh := &FileHandle{
+			fKind: RO_LocalCopy,
+			f : f,
+			url: nil,
+			localPath : &f.InlineData,
+			fd : reader,
+		}
+
+		return fh, nil
+	}
+
+	// A remote (immutable) file.
+	// create a download URL for this file.
 	const secondsInYear int = 60 * 60 * 24 * 365
 	payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
 		f.ProjId, secondsInYear)
@@ -388,30 +408,12 @@ func (fsys *Filesys) openRegularFile(ctx context.Context, op *fuseops.OpenFileOp
 	var u DxDownloadURL
 	json.Unmarshal(body, &u)
 
-	// Check if a file has a local copy. If so, return the path to the copy.
-	var fh *FileHandle
-	if f.InlineData != "" {
-		// a regular file that has a local copy
-		reader, err := os.OpenFile(f.InlineData, os.O_RDONLY, 0644)
-		if err != nil {
-			log.Printf("Could not open local file %s, err=%s", f.InlineData, err.Error())
-			return nil, err
-		}
-		fh = &FileHandle{
-			fKind: RO_LocalCopy,
-			f : f,
-			url: nil,
-			localPath : &f.InlineData,
-			fd : reader,
-		}
-	} else {
-		fh = &FileHandle{
-			fKind: RO_Remote,
-			f : f,
-			url: &u,
-			localPath : nil,
-			fd : nil,
-		}
+	fh := &FileHandle{
+		fKind: RO_Remote,
+		f : f,
+		url: &u,
+		localPath : nil,
+		fd : nil,
 	}
 
 	// Create an entry in the prefetch table, if the file is eligable
@@ -512,17 +514,28 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 			log.Printf("Close new file(%s)", fh.f.Name)
 		}
 
-		fInfo, err := fh.fd.Stat()
+		// flush and close the local file
+		// We leave the local file in place. This allows reading from
+		// it, without accessing the network.
+		if err := fh.fd.Sync(); err != nil {
+			return err
+		}
+		if err := fh.fd.Close(); err != nil {
+			return err
+		}
+		fh.fd = nil
+
+		// make this file read only
+		if err := os.Chmod(*fh.localPath, fileReadOnlyMode); err != nil {
+			return err
+		}
+
+		fInfo, err := os.Lstat(*fh.localPath)
 		if err != nil {
 			return err
 		}
 		fileSize := fInfo.Size()
 		modTime := fInfo.ModTime()
-
-		// make this file read only
-		if err := fh.fd.Chmod(fileReadOnlyMode); err != nil {
-			return err
-		}
 
 		// update database entry
 		if err := fsys.mdb.UpdateFile(ctx, fh.f, fileSize, modTime, fileReadOnlyMode); err != nil {
@@ -530,7 +543,7 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 		}
 
 		// initiate a background request to upload the file to the cloud
-		return fsys.fugs.UploadFile(fh.fd, fh.f, fileSize)
+		return fsys.fugs.UploadFile(fh.f, fileSize)
 
 	case RO_LocalCopy:
 		// Read-only file with a local copy
