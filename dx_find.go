@@ -1,6 +1,7 @@
 package dxfuse
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/dnanexus/dxda"
@@ -8,6 +9,7 @@ import (
 
 type FindProjectRequest struct {
 	Name  string `json:"name"`
+	Level string `json:"level"`
 }
 
 type FindResult struct {
@@ -21,11 +23,13 @@ type FindProjectReply struct {
 // Find the project-id for a project name. Return nil if
 // the project does not exist
 func DxFindProject(
+	ctx context.Context,
 	dxEnv *dxda.DXEnvironment,
 	projName string) (string, error) {
 
 	request := FindProjectRequest{
 		Name : projName,
+		Level : "VIEW",
 	}
 	var payload []byte
 	payload, err := json.Marshal(request)
@@ -34,7 +38,7 @@ func DxFindProject(
 	}
 
 	httpClient := dxda.NewHttpClient(false)
-	repJs, err := dxda.DxAPI(httpClient, dxEnv, "system/findProjects", string(payload))
+	repJs, err := dxda.DxAPI(ctx, httpClient, NumRetriesDefault, dxEnv, "system/findProjects", string(payload))
 	if err != nil {
 		return "", err
 	}

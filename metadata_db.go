@@ -1,38 +1,65 @@
 package dxfuse
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
 	"path/filepath"
 	"os"
-	"runtime/debug"
 	"strings"
 	"time"
 
-	"bazil.org/fuse"
-	"bazil.org/fuse/fs"
+	"github.com/dnanexus/dxda"
+	"github.com/hashicorp/go-retryablehttp" // use http libraries from hashicorp for implement retry logic
 )
 
 
 const (
 	nsDirType = 1
 	nsDataObjType = 2
-
-	// return code from a directoryExists call
-	dirDoesNotExist = 1
-	dirExistsButNotPopulated = 2
-	dirExistAndPopulated = 3
 )
 
-type DirInfo struct {
-	inode int64
-	projId string
-	projFolder string
-	ctime int64
-	mtime int64
+type MetadataDb struct {
+	// an open handle to the database
+	db               *sql.DB
+	dbFullPath        string
+
+	// a pool of http clients, for short requests, such as file creation,
+	// or file describe.
+	httpClientPool    chan(*retryablehttp.Client)
+
+	// configuration information for accessing dnanexus servers
+	dxEnv             dxda.DXEnvironment
+
+	// mapping from mounted directory to project ID
+	baseDir2ProjectId map[string]string
+
+	inodeCnt          int64
+	options           Options
 }
 
+func NewMetadataDb(
+	dbFullPath string,
+	dxEnv dxda.DXEnvironment,
+	httpClientPool chan(*retryablehttp.Client),
+	options Options) (*MetadataDb, error) {
+	// create a connection to the database, that will be kept open
+	db, err := sql.Open("sqlite3", dbFullPath + "?mode=rwc")
+	if err != nil {
+		return nil, fmt.Errorf("Could not open the database %s", dbFullPath)
+	}
+
+	return &MetadataDb{
+		db : db,
+		dbFullPath : dbFullPath,
+		httpClientPool : httpClientPool,
+		dxEnv : dxEnv,
+		baseDir2ProjectId: make(map[string]string),
+		inodeCnt : InodeRoot + 1,
+		options : options,
+	}, nil
+}
 
 // Construct a local sql database that holds metadata for
 // a large number of dx:files. This metadata_db will be consulted
@@ -61,26 +88,14 @@ func boolToInt(b bool) int {
 	return 0
 }
 
-// convert time in seconds since 1-Jan 1970, to the equivalent
-// golang structure
-func secondsToTime(t int64) time.Time {
-	return time.Unix(t, 0)
+func intToBool(x int) bool {
+	if x > 0 {
+		return true
+	}
+	return false
 }
 
-// Print the error and the stack trace.
-//
-// This method should be used the first time we encounter an error. For example,
-// when calling the database.
-//
-func printErrorStack(err error) error {
-//	var buf []byte
-//	runtime.Stack(buf, false)
-	debug.PrintStack()
-	log.Printf(err.Error())
-	return err
-}
-
-func (fsys *Filesys) metadataDbInitCore(txn *sql.Tx) error {
+func (mdb *MetadataDb) init2(txn *sql.Tx) error {
 	// Create table for files.
 	//
 	// mtime and ctime are measured in seconds since 1st of January 1970
@@ -94,13 +109,15 @@ func (fsys *Filesys) metadataDbInitCore(txn *sql.Tx) error {
 		size bigint,
                 ctime bigint,
                 mtime bigint,
+                mode int,
                 nlink int,
                 inline_data  string,
                 PRIMARY KEY (inode)
 	);
 	`
 	if _, err := txn.Exec(sqlStmt); err != nil {
-		return printErrorStack(err)
+		log.Printf(err.Error())
+		return fmt.Errorf("Could not create table data_objects")
 	}
 
 	sqlStmt = `
@@ -108,7 +125,8 @@ func (fsys *Filesys) metadataDbInitCore(txn *sql.Tx) error {
 	ON data_objects (id);
 	`
 	if _, err := txn.Exec(sqlStmt); err != nil {
-		return printErrorStack(err)
+		log.Printf(err.Error())
+		return fmt.Errorf("Could not create index id_index on table data_objects")
 	}
 
 
@@ -129,7 +147,8 @@ func (fsys *Filesys) metadataDbInitCore(txn *sql.Tx) error {
 	);
 	`
 	if _, err := txn.Exec(sqlStmt); err != nil {
-		return printErrorStack(err)
+		log.Printf(err.Error())
+		return fmt.Errorf("Could not create table namespace")
 	}
 
 	sqlStmt = `
@@ -137,7 +156,8 @@ func (fsys *Filesys) metadataDbInitCore(txn *sql.Tx) error {
 	ON namespace (parent);
 	`
 	if _, err := txn.Exec(sqlStmt); err != nil {
-		return printErrorStack(err)
+		log.Printf(err.Error())
+		return fmt.Errorf("Could not create index parent_index on table namespace")
 	}
 
 	// we need to be able to get from the files/tables, back to the namespace
@@ -147,7 +167,8 @@ func (fsys *Filesys) metadataDbInitCore(txn *sql.Tx) error {
 	ON namespace (inode);
 	`
 	if _, err := txn.Exec(sqlStmt); err != nil {
-		return printErrorStack(err)
+		log.Printf(err.Error())
+		return fmt.Errorf("Could not create index inode_rev_index on table namespace")
 	}
 
 	// A separate table for directories.
@@ -162,59 +183,69 @@ func (fsys *Filesys) metadataDbInitCore(txn *sql.Tx) error {
                 populated int,
                 ctime bigint,
                 mtime bigint,
+                mode int,
                 PRIMARY KEY (inode)
 	);
 	`
 	if _, err := txn.Exec(sqlStmt); err != nil {
-		return printErrorStack(err)
+		log.Printf(err.Error())
+		return fmt.Errorf("Could not create table directories")
 	}
 
 	// Adding a root directory. The root directory does
 	// not belong to any one project. This allows mounting
 	// several projects from the same root. This is denoted
 	// by marking the project as the empty string.
+	nowSeconds := time.Now().Unix()
 	sqlStmt = fmt.Sprintf(`
  		        INSERT INTO directories
-			VALUES ('%d', '%s', '%s', '%d', '%d', '%d');`,
+			VALUES ('%d', '%s', '%s', '%d', '%d', '%d', '%d');`,
 		InodeRoot, "", "", boolToInt(false),
-		time.Now().Unix(), time.Now().Unix())
+		nowSeconds, nowSeconds, dirReadOnlyMode)
 	if _, err := txn.Exec(sqlStmt); err != nil {
-		return printErrorStack(err)
+		log.Printf(err.Error())
+		return fmt.Errorf("Could not create root directory")
 	}
 
+	// We want the root path to match the results of splitPath("/")
+	rParent, rBase := splitPath("/")
 	sqlStmt = fmt.Sprintf(`
  		        INSERT INTO namespace
 			VALUES ('%s', '%s', '%d', '%d');`,
-		"", "/", nsDirType, InodeRoot)
+		rParent, rBase, nsDirType, InodeRoot)
 	if _, err := txn.Exec(sqlStmt); err != nil {
-		return printErrorStack(err)
+		log.Printf(err.Error())
+		return fmt.Errorf("Could not create root inode (%d)", InodeRoot)
 	}
 
 	return nil
 }
 
 // construct an initial empty database, representing an entire project.
-func (fsys *Filesys) MetadataDbInit() error {
-	if fsys.options.Verbose {
+func (mdb *MetadataDb) Init() error {
+	if mdb.options.Verbose {
 		log.Printf("Initializing metadata database\n")
 	}
 
-	txn, err := fsys.db.Begin()
+	txn, err := mdb.db.Begin()
 	if err != nil {
-		return printErrorStack(err)
+		log.Printf(err.Error())
+		return fmt.Errorf("Could not open transaction")
 	}
 
-	if err := fsys.metadataDbInitCore(txn); err != nil {
+	if err := mdb.init2(txn); err != nil {
 		txn.Rollback()
-		return printErrorStack(err)
+		log.Printf(err.Error())
+		return fmt.Errorf("Could not initialize database")
 	}
 
 	if err := txn.Commit(); err != nil {
 		txn.Rollback()
-		return printErrorStack(err)
+		log.Printf(err.Error())
+		return fmt.Errorf("Error during commit")
 	}
 
-	if fsys.options.Verbose {
+	if mdb.options.Verbose {
 		log.Printf("Completed creating files and directories tables\n")
 	}
 	return nil
@@ -224,14 +255,14 @@ func (fsys *Filesys) MetadataDbInit() error {
 // lifetime of the mount.
 //
 // Note: this call should perform while holding the mutex
-func (fsys *Filesys) allocInodeNum() int64 {
-	fsys.inodeCnt += 1
-	return fsys.inodeCnt
+func (mdb *MetadataDb) allocInodeNum() int64 {
+	mdb.inodeCnt += 1
+	return mdb.inodeCnt
 }
 
 // search for a file by Id. If the file exists, return its inode and link-count. Otherwise,
 // return 0, 0.
-func (fsys *Filesys) lookupDataObjectInodeById(txn *sql.Tx, fId string) (int64, int, error) {
+func (mdb *MetadataDb) lookupDataObjectById(txn *sql.Tx, fId string) (int64, int, bool, error) {
 	// point lookup in the files table
 	sqlStmt := fmt.Sprintf(`
  		        SELECT inode,nlink
@@ -240,7 +271,8 @@ func (fsys *Filesys) lookupDataObjectInodeById(txn *sql.Tx, fId string) (int64, 
 		fId)
 	rows, err := txn.Query(sqlStmt)
 	if err != nil {
-		return InodeInvalid, 0, printErrorStack(err)
+		log.Printf(err.Error())
+		return InodeInvalid, 0, false, fmt.Errorf("lookupDataObjectById fId=%s", fId)
 	}
 
 	var nlink int
@@ -255,81 +287,169 @@ func (fsys *Filesys) lookupDataObjectInodeById(txn *sql.Tx, fId string) (int64, 
 	switch numRows {
 	case 0:
 		// this file doesn't exist in the database
-		return InodeInvalid, 0, nil
+		return InodeInvalid, 0, false, nil
 	case 1:
 		// correct, there is exactly one such file
-		return inode, nlink, nil
+		return inode, nlink, true, nil
 	default:
 		panic(fmt.Sprintf("Found %d data-objects with Id %s", numRows, fId))
 	}
 }
 
 // search for a file with a particular inode
-func (fsys *Filesys) lookupDataObjectShouldExist(
-	dirFullName string,
-	oname string,
-	inode int64) (*File, error) {
+func (mdb *MetadataDb) lookupDataObjectByInode(oname string, inode int64) (File, bool, error) {
 	// point lookup in the files table
 	sqlStmt := fmt.Sprintf(`
- 		        SELECT kind,id,proj_id,size,ctime,mtime,nlink,inline_data
+ 		        SELECT kind,id,proj_id,size,ctime,mtime,mode,nlink,inline_data
                         FROM data_objects
 			WHERE inode = '%d';`,
 		inode)
-	rows, err := fsys.db.Query(sqlStmt)
+	rows, err := mdb.db.Query(sqlStmt)
 	if err != nil {
 		log.Printf(err.Error())
-		panic(fmt.Sprintf("could not find data-object inode=%d dir=%s name=%s",
-			inode, dirFullName, oname))
+		return File{}, false, fmt.Errorf("lookupDataObjectByInode %s inode=%d", oname, inode)
 	}
 
 	var f File
-	f.Fsys = fsys
 	f.Name = oname
 	f.Inode = inode
 	numRows := 0
 	for rows.Next() {
 		var ctime int64
 		var mtime int64
-		rows.Scan(&f.Kind,&f.Id, &f.ProjId, &f.Size, &ctime, &mtime, &f.Nlink, &f.InlineData)
-		f.Ctime = secondsToTime(ctime)
-		f.Mtime = secondsToTime(mtime)
+		rows.Scan(&f.Kind,&f.Id, &f.ProjId, &f.Size, &ctime, &mtime, &f.Mode, &f.Nlink, &f.InlineData)
+		f.Ctime = SecondsToTime(ctime)
+		f.Mtime = SecondsToTime(mtime)
 		numRows++
 	}
 	rows.Close()
 
 	switch numRows {
 	case 0:
-		// file not found
-		panic(fmt.Sprintf(
-			"File (inode=%d, dir=%s, name=%s) should exist in the data_objects table, but doesn't exist",
-			inode, dirFullName, oname))
+		// no file found
+		return File{}, false, nil
 	case 1:
-		// correct, there is exactly one such file
-		return &f, nil
+		// found exactly one file
+		return f, true, nil
 	default:
-		panic(fmt.Sprintf("Found %d data-objects of the form %s/%s",
-			numRows, dirFullName, oname))
+		panic(fmt.Sprintf("Found %d data-objects with name %s",	numRows, oname))
 	}
 }
 
+func (mdb *MetadataDb) lookupDirByInode(parent string, dname string, inode int64) (Dir, bool, error) {
+	var d Dir
+	d.Parent = parent
+	d.Dname = dname
+	d.FullPath = filepath.Clean(filepath.Join(parent, dname))
+	d.Inode = inode
+	d.Uid = mdb.options.Uid
+	d.Gid = mdb.options.Gid
+
+	// Extract information from the directories table
+	sqlStmt := fmt.Sprintf(`
+ 		        SELECT proj_id, proj_folder, populated, ctime, mtime, mode
+                        FROM directories
+			WHERE inode = '%d';`,
+		inode)
+	rows, err := mdb.db.Query(sqlStmt)
+	if err != nil {
+		log.Print(err.Error())
+		return Dir{}, false, fmt.Errorf("lookupDirByInode inode=%d", inode)
+	}
+
+	numRows := 0
+	for rows.Next() {
+		var populated int
+		var ctime int64
+		var mtime int64
+		var mode  int
+
+		rows.Scan(&d.ProjId, &d.ProjFolder, &populated, &ctime, &mtime, &mode)
+
+		d.Ctime = SecondsToTime(ctime)
+		d.Mtime = SecondsToTime(mtime)
+		d.Mode = os.FileMode(mode)
+		d.Populated = intToBool(populated)
+		numRows++
+	}
+	rows.Close()
+
+	switch numRows {
+	case 0:
+		return Dir{}, false, nil
+	case 1:
+		// correct, just one version
+	default:
+		panic(fmt.Sprintf("found %d directory with inode=%d in the directories table",
+			numRows, inode))
+	}
+
+	return d, true, nil
+}
+
+// search for a file with a particular inode
+func (mdb *MetadataDb) LookupByInode(ctx context.Context, inode int64) (Node, bool, error) {
+	// point lookup in the namespace table
+	sqlStmt := fmt.Sprintf(`
+ 		        SELECT parent,name,obj_type
+                        FROM namespace
+			WHERE inode = '%d';`,
+		inode)
+	rows, err := mdb.db.Query(sqlStmt)
+	if err != nil {
+		log.Printf(err.Error())
+		return nil, false, fmt.Errorf("LookupByInode: error in query")
+	}
+	var parent string
+	var name string
+	var obj_type int
+	numRows := 0
+	for rows.Next() {
+		rows.Scan(&parent, &name, &obj_type)
+		numRows++
+	}
+	rows.Close()
+
+	switch numRows {
+	case 0:
+		return nil, false, nil
+	case 1:
+		// correct, there is exactly one such file
+	default:
+		panic(fmt.Sprintf("Found %d data-objects with inode %d", numRows, inode))
+	}
+
+	switch obj_type {
+	case nsDirType:
+		return mdb.lookupDirByInode(parent, name, inode)
+	case nsDataObjType:
+		return mdb.lookupDataObjectByInode(name, inode)
+	default:
+		panic(fmt.Sprintf("Invalid type %d in namespace table", obj_type))
+	}
+}
+
+
 // The directory is in the database, read it in its entirety.
-func (fsys *Filesys) directoryReadAllEntries(
+func (mdb *MetadataDb) directoryReadAllEntries(
 	dirFullName string) (map[string]File, map[string]Dir, error) {
-	if fsys.options.Verbose {
+	if mdb.options.Verbose {
 		log.Printf("directoryReadAllEntries %s", dirFullName)
 	}
 
 	// Extract information for all the subdirectories
 	sqlStmt := fmt.Sprintf(`
- 		        SELECT directories.inode, directories.proj_id, namespace.name, directories.ctime, directories.mtime
+ 		        SELECT directories.inode, directories.proj_id, namespace.name, directories.ctime, directories.mtime, directories.mode
                         FROM directories
                         JOIN namespace
                         ON directories.inode = namespace.inode
 			WHERE namespace.parent = '%s' AND namespace.obj_type = '%d';
 			`, dirFullName, nsDirType)
-	rows, err := fsys.db.Query(sqlStmt)
+	rows, err := mdb.db.Query(sqlStmt)
 	if err != nil {
-		return nil, nil, printErrorStack(err)
+		log.Print(err.Error())
+		log.Printf("Error in directories query")
+		return nil, nil, err
 	}
 
 	subdirs := make(map[string]Dir)
@@ -339,44 +459,48 @@ func (fsys *Filesys) directoryReadAllEntries(
 		var projId string
 		var ctime int64
 		var mtime int64
-		rows.Scan(&inode, &projId, &dname, &ctime, &mtime)
+		var mode int
+		rows.Scan(&inode, &projId, &dname, &ctime, &mtime, &mode)
 
 		subdirs[dname] = Dir{
-			Fsys : fsys,
 			Parent : dirFullName,
 			Dname : dname,
-			FullPath : filepath.Join(dirFullName, dname),
+			FullPath : filepath.Clean(filepath.Join(dirFullName, dname)),
 			Inode : inode,
-			Ctime : secondsToTime(ctime),
-			Mtime : secondsToTime(mtime),
+			Ctime : SecondsToTime(ctime),
+			Mtime : SecondsToTime(mtime),
+			Mode : os.FileMode(mode),
 		}
 	}
 	rows.Close()
 
 	// Extract information for all the files
 	sqlStmt = fmt.Sprintf(`
- 		        SELECT data_objects.kind,data_objects.id,data_objects.proj_id,data_objects.inode,data_objects.size,data_objects.ctime,data_objects.mtime,data_objects.nlink,data_objects.inline_data,namespace.name
-                        FROM data_objects
+ 		        SELECT dos.kind, dos.id, dos.proj_id, dos.inode, dos.size, dos.ctime, dos.mtime, dos.mode, dos.nlink, dos.inline_data, namespace.name
+                        FROM data_objects as dos
                         JOIN namespace
-                        ON data_objects.inode = namespace.inode
+                        ON dos.inode = namespace.inode
 			WHERE namespace.parent = '%s' AND namespace.obj_type = '%d';
 			`, dirFullName, nsDataObjType)
-	rows, err = fsys.db.Query(sqlStmt)
+	rows, err = mdb.db.Query(sqlStmt)
 	if err != nil {
-		return nil, nil, printErrorStack(err)
+		log.Print(err.Error())
+		log.Printf("Error in data object query")
+		return nil, nil, err
 	}
 
 	// Find the files in the directory
 	files := make(map[string]File)
 	for rows.Next() {
 		var f File
-		f.Fsys = fsys
 
 		var ctime int64
 		var mtime int64
-		rows.Scan(&f.Kind,&f.Id, &f.ProjId, &f.Inode, &f.Size, &ctime, &mtime, &f.Nlink, &f.InlineData,&f.Name)
-		f.Ctime = secondsToTime(ctime)
-		f.Mtime = secondsToTime(mtime)
+		var mode int
+		rows.Scan(&f.Kind,&f.Id, &f.ProjId, &f.Inode, &f.Size, &ctime, &mtime, &mode, &f.Nlink, &f.InlineData,&f.Name)
+		f.Ctime = SecondsToTime(ctime)
+		f.Mtime = SecondsToTime(mtime)
+		f.Mode = os.FileMode(mode)
 
 		files[f.Name] = f
 	}
@@ -386,9 +510,13 @@ func (fsys *Filesys) directoryReadAllEntries(
 	return files, subdirs, nil
 }
 
-// Create an entry representing one remote file. This is used by
-// dxWDL as a way to stream individual files.
-func (fsys *Filesys) createDataObject(
+// Create an entry representing one remote file. This has
+// two use cases:
+//  1) Create a singleton file from the manifest
+//  2) Create a new file, and upload it later to the platform
+//  3) Discover a file in a directory, which may actually be a link to another file.
+func (mdb *MetadataDb) createDataObject(
+	mustBeNewObject bool,
 	txn *sql.Tx,
 	kind int,
 	projId string,
@@ -396,41 +524,49 @@ func (fsys *Filesys) createDataObject(
 	size int64,
 	ctime int64,
 	mtime int64,
+	mode os.FileMode,
 	parentDir string,
 	fname string,
 	inlineData string) (int64, error) {
-	if fsys.options.VerboseLevel > 1 {
+	if mdb.options.VerboseLevel > 1 {
 		log.Printf("createDataObject %s:%s %s", projId, objId,
 			filepath.Clean(parentDir + "/" + fname))
 	}
 
-	inode, nlink, err := fsys.lookupDataObjectInodeById(txn, objId)
+	inode, nlink, ok, err := mdb.lookupDataObjectById(txn, objId)
 	if err != nil {
-		return InodeInvalid, err
+		return 0, err
 	}
 
-	if inode == InodeInvalid {
+	if !ok {
 		// File doesn't exist, we need to choose a new inode number.
 		// NOte: it is on stable storage, and will not change.
-		inode = fsys.allocInodeNum()
+		inode = mdb.allocInodeNum()
 
 		// Create an entry for the file
 		sqlStmt := fmt.Sprintf(`
  		        INSERT INTO data_objects
-			VALUES ('%d', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%s');`,
-			kind, objId, projId, inode, size, ctime, mtime, 1, inlineData)
+			VALUES ('%d', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%d', '%s');`,
+			kind, objId, projId, inode, size, ctime, mtime, int(mode), 1, inlineData)
 		if _, err := txn.Exec(sqlStmt); err != nil {
-			return 0, printErrorStack(err)
+			log.Printf(err.Error())
+			log.Printf("Error inserting into data objects table")
+			return 0, err
 		}
 	} else {
 		// File already exists, we need to increase the link count
+		if mustBeNewObject {
+			panic(fmt.Sprintf("Object %s:%s must not be already in the database. We are trying to create it again", projId, objId))
+		}
+
 		sqlStmt := fmt.Sprintf(`
  		        UPDATE data_objects
                         SET nlink = '%d'
 			WHERE id = '%s';`,
 			nlink + 1, objId)
 		if _, err := txn.Exec(sqlStmt); err != nil {
-			return 0, printErrorStack(err)
+			log.Printf("Error updating data_object table, incrementing the link number")
+			return 0, err
 		}
 	}
 
@@ -439,7 +575,8 @@ func (fsys *Filesys) createDataObject(
 			VALUES ('%s', '%s', '%d', '%d');`,
 		parentDir, fname, nsDataObjType, inode)
 	if _, err := txn.Exec(sqlStmt); err != nil {
-		return 0, printErrorStack(err)
+		log.Printf("Error inserting %s/%s into the namespace table", parentDir, fname)
+		return 0, err
 	}
 
 	return inode, nil
@@ -448,12 +585,13 @@ func (fsys *Filesys) createDataObject(
 // Create an empty directory, and return the inode
 //
 // Assumption: the directory does not already exist in the database.
-func (fsys *Filesys) createEmptyDir(
+func (mdb *MetadataDb) createEmptyDir(
 	txn *sql.Tx,
 	projId string,
 	projFolder string,
 	ctime int64,
 	mtime int64,
+	mode os.FileMode,
 	dirPath string,
 	populated bool) (int64, error) {
 	if dirPath[0] != '/' {
@@ -461,9 +599,9 @@ func (fsys *Filesys) createEmptyDir(
 	}
 
 	// choose unused inode number. It is on stable stoage, and will not change.
-	inode := fsys.allocInodeNum()
+	inode := mdb.allocInodeNum()
 	parentDir, basename := splitPath(dirPath)
-	if fsys.options.VerboseLevel > 1 {
+	if mdb.options.VerboseLevel > 1 {
 		log.Printf("createEmptyDir %s:%s %s populated=%t",
 			projId, projFolder, dirPath, populated)
 	}
@@ -473,29 +611,35 @@ func (fsys *Filesys) createEmptyDir(
 			VALUES ('%s', '%s', '%d', '%d');`,
 		parentDir, basename, nsDirType,	inode)
 	if _, err := txn.Exec(sqlStmt); err != nil {
-		return 0, printErrorStack(err)
+		log.Printf("createEmptyDir: error inserting into namespace table %s/%s",
+			parentDir, basename)
+		return 0, err
 	}
 
 	// Create an entry for the subdirectory
+	mode = mode | os.ModeDir
 	sqlStmt = fmt.Sprintf(`
                        INSERT INTO directories
-                       VALUES ('%d', '%s', '%s', '%d', '%d', '%d');`,
-		inode, projId, projFolder, boolToInt(populated), ctime, mtime)
+                       VALUES ('%d', '%s', '%s', '%d', '%d', '%d', '%d');`,
+		inode, projId, projFolder, boolToInt(populated), ctime, mtime, int(mode))
 	if _, err := txn.Exec(sqlStmt); err != nil {
-		return 0, printErrorStack(err)
+		log.Printf("createEmptyDir: error inserting into directories table %d",
+			inode)
+		return 0, err
 	}
 	return inode, nil
 }
 
 // Update the directory populated flag to TRUE
-func (fsys *Filesys) setDirectoryToPopulated(txn *sql.Tx, dinode int64) error {
+func (mdb *MetadataDb) setDirectoryToPopulated(txn *sql.Tx, dinode int64) error {
 	sqlStmt := fmt.Sprintf(`
 		UPDATE directories
                 SET populated = '1'
                 WHERE inode = '%d'`,
 		dinode)
 	if _, err := txn.Exec(sqlStmt); err != nil {
-		return printErrorStack(err)
+		log.Printf("Error set directory %d to populated", dinode)
+		return err
 	}
 	return nil
 }
@@ -541,7 +685,7 @@ func inlineDataOfFile(kind int, o DxDescribeDataObject) string {
 }
 
 // Create a directory with: an i-node, files, and empty unpopulated subdirectories.
-func (fsys *Filesys) populateDir(
+func (mdb *MetadataDb) populateDir(
 	txn *sql.Tx,
 	dinode int64,
 	projId string,
@@ -551,7 +695,7 @@ func (fsys *Filesys) populateDir(
 	dirPath string,
 	dxObjs []DxDescribeDataObject,
 	subdirs []string) error {
-	if fsys.options.VerboseLevel > 1 {
+	if mdb.options.VerboseLevel > 1 {
 		var objNames []string
 		for _, oDesc := range dxObjs {
 			objNames = append(objNames, oDesc.Name)
@@ -560,7 +704,7 @@ func (fsys *Filesys) populateDir(
 	}
 
 	// Create a database entry for each file
-	if fsys.options.VerboseLevel > 1 {
+	if mdb.options.VerboseLevel > 1 {
 		log.Printf("inserting files")
 	}
 
@@ -568,13 +712,16 @@ func (fsys *Filesys) populateDir(
 		kind := kindOfFile(o)
 		inlineData := inlineDataOfFile(kind, o)
 
-		_, err := fsys.createDataObject(txn,
+		_, err := mdb.createDataObject(
+			false,
+			txn,
 			kind,
 			o.ProjId,
 			o.Id,
 			o.Size,
 			o.CtimeSeconds,
 			o.MtimeSeconds,
+			fileReadOnlyMode,
 			dirPath,
 			o.Name,
 			inlineData)
@@ -584,29 +731,33 @@ func (fsys *Filesys) populateDir(
 	}
 
 	// Create a database entry for each sub-directory
-	if fsys.options.VerboseLevel > 1 {
+	if mdb.options.VerboseLevel > 1 {
 		log.Printf("inserting subdirs")
 	}
 	for _, subDirName := range subdirs {
 		// Create an entry for the subdirectory.
 		// We haven't described it yet from DNAx, so the populate flag
 		// is false.
-		_, err := fsys.createEmptyDir(
+		_, err := mdb.createEmptyDir(
 			txn,
 			projId, filepath.Clean(projFolder + "/" + subDirName),
-			ctime, mtime, filepath.Clean(dirPath + "/" + subDirName),
+			ctime, mtime,
+			dirReadWriteMode,
+			filepath.Clean(dirPath + "/" + subDirName),
 			false)
 		if err != nil {
-			return printErrorStack(err)
+			log.Printf("Error creating empty directory %s while populating directory %s",
+				filepath.Clean(projFolder + "/" + subDirName), dirPath)
+			return err
 		}
 	}
 
-	if fsys.options.VerboseLevel > 1 {
+	if mdb.options.VerboseLevel > 1 {
 		log.Printf("setting populated for directory %s", dirPath)
 	}
 
 	// Update the directory populated flag to TRUE
-	fsys.setDirectoryToPopulated(txn, dinode)
+	mdb.setDirectoryToPopulated(txn, dinode)
 	return nil
 }
 
@@ -616,26 +767,30 @@ func (fsys *Filesys) populateDir(
 // 1. An empty directory has been created on the database.
 // 1. The directory has not been queried yet.
 // 2. The global lock is held
-func (fsys *Filesys) directoryReadFromDNAx(
+func (mdb *MetadataDb) directoryReadFromDNAx(
+	ctx context.Context,
 	dinode int64,
-	projId string, projFolder string,
-	ctime int64, mtime int64,
+	projId string,
+	projFolder string,
+	ctime int64,
+	mtime int64,
 	dirFullName string) error {
 
-	if fsys.options.Verbose {
-		log.Printf("describe folder %s:%s", projId, projFolder)
+	if mdb.options.Verbose {
+		log.Printf("directoryReadFromDNAx: describe folder %s:%s", projId, projFolder)
 	}
 
-	// describe all the files
-	httpClient := <- fsys.httpClientPool
-	dxDir, err := DxDescribeFolder(httpClient, &fsys.dxEnv, projId, projFolder)
-	fsys.httpClientPool <- httpClient
+	// describe all (closed) files
+	httpClient := <- mdb.httpClientPool
+	dxDir, err := DxDescribeFolder(ctx, httpClient, &mdb.dxEnv, projId, projFolder, true)
+	mdb.httpClientPool <- httpClient
 	if err != nil {
-		fmt.Printf("Describe error: %s", err.Error())
+		fmt.Printf(err.Error())
+		fmt.Printf("reading directory frmo DNAx error")
 		return err
 	}
 
-	if fsys.options.Verbose {
+	if mdb.options.Verbose {
 		log.Printf("read dir from DNAx #data_objects=%d #subdirs=%d",
 			len(dxDir.dataObjects),
 			len(dxDir.subdirs))
@@ -655,25 +810,27 @@ func (fsys *Filesys) directoryReadFromDNAx(
 	// to fix the elements in the directory, so they would comply. This
 	// comes at the cost of renaming the original files, which can
 	// very well mislead the user.
-	posixDir, err := PosixFixDir(fsys, dxDir)
+	posixDir, err := PosixFixDir(mdb.options, dxDir)
 	if err != nil {
 		return err
 	}
 
-	txn, err := fsys.db.Begin()
+	txn, err := mdb.db.Begin()
 	if err != nil {
-		return printErrorStack(err)
+		log.Printf(err.Error())
+		return fmt.Errorf("directoryReadFromDNAx: error opening transaction")
 	}
 
 	// build the top level directory
-	err = fsys.populateDir(
+	err = mdb.populateDir(
 		txn, dinode,
 		projId, projFolder,
 		ctimeApprox, mtimeApprox,
 		dirFullName, posixDir.dataObjects, posixDir.subdirs)
 	if err != nil {
 		txn.Rollback()
-		return printErrorStack(err)
+		log.Printf(err.Error())
+		return fmt.Errorf("directoryReadFromDNAx: Error populating directory")
 	}
 
 	// create the faux sub directories. These have no additional depth, and are fully
@@ -684,256 +841,82 @@ func (fsys *Filesys) directoryReadFromDNAx(
 		fauxDirPath := filepath.Clean(dirFullName + "/" + dName)
 
 		// create the directory in the namespace, as if it is unpopulated.
-		fauxDirInode, err := fsys.createEmptyDir(
-			txn, projId, "", ctimeApprox, mtimeApprox, fauxDirPath, true)
+		fauxDirInode, err := mdb.createEmptyDir(
+			txn, projId, "",
+			ctimeApprox, mtimeApprox,
+			dirReadOnlyMode,    // faux directories are read only
+			fauxDirPath, true)
 		if err != nil {
 			txn.Rollback()
-			return printErrorStack(err)
+			log.Printf(err.Error())
+			return fmt.Errorf("directoryReadFromDNAx: creating faux directory %s", fauxDirPath)
 		}
 
 		var no_subdirs []string
-		err = fsys.populateDir(
+		err = mdb.populateDir(
 			txn, fauxDirInode,
 			projId, "",
 			ctimeApprox, mtimeApprox,
 			fauxDirPath, fauxFiles, no_subdirs)
 		if err != nil {
 			txn.Rollback()
-			return printErrorStack(err)
+			log.Printf(err.Error())
+			return fmt.Errorf("directoryReadFromDNAx: populating faux directory %s", fauxDirPath)
 		}
 	}
 
-	txn.Commit()
-	return nil
+	return txn.Commit()
 }
 
-// Look for a directory. Return:
-//  1. Directory exists or not, and if its populated
-//  2. inode
-func (fsys *Filesys) directoryLookup(dirPath string) (int, *DirInfo) {
-	parentDir, basename := splitPath(dirPath)
-	sqlStmt := fmt.Sprintf(`
- 		        SELECT inode
-                        FROM namespace
-			WHERE parent = '%s' AND name = '%s' AND obj_type = '%d';`,
-		parentDir, basename, nsDirType)
-	rows, err := fsys.db.Query(sqlStmt)
-	if err != nil {
-		panic(err)
-	}
-
-	// There could be at most one such entry
-	var inode int64
-	numRows := 0
-	for rows.Next() {
-		rows.Scan(&inode)
-		numRows++
-	}
-	rows.Close()
-	if numRows == 0 {
-		log.Printf("directory %s not found", dirPath)
-		return dirDoesNotExist, nil
-	} else if numRows > 1 {
-		panic(fmt.Sprintf("Found %d entries for directory %s", numRows, dirPath))
-	}
-
-	// There is exactly one entry
-	// Extract the populated flag
-	sqlStmt = fmt.Sprintf(`
- 		        SELECT populated, proj_id, proj_folder, ctime, mtime
-                        FROM directories
-			WHERE inode = '%d';`, inode)
-	rows, err = fsys.db.Query(sqlStmt)
-	if err != nil {
-		panic(err)
-	}
-
-	var populated int
-	var dInfo DirInfo
-	dInfo.inode = inode
-	numRows = 0
-	for rows.Next() {
-		rows.Scan(&populated, &dInfo.projId, &dInfo.projFolder, &dInfo.ctime, &dInfo.mtime)
-		numRows++
-	}
-	rows.Close()
-
-	if numRows == 0 {
-		panic(fmt.Sprintf("directory %s found in namespace but not in table", dirPath))
-	} else if numRows > 1 {
-		panic(fmt.Sprintf("%d entries found for directory %s in table", numRows, dirPath))
-	}
-
-	var retCode int
-	switch populated {
-	case 0:
-		retCode = dirExistsButNotPopulated
-	case 1:
-		retCode = dirExistAndPopulated
-	default:
-		panic(fmt.Sprintf("illegal value for populated field (%d)", populated))
-	}
-	return retCode, &dInfo
-}
-
-// We want to check if directory D exists. Denote:
-//     P = parent(dirFullName)
-//     B = basename(dirFullName)
-//
-// For example, if the directory is "/A/B/C" then:
-//    P = "/A/B"
-//    B = "C"
-//
-// The filesystem allows accessing directory D, only if its parent
-// exists. Therefore, this method will be called only if the parent
-// exists, and is in sqlite3.
-//
-// 1. Make sure the parent directory P has been fully populated.
-// 2. Query the parent P, check if B is a member. If not, return "dirDoesNotExist".
-// 3. Having got this far, we know that D exists. Now, check if it is already fully
-//    populated.
-//
-func (fsys *Filesys) directoryExists(dirPath string) (int, *DirInfo, error) {
-	if dirPath == "/" {
-		// The root directory has the unique property, that it does
-		// not have a parent.
-		//
-		// Skip the parent checking phase.
-		retCode, dInfo := fsys.directoryLookup(dirPath)
-		return retCode, dInfo, nil
-	}
-
-	parentDir := filepath.Dir(dirPath)
-
-	// Make sure the parent exists, and that it is populated.
-	retCode, parentDirInfo := fsys.directoryLookup(parentDir)
-	if retCode == dirDoesNotExist {
-		panic(fmt.Sprintf(
-			"Accessing directory (%s) even though parent (%s) has not been accessed",
-			dirPath, parentDir))
-	}
-	if retCode == dirExistsButNotPopulated {
-		// Parent exists, but it has not been populated yet
-		if fsys.options.Verbose {
-			log.Printf("parent directory (%s) has not been populated yet", parentDir)
-		}
-		if parentDir == "/" {
-			panic("The subdirectory should not inherit ctime/mtime from root")
-		}
-		err := fsys.directoryReadFromDNAx(
-			parentDirInfo.inode,
-			parentDirInfo.projId, parentDirInfo.projFolder,
-			parentDirInfo.ctime, parentDirInfo.mtime,
-			parentDir)
-		if err != nil {
-			return 0, nil, err
-		}
-	}
-
-	// At this point, we can check if the directory exists
-	retCode, dInfo := fsys.directoryLookup(dirPath)
-	return retCode, dInfo, nil
-}
 
 // Add a directory with its contents to an exisiting database
-func (fsys *Filesys) MetadataDbReadDirAll(
-	dirFullName string) (map[string]File, map[string]Dir, error) {
-	if fsys.options.Verbose {
-		log.Printf("MetadataDbReadDirAll %s", dirFullName)
+func (mdb *MetadataDb) ReadDirAll(ctx context.Context, dir *Dir) (map[string]File, map[string]Dir, error) {
+	if mdb.options.Verbose {
+		log.Printf("ReadDirAll %s", dir.FullPath)
 	}
 
-	retCode, dInfo, err := fsys.directoryExists(dirFullName)
-	if err != nil {
-		log.Printf("err = %s, %s", err.Error(), dirFullName)
-		return nil, nil, err
-	}
-	switch retCode {
-	case dirDoesNotExist:
-		return nil, nil, fuse.ENOENT
-	case dirExistsButNotPopulated:
-		// we need to read the directory from dnanexus.
-		// This could take a while for large directories.
-		err := fsys.directoryReadFromDNAx(
-			dInfo.inode, dInfo.projId, dInfo.projFolder,
-			dInfo.ctime, dInfo.mtime, dirFullName)
+	if !dir.Populated {
+		err := mdb.directoryReadFromDNAx(
+			ctx,
+			dir.Inode,
+			dir.ProjId,
+			dir.ProjFolder,
+			int64(dir.Ctime.Second()),
+			int64(dir.Mtime.Second()),
+			dir.FullPath)
 		if err != nil {
 			return nil, nil, err
 		}
-	case dirExistAndPopulated:
-		if fsys.options.Verbose {
-			log.Printf("Directory %s is in the DB, and is populated", dirFullName)
-		}
-	default:
-		panic(fmt.Sprintf("Bad return code %d",retCode))
+		dir.Populated = true
 	}
 
 	// Now that the directory is in the database, we can read it with a local query.
-	return fsys.directoryReadAllEntries(dirFullName)
+	return mdb.directoryReadAllEntries(dir.FullPath)
 }
 
-// search for a directory with a particular inode
-func (fsys *Filesys) lookupDir(
-	dirFullName string,
-	dname string,
-	dinode int64) (*Dir, error) {
-	// point lookup in the directories table
-	sqlStmt := fmt.Sprintf(`
- 		        SELECT proj_id, ctime, mtime
-                        FROM directories
-			WHERE inode = '%d';`, dinode)
-	rows, err := fsys.db.Query(sqlStmt)
-	if err != nil {
-		log.Printf(err.Error())
-		panic(fmt.Sprintf("could not find directory inode=%d dir=%s name=%s",
-			dinode, dirFullName, dname))
-	}
-
-	numRows := 0
-	var projId string
-	var ctime int64
-	var mtime int64
-	for rows.Next() {
-		rows.Scan(&projId, &ctime, &mtime)
-		numRows++
-	}
-	rows.Close()
-
-	switch numRows {
-	case 0:
-		// file not found
-		panic(fmt.Sprintf(
-			"Directory (inode=%d, dir=%s, name=%s) should exist in the directories table, but doesn't exist",
-			dinode, dirFullName, dname))
-	case 1:
-		// correct, there is exactly one directory
-		return &Dir{
-			Fsys : fsys,
-			Parent : dirFullName,
-			Dname : dname,
-			FullPath : filepath.Join(dirFullName, dname),
-			Inode : dinode,
-			Ctime : secondsToTime(ctime),
-			Mtime : secondsToTime(mtime),
-		}, nil
-	default:
-		panic(fmt.Sprintf("Found %d directories of the form %s/%s",
-			numRows, dirFullName, dname))
-	}
-}
 
 // Search for a file/subdir in a directory
-func (fsys *Filesys) fastLookup(
-	dirFullName string,
-	dirOrFileName string) (fs.Node, error) {
+// Look for file [filename] in directory [parent]/[dname].
+//
+// 1. Look if the directory has already been downloaded and placed in the DB
+// 2. If not, populate it
+// 3. Do a lookup in the directory.
+//
+// Note: the file might not exist.
+func (mdb *MetadataDb) LookupInDir(ctx context.Context, dir *Dir, dirOrFileName string) (Node, bool, error) {
+	if !dir.Populated {
+		mdb.ReadDirAll(ctx, dir)
+	}
+
 	// point lookup in the namespace
 	sqlStmt := fmt.Sprintf(`
  		        SELECT obj_type,inode
                         FROM namespace
 			WHERE parent = '%s' AND name = '%s';`,
-		dirFullName, dirOrFileName)
-	rows, err := fsys.db.Query(sqlStmt)
+		dir.FullPath, dirOrFileName)
+	rows, err := mdb.db.Query(sqlStmt)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	var objType int
@@ -945,132 +928,50 @@ func (fsys *Filesys) fastLookup(
 	}
 	rows.Close()
 	if numRows == 0 {
-		return nil, fuse.ENOENT
+		return nil, false, nil
 	}
 	if numRows > 1 {
 		panic(fmt.Sprintf("Found %d files of the form %s/%s",
-			numRows, dirFullName, dirOrFileName))
+			numRows, dir.FullPath, dirOrFileName))
 	}
 
 	// There is exactly one answer
 	switch objType {
 	case nsDirType:
-		return fsys.lookupDir(dirFullName, dirOrFileName, inode)
+		return mdb.lookupDirByInode(dir.FullPath, dirOrFileName, inode)
 	case nsDataObjType:
-		return fsys.lookupDataObjectShouldExist(dirFullName, dirOrFileName, inode)
+		file, ok, err := mdb.lookupDataObjectByInode(dirOrFileName, inode)
+		if ok && err == nil {
+			log.Printf("lookupDataObjectByInode: %v", file)
+			log.Printf("size: %d", file.Size)
+		}
+		return file, ok, err
 	default:
 		panic(fmt.Sprintf("Invalid object type %d", objType))
 	}
 }
 
-// Look for file [filename] in directory [parent]/[dname].
-//
-// 1. Look if the directory has already been downloaded and placed in the DB
-// 2. If not, populate it
-// 3. Do a lookup in the directory.
-//
-// Note: the file might not exist.
-func (fsys *Filesys) MetadataDbLookupInDir(
-	parentDir string,
-	dirOrFileName string) (fs.Node, error) {
-
-	retCode, _, err := fsys.directoryExists(parentDir)
-	if err != nil {
-		log.Printf("err = %s, %s", err.Error(), parentDir)
-		return nil, err
-	}
-	switch retCode {
-	case dirDoesNotExist:
-		return nil, fuse.ENOENT
-	case dirExistsButNotPopulated:
-		// The directory exists, but has not been populated yet.
-		_, _, err := fsys.MetadataDbReadDirAll(parentDir)
-		if err != nil {
-			return nil, err
-		}
-	case dirExistAndPopulated:
-		// The directory exists, and has already been populated.
-		// I think this is the normal path. There is nothing to do here.
-	default:
-		panic(fmt.Sprintf("Bad return code %d",retCode))
-	}
-
-	return fsys.fastLookup(parentDir, dirOrFileName)
-}
-
-// Return the root directory
-func (fsys *Filesys) MetadataDbRoot() (*Dir, error) {
-	sqlStmt := fmt.Sprintf(`
- 		        SELECT parent, name, obj_type
-                        FROM namespace
-			WHERE inode='%d';`,
-		InodeRoot)
-	rows, err := fsys.db.Query(sqlStmt)
-	if err != nil {
-		return nil, printErrorStack(err)
-	}
-
-	numRows := 0
-	var parent string
-	var dname string
-	var objType int
-	for rows.Next() {
-		rows.Scan(&parent, &dname, &objType)
-		numRows++
-	}
-	rows.Close()
-
-	if fsys.options.Verbose {
-		log.Printf("Read root dir, inode=%d", InodeRoot)
-	}
-
-	switch numRows {
-	case 0:
-		return nil, fmt.Errorf("Could not find root directory")
-	case 1:
-		if objType != nsDirType {
-			panic(fmt.Sprintf("root node has the wrong type %d", objType))
-		}
-		return fsys.lookupDir("/", "/", InodeRoot)
-	default:
-		return nil, fmt.Errorf("Found more than one root directory")
-	}
-}
-
 // Build a toplevel directory for each project.
-func (fsys *Filesys) MetadataDbPopulateRoot(manifest Manifest) error {
+func (mdb *MetadataDb) PopulateRoot(ctx context.Context, manifest Manifest) error {
 	log.Printf("Populating root directory")
 
 	for _, d := range manifest.Directories {
-		fsys.baseDir2ProjectId[d.Dirname] = d.ProjId
+		mdb.baseDir2ProjectId[d.Dirname] = d.ProjId
 	}
-
-	// describe all the projects, we need their upload parameters
-	httpClient := <- fsys.httpClientPool
-	defer func() {
-		fsys.httpClientPool <- httpClient
-	} ()
-	for _, pId := range fsys.baseDir2ProjectId {
-		pDesc, err := DxDescribeProject(httpClient, &fsys.dxEnv, pId)
-		if err != nil {
-			log.Printf("Could not describe project %s, check permissions", pId)
-			return err
-		}
-		fsys.projId2Desc[pDesc.Id] = *pDesc
-	}
-
 
 	dirSkel, err := manifest.DirSkeleton()
 	if err != nil {
+		log.Printf("PopulateRoot: Error creating a manifest skeleton")
 		return err
 	}
-	if fsys.options.Verbose {
+	if mdb.options.Verbose {
 		log.Printf("dirSkeleton = %v", dirSkel)
 	}
 
-	txn, err := fsys.db.Begin()
+	txn, err := mdb.db.Begin()
 	if err != nil {
-		return printErrorStack(err)
+		log.Printf("PopulateRoot: Error opening transaction")
+		return err
 	}
 
 	// build the supporting directory structure.
@@ -1078,160 +979,154 @@ func (fsys *Filesys) MetadataDbPopulateRoot(manifest Manifest) error {
 	// be queries.
 	nowSeconds := time.Now().Unix()
 	for _, d := range dirSkel {
-		_, err := fsys.createEmptyDir(
+		_, err := mdb.createEmptyDir(
 			txn,
 			"", "",   // There is no backing project/folder
 			nowSeconds, nowSeconds,
+			dirReadOnlyMode, // skeleton directories are scaffolding, they cannot be modified.
 			d, true)
 		if err != nil {
 			txn.Rollback()
-			return printErrorStack(err)
+			log.Printf("PopulateRoot: Error creating empty dir")
+			return err
 		}
 	}
 
 	// create individual files
 	for _, fl := range manifest.Files {
-		_, err := fsys.createDataObject(
+		_, err := mdb.createDataObject(
+			false,
 			txn, FK_Regular, fl.ProjId, fl.FileId,
-			fl.Size, fl.CtimeSeconds, fl.MtimeSeconds,
+			fl.Size,
+			fl.CtimeSeconds, fl.MtimeSeconds,
+			fileReadOnlyMode,
 			fl.Parent, fl.Fname, "")
 		if err != nil {
 			txn.Rollback()
-			return printErrorStack(err)
+			log.Printf("PopulateRoot: error creating singleton file")
+			return err
 		}
 	}
 
 	for _, d := range manifest.Directories {
 		// Local directory [d.Dirname] represents
 		// folder [d.Folder] on project [d.ProjId].
-		_, err := fsys.createEmptyDir(
+		_, err := mdb.createEmptyDir(
 			txn,
 			d.ProjId, d.Folder,
 			d.CtimeSeconds, d.MtimeSeconds,
+			dirReadWriteMode,
 			d.Dirname, false)
 		if err != nil {
 			txn.Rollback()
-			return printErrorStack(err)
+			log.Printf("PopulateRoot: error creating empty manifest directory")
+			return err
 		}
 	}
 
 	// set the root to be populated
-	if err := fsys.setDirectoryToPopulated(txn, InodeRoot); err != nil {
+	if err := mdb.setDirectoryToPopulated(txn, InodeRoot); err != nil {
 		txn.Rollback()
-		return printErrorStack(err)
+		log.Printf("PopulateRoot: error setting root directory to populated")
+		return err
 	}
 
 	return txn.Commit()
 }
 
-// Figure out which project this folder belongs to.
-// For example,
-//  "/dxWDL_playground/A/B" -> "project-xxxx", "/A/B"
-func (fsys *Filesys) projectIdAndFolder(dirname string) (string, string) {
-	for baseDir, projId := range fsys.baseDir2ProjectId {
-		if strings.HasPrefix(dirname, baseDir) {
-			folderInProject := dirname[len(baseDir) : ]
-			if !strings.HasPrefix(folderInProject, "/") {
-				// folders in DNAx have to start with a slash
-				folderInProject = "/" + folderInProject
-			}
-			return projId, folderInProject
-		}
-	}
-	panic(fmt.Sprintf("directory %s does not belong to any project", dirname))
-}
-
-func (fsys *Filesys) CreateFile(dir *Dir, fname string, localPath string) (*File, error) {
-	if fsys.options.Verbose {
-		log.Printf("CreateFile %s/%s  localPath=%s", dir.FullPath, fname, localPath)
+// We know that the parent directory exists, is populated, and the file does not exist
+func (mdb *MetadataDb) CreateFile(
+	ctx context.Context,
+	dir *Dir,
+	fileId string,
+	fname string,
+	mode os.FileMode,
+	localPath string) (File, error) {
+	if mdb.options.Verbose {
+		log.Printf("CreateFile %s/%s  localPath=%s proj=%s",
+			dir.FullPath, fname, localPath, dir.ProjId)
 	}
 
-	// Check if the directory already contains [name].
-	_, err := fsys.MetadataDbLookupInDir(dir.FullPath, fname)
-	if err == nil {
-		// file already exists
-		return nil, fuse.EEXIST
-	}
-	if err != fuse.ENOENT {
-		// An error occured. We are expecting the file to -not- exist.
-		return nil, err
-	}
-
-	projId,folder := fsys.projectIdAndFolder(dir.FullPath)
-	if fsys.options.Verbose {
-		log.Printf("projId = %s", projId)
-	}
-
-	// now we know this is a new file
-	// 1. create it on the platform
-	httpClient := <- fsys.httpClientPool
-	fileId, err := DxFileNew(
-		httpClient, &fsys.dxEnv,
-		fsys.nonce.String(),
-		projId, fname, folder)
-	fsys.httpClientPool <- httpClient
+	// insert into the database
+	txn, err := mdb.db.Begin()
 	if err != nil {
-		return nil, err
-	}
-
-	// 2. insert into the database
-	txn, err := fsys.db.Begin()
-	if err != nil {
-		return nil, printErrorStack(err)
+		log.Printf(err.Error())
+		return File{}, fmt.Errorf("CreateFile error opening transaction")
 	}
 	nowSeconds := time.Now().Unix()
-	inode, err := fsys.createDataObject(
+	inode, err := mdb.createDataObject(
+		true,
 		txn,
 		FK_Regular,
-		projId,
+		dir.ProjId,
 		fileId,
 		0,    /* the file is empty */
 		nowSeconds,
 		nowSeconds,
+		mode,
 		dir.FullPath,
 		fname,
 		localPath)
 	if err != nil {
 		txn.Rollback()
-		return nil, printErrorStack(err)
+		log.Printf(err.Error())
+		return File{}, fmt.Errorf("CreateFile error creating data object")
 	}
 	if err := txn.Commit(); err != nil {
-		return nil, err
+		log.Printf(err.Error())
+		return File{}, fmt.Errorf("CreateFile commit failed")
 	}
 
 	// 3. return a File structure
-	file := &File{
-		Fsys: fsys,
+	return File{
 		Kind: FK_Regular,
 		Id : fileId,
-		ProjId : projId,
+		ProjId : dir.ProjId,
 		Name : fname,
 		Size : 0,
 		Inode : inode,
-		Ctime : secondsToTime(nowSeconds),
-		Mtime : secondsToTime(nowSeconds),
+		Ctime : SecondsToTime(nowSeconds),
+		Mtime : SecondsToTime(nowSeconds),
+		Mode : mode,
 		Nlink : 1,
 		InlineData : localPath,
-	}
-	return file, nil
+	}, nil
 }
 
-func (fsys *Filesys) MetadataDbUpdateFile(f File, fInfo os.FileInfo) error {
-	txn, err := fsys.db.Begin()
-	if err != nil {
-		return printErrorStack(err)
+func (mdb *MetadataDb) UpdateFile(
+	ctx context.Context,
+	f File,
+	fileSize int64,
+	modTime time.Time,
+	mode os.FileMode) error {
+	if mdb.options.Verbose {
+		log.Printf("Update file=%v size=%d mode=%d", f, fileSize, mode)
 	}
 
-	modTimeSec := fInfo.ModTime().Unix()
+	txn, err := mdb.db.Begin()
+	if err != nil {
+		log.Printf(err.Error())
+		return fmt.Errorf("UpdateFile error opening transaction")
+	}
+
+	modTimeSec := modTime.Unix()
 	sqlStmt := fmt.Sprintf(`
  		        UPDATE data_objects
-                        SET size = '%d', mtime='%d'
+                        SET size = '%d', mtime='%d', mode='%d'
 			WHERE inode = '%d';`,
-		fInfo.Size(), modTimeSec, f.Inode)
+		fileSize, modTimeSec, int(mode), f.Inode)
 
 	if _, err := txn.Exec(sqlStmt); err != nil {
 		txn.Rollback()
-		return printErrorStack(err)
+		log.Printf(err.Error())
+		return fmt.Errorf("UpdateFile error executing transaction")
 	}
 	return txn.Commit()
+}
+
+func (mdb *MetadataDb) Shutdown() {
+	if err := mdb.db.Close(); err != nil {
+		log.Printf(err.Error())
+		log.Printf("Error closing the sqlite database %s", mdb.dbFullPath)
+	}
 }

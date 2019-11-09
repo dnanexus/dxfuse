@@ -3,8 +3,6 @@
 ######################################################################
 ## constants
 
-projName="dxfuse_test_data"
-
 baseDir="$HOME/dxfuse_test"
 dxTrgDir="${baseDir}/dxCopy"
 dxfuseTrgDir="${baseDir}/dxfuseCopy"
@@ -14,13 +12,6 @@ dxDirOnProject="benchmarks"
 #dxDirOnProject="correctness/small"
 
 ######################################################################
-
-function copy_with_dxfuse {
-    fname=$1
-    rm -f /tmp/X
-
-}
-
 
 main() {
     # Get all the DX environment variables, so that dxfuse can use them
@@ -36,8 +27,9 @@ main() {
     # Start the dxfuse daemon in the background, and wait for it to initilize.
     echo "Mounting dxfuse"
     sudo -E dxfuse $mountpoint $DX_PROJECT_CONTEXT_ID &
-
     sleep 1
+    projName=$(ls $mountpoint)
+    echo "projName = $projName"
 
     echo "Discover the benchmark files"
     files=$(ls $mountpoint/$projName/$dxDirOnProject)

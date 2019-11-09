@@ -24,7 +24,7 @@ const (
 	maxLen = 128
 )
 
-func nonceMake() *Nonce {
+func NewNonce() *Nonce {
 	nano := time.Now().UnixNano()
 	source := rand.NewSource(nano)
 	return &Nonce{

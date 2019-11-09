@@ -2,6 +2,7 @@ package dxfuse
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -128,13 +129,14 @@ func ReadManifest(fname string) (*Manifest, error) {
 
 
 func MakeManifestFromProjectIds(
+	ctx context.Context,
 	dxEnv dxda.DXEnvironment,
 	projectIds []string) (*Manifest, error) {
 	// describe the projects, retrieve metadata for them
 	tmpHttpClient := dxda.NewHttpClient(false)
 	projDescs := make(map[string]DxDescribePrj)
 	for _, pId := range projectIds {
-		pDesc, err := DxDescribeProject(tmpHttpClient, &dxEnv, pId)
+		pDesc, err := DxDescribeProject(ctx, tmpHttpClient, &dxEnv, pId)
 		if err != nil {
 			log.Printf("Could not describe project %s, check permissions", pId)
 			return nil, err
@@ -285,7 +287,7 @@ It is a node in the middle, which is illegal.
 	return retval, nil
 }
 
-func (m *Manifest) FillInMissingFields(dxEnv dxda.DXEnvironment) error {
+func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnvironment) error {
 	tmpHttpClient := dxda.NewHttpClient(false)
 
 	// Make a list of all the files that are missing details
@@ -302,7 +304,7 @@ func (m *Manifest) FillInMissingFields(dxEnv dxda.DXEnvironment) error {
 	for fId, _  := range fileIds {
 		fileIdList = append(fileIdList, fId)
 	}
-	dataObjs, err := DxDescribeBulkObjects(tmpHttpClient, &dxEnv, fileIdList)
+	dataObjs, err := DxDescribeBulkObjects(ctx, tmpHttpClient, &dxEnv, fileIdList, true)
 	if err != nil {
 		return err
 	}
@@ -334,7 +336,7 @@ func (m *Manifest) FillInMissingFields(dxEnv dxda.DXEnvironment) error {
 	// describe the projects, retrieve metadata for them
 	projDescs := make(map[string]DxDescribePrj)
 	for pId, _ := range projectIds {
-		pDesc, err := DxDescribeProject(tmpHttpClient, &dxEnv, pId)
+		pDesc, err := DxDescribeProject(ctx, tmpHttpClient, &dxEnv, pId)
 		if err != nil {
 			log.Printf("Could not describe project %s, check permissions", pId)
 			return err

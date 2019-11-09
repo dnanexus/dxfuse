@@ -111,15 +111,11 @@ def run_correctness(dx_proj, instance_types):
     applet = lookup_applet("dxfuse_correctness", dx_proj, "/applets")
     launch_and_wait(dx_proj, applet, instance_types)
 
-def run_download(dx_proj, instance_types):
-    applet = lookup_applet("dxfuse_download_only", dx_proj, "/applets")
-    launch_and_wait(dx_proj, applet, instance_types)
-
 def main():
     argparser = argparse.ArgumentParser(description="Run benchmarks on several instance types for dxfuse")
     argparser.add_argument("--project", help="DNAnexus project",
                            default="dxfuse_test_data")
-    argparser.add_argument("--test", help="which testing suite to run [benchmark, correctness, download]",
+    argparser.add_argument("--test", help="which testing suite to run [benchmark, correctness]",
                            default="correctness")
     argparser.add_argument("--size", help="how large should the test be? [small, large]",
                            default="small")
@@ -146,8 +142,6 @@ def main():
         run_benchmarks(dx_proj, instance_types)
     elif args.test == "correctness":
         run_correctness(dx_proj, instance_types)
-    elif args.test == "download":
-        run_download(dx_proj, instance_types)
     else:
         print("Unknown test {}".format(args.test))
         exit(1)

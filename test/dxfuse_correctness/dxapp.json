@@ -19,6 +19,15 @@
     "release": "16.04",
     "execDepends" : [
       {"name" : "tree", "package_manager" : "apt"}
-    ]
+    ],
+    "timeoutPolicy" : {
+      "*" : {
+        "hours" : 1
+      }
+    }
+  },
+  "access": {
+    "project": "CONTRIBUTE",
+    "allProjects": "VIEW"
   }
 }
