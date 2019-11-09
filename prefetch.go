@@ -148,8 +148,8 @@ func NewPrefetchGlobalState(verboseLevel int) *PrefetchGlobalState {
 	numCPUs := runtime.NumCPU()
 	numPrefetchThreads := MinInt(numCPUs * 2, maxNumPrefetchThreads)
 
-	// don't allow a single stream to hog all the threads.
-	maxNumChunksReadAhead := MinInt(8, numPrefetchThreads - 2)
+	// The number of read-ahead should be limited to 8
+	maxNumChunksReadAhead := MinInt(8, numPrefetchThreads)
 	maxNumChunksReadAhead = MaxInt(1, maxNumChunksReadAhead)
 
 	// calculate how much memory will be used in the worst cast.

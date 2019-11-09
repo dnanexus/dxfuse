@@ -1,8 +1,4 @@
-#!/bin/bash
-
-# The following line causes bash to exit at any point if there is any error
-# and to output each line as it is executed -- useful for debugging
-#set -e -o pipefail
+#!/bin/bash -e
 
 ######################################################################
 ## constants
@@ -59,8 +55,11 @@ function check_cmd_line_utils {
 
     for f in $files; do
         # we want to run these checks only on text files.
-        # can we devise a simple test for this? maybe
-        # $(file $f) == "ASCII TEXT" ?
+        if [[ $(file -b $f) != "ASCII TEXT" ]]; then
+            continue
+        fi
+
+        # Ok, this is a text file
         echo $f
 
         dxfuse_f=$dxfuseDir/$f
@@ -195,11 +194,13 @@ function check_parallel_cat {
     rm -r $target_dir
 }
 
-function check_small_file_write {
+# copy a file and check that platform has the correct content
+#
+function check_file_write_content {
     content="nothing much"
-    write_dir=$mountpoint/$projName
-
-    dx rm $projName:/A.txt >& /dev/null || true
+    target_dir="write_test_dir"
+    top_dir=$mountpoint/$projName
+    write_dir=$top_dir/$target_dir
 
     echo "write_dir = $write_dir"
 
@@ -209,18 +210,18 @@ function check_small_file_write {
 
     # wait for the file to achieve the closed state
     while true; do
-        file_state=$(dx describe $projName:/A.txt --json | grep state | awk '{ gsub("[,\"]", "", $2); print $2 }')
+        file_state=$(dx describe $projName:/$target_dir/A.txt --json | grep state | awk '{ gsub("[,\"]", "", $2); print $2 }')
         if [[ "$file_state" == "closed" ]]; then
             break
         fi
-        sleep 3
+        sleep 2
     done
 
     echo "file is closed"
-    dx ls -l $projName:/A.txt
+    dx ls -l $projName:/$target_dir/A.txt
 
     # compare the data
-    content2=$(dx cat $projName:/A.txt)
+    content2=$(dx cat $projName:/$target_dir/A.txt)
     if [[ "$content" == "$content2" ]]; then
         echo "correct"
     else
@@ -230,29 +231,15 @@ function check_small_file_write {
     fi
 }
 
-# copy files
+# copy files inside the mounted filesystem
+#
 function write_files {
     target_dir="write_test_dir"
     top_dir=$mountpoint/$projName
     write_dir=$top_dir/$target_dir
 
-    dx rm -r $projName:/$target_dir >& /dev/null || true
-    dx mkdir -p $projName:/$target_dir
-
     echo "write_dir = $write_dir"
     ls -l $write_dir
-
-    echo "copying small files"
-    cp $top_dir/correctness/small/*  $write_dir/
-    ls -l $write_dir
-
-    # compare resulting files
-    echo "comparing files"
-    files=$(find $top_dir/correctness/small -type f)
-    for f in $files; do
-        b_name=$(basename $f)
-        diff $f $write_dir/$b_name
-    done
 
     echo "copying large files"
     cp $top_dir/correctness/large/*  $write_dir/
@@ -264,6 +251,22 @@ function write_files {
         b_name=$(basename $f)
         diff $f $write_dir/$b_name
     done
+}
+
+# check that we can't write to VIEW only project
+#
+function write_to_read_only_project {
+    ls $mountpoint/dxfuse_test_read_only
+    (echo "hello" > $mountpoint/dxfuse_test_read_only/A.txt) >& cmd_results.txt || true
+    result=$(cat cmd_results.txt)
+
+    echo "result=$result"
+    if [[  $result =~ "Operation not permitted" ]]; then
+        echo "Correct, we should not be able to modify a project to which we have VIEW access"
+    else
+        echo "Incorrect, we managed to modify a project to which we have VIEW access"
+        exit 1
+    fi
 }
 
 main() {
@@ -280,48 +283,61 @@ main() {
 
     # Start the dxfuse daemon in the background, and wait for it to initilize.
     echo "Mounting dxfuse"
-    sudo -E dxfuse -verbose 1 $mountpoint $DX_PROJECT_CONTEXT_ID &
+    flags=""
+    if [[ $verbose != "" ]]; then
+        flags="-verbose 1"
+    fi
+    #sudo -E dxfuse $flags $mountpoint $DX_PROJECT_CONTEXT_ID &
+    sudo -E dxfuse $flags $mountpoint dxfuse_test_data dxfuse_test_read_only &
     dxfuse_pid=$!
     sleep 2
 
-#    echo "download recursively with dx download"
-#    dx download --no-progress -o $dxTrgDir -r  "$DX_PROJECT_CONTEXT_ID:/$dxDirOnProject"
-#
-#    # do not exit immediately if there are differences; we want to see the files
-#    # that aren't the same
-#    diff -r --brief $dxpyDir $dxfuseDir > diff.txt || true
-#    if [[ -s diff.txt ]]; then
-#        echo "Difference in basic file structure"
-#        cat diff.txt
-#        exit 1
-#    fi
-#
-#    # find
-#    echo "find"
-#    check_find
-#
-#    # grep
-#    echo "grep"
-#    check_grep
-#
-#    # tree
-#    echo "tree"
-#    check_tree
-#
-#    # ls
-#    echo "ls -R"
-#    check_ls
-#
-#    # find
-#    echo "head, tail, wc"
-#    check_cmd_line_utils
-#
-#    echo "parallel downloads"
-#    check_parallel_cat
-#
+    dx rm -r $projName:/write_test_dir >& /dev/null || true
+    dx mkdir -p $projName:/write_test_dir
+
+    echo "download recursively with dx download"
+    dx download --no-progress -o $dxTrgDir -r  dxfuse_test_data:/$dxDirOnProject
+
+    # do not exit immediately if there are differences; we want to see the files
+    # that aren't the same
+    diff -r --brief $dxpyDir $dxfuseDir > diff.txt || true
+    if [[ -s diff.txt ]]; then
+        echo "Difference in basic file structure"
+        cat diff.txt
+        exit 1
+    fi
+
+    # find
+    echo "find"
+    check_find
+
+    # grep
+    echo "grep"
+    check_grep
+
+    # tree
+    echo "tree"
+    check_tree
+
+    # ls
+    echo "ls -R"
+    check_ls
+
+    # find
+    echo "head, tail, wc"
+    check_cmd_line_utils
+
+    echo "parallel downloads"
+    check_parallel_cat
+
     echo "can write to a small file"
-    check_small_file_write
+    check_file_write_content
+
+    echo "can write several files to a directory"
     write_files
+
+    echo "can't write to read-only project"
+    write_to_read_only_project
 
     echo "unmounting dxfuse"
     sudo umount $mountpoint

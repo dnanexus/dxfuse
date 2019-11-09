@@ -483,11 +483,35 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 }
 
 
+func (fsys *Filesys) syncFile(ctx context.Context, handle fuseops.HandleID) error {
+	fh, ok := fsys.fhTable[handle]
+	if !ok {
+		// File handle doesn't exist
+		return fuse.EINVAL
+	}
+
+	if fh.fKind != RW_File {
+		// This isn't a writeable file, there is no dirty data to flush
+		return nil
+	}
+	if fh.fd == nil {
+		return nil
+	}
+	return fh.fd.Sync()
+}
+
 func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) error {
 	if fsys.options.Verbose {
 		log.Printf("Flush inode %d", op.Inode)
 	}
-	return nil
+	return fsys.syncFile(ctx, op.Handle)
+}
+
+func (fsys *Filesys) SyncFile(ctx context.Context, op *fuseops.SyncFileOp) error {
+	if fsys.options.Verbose {
+		log.Printf("Sync inode %d", op.Inode)
+	}
+	return fsys.syncFile(ctx, op.Handle)
 }
 
 func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseFileHandleOp) error {
@@ -547,7 +571,9 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 
 	case RO_LocalCopy:
 		// Read-only file with a local copy
-		fh.fd.Close()
+		if fh.fd != nil {
+			fh.fd.Close()
+		}
 		return nil
 
 	default:

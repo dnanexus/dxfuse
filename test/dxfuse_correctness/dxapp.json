@@ -27,6 +27,7 @@
     }
   },
   "access": {
-    "project": "CONTRIBUTE"
+    "project": "CONTRIBUTE",
+    "allProjects": "VIEW"
   }
 }
