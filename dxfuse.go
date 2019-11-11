@@ -99,9 +99,10 @@ func NewDxfuse(
 	}
 
 
-	// initialize background upload state
-	fsys.fugs = NewFileUploadGlobalState(options, dxEnv, projId2Desc)
-
+	if !options.ReadOnly {
+		// initialize background upload state
+		fsys.fugs = NewFileUploadGlobalState(options, dxEnv, projId2Desc)
+	}
 	return fsys, nil
 }
 
@@ -260,6 +261,9 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 
 	if fsys.options.Verbose {
 		log.Printf("Create(%s)", op.Name)
+	}
+	if fsys.options.ReadOnly {
+		return syscall.EPERM
 	}
 
 	// the parent is supposed to be a directory
@@ -707,6 +711,9 @@ func (fsys *Filesys) findWritableFileHandle(handle fuseops.HandleID) (*FileHandl
 // A file is created locally, and writes go to the local location. When
 // the file is closed, it becomes read only, and is then uploaded to the cloud.
 func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) error {
+	if fsys.options.ReadOnly {
+		return syscall.EPERM
+	}
 	fh,err := fsys.findWritableFileHandle(op.Handle)
 	if err != nil {
 		return err
