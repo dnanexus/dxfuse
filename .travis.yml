@@ -30,11 +30,11 @@ install:
 - go get github.com/dnanexus/dxda
 - go install github.com/dnanexus/dxda
 - go install github.com/dnanexus/dxda/cmd/dx-download-agent
-- go get bazil.org/fuse
+- go get -u github.com/jacobsa/fuse
 - go get golang.org/x/net/context
 - go get github.com/dnanexus/dxfuse
 - go install github.com/dnanexus/dxfuse
-- go build -o $GOPATH/bin/dxfuse $GOPATH/src/github.com/dnanexus/dxfuse/cmd/main.go
+- go build -o $GOPATH/bin/dxfuse $GOPATH/src/github.com/dnanexus/dxfuse/main/main.go
 
 script:
   - $GOPATH/bin/dxfuse --help
