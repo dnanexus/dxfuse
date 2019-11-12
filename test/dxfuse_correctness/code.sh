@@ -269,6 +269,33 @@ function write_to_read_only_project {
     fi
 }
 
+# create directory on mounted FS
+function create_dir {
+    top_dir=$mountpoint/$projName
+    write_dir="write_test_dir2"
+
+    mkdir $write_dir
+
+    # copy files to new directory
+    echo "copying small files"
+    cp $top_dir/correctness/small/*  $write_dir
+
+    # compare resulting files
+    echo "comparing files"
+    files=$(find $top_dir/correctness/small -type f)
+    for f in $files; do
+        b_name=$(basename $f)
+        diff $f $write_dir/$b_name
+    done
+
+    echo "making empty new sub-directories"
+    mkdir $write_dir/E
+    mkdir $write_dir/F
+    echo "catch 22" > $write_dir/E/Z.txt
+
+    tree $top_dir/$write_dir
+}
+
 main() {
     # Get all the DX environment variables, so that dxfuse can use them
     echo "loading the dx environment"
@@ -293,51 +320,55 @@ main() {
     sleep 2
 
     dx rm -r $projName:/write_test_dir >& /dev/null || true
+    dx rm -r $projName:/write_test_dir2 >& /dev/null || true
     dx mkdir -p $projName:/write_test_dir
 
-    echo "download recursively with dx download"
-    dx download --no-progress -o $dxTrgDir -r  dxfuse_test_data:/$dxDirOnProject
-
-    # do not exit immediately if there are differences; we want to see the files
-    # that aren't the same
-    diff -r --brief $dxpyDir $dxfuseDir > diff.txt || true
-    if [[ -s diff.txt ]]; then
-        echo "Difference in basic file structure"
-        cat diff.txt
-        exit 1
-    fi
-
-    # find
-    echo "find"
-    check_find
-
-    # grep
-    echo "grep"
-    check_grep
-
-    # tree
-    echo "tree"
-    check_tree
-
-    # ls
-    echo "ls -R"
-    check_ls
-
-    # find
-    echo "head, tail, wc"
-    check_cmd_line_utils
-
-    echo "parallel downloads"
-    check_parallel_cat
-
-    echo "can write to a small file"
-    check_file_write_content
-
-    echo "can write several files to a directory"
-    write_files
-
-    echo "can't write to read-only project"
-    write_to_read_only_project
+#    echo "download recursively with dx download"
+#    dx download --no-progress -o $dxTrgDir -r  dxfuse_test_data:/$dxDirOnProject
+#
+#    # do not exit immediately if there are differences; we want to see the files
+#    # that aren't the same
+#    diff -r --brief $dxpyDir $dxfuseDir > diff.txt || true
+#    if [[ -s diff.txt ]]; then
+#        echo "Difference in basic file structure"
+#        cat diff.txt
+#        exit 1
+#    fi
+#
+#    # find
+#    echo "find"
+#    check_find
+#
+#    # grep
+#    echo "grep"
+#    check_grep
+#
+#    # tree
+#    echo "tree"
+#    check_tree
+#
+#    # ls
+#    echo "ls -R"
+#    check_ls
+#
+#    # find
+#    echo "head, tail, wc"
+#    check_cmd_line_utils
+#
+#    echo "parallel downloads"
+#    check_parallel_cat
+#
+#    echo "can write to a small file"
+#    check_file_write_content
+#
+#    echo "can write several files to a directory"
+#    write_files
+#
+#    echo "can't write to read-only project"
+#    write_to_read_only_project
+#
+    echo "create directory"
+    create_dir
 
     echo "unmounting dxfuse"
     sudo umount $mountpoint

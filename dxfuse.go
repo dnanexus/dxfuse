@@ -135,6 +135,25 @@ func (fsys *Filesys) Shutdown() {
 }
 
 
+func (fsys *Filesys) dxErrorToFilesystemError(dxErr dxda.DxError) error {
+	switch dxErr.EType {
+	case "InvalidInput":
+		return fuse.EINVAL
+	case "PermissionDenied":
+		return syscall.EPERM
+	case "InvalidType":
+		return fuse.EINVAL
+	case "ResourceNotFound":
+		return fuse.ENOENT
+	case "Unauthorized":
+		return syscall.EPERM
+	default:
+		log.Printf("unexpected dnanexus error type (%s), returning EIO which will unmount the filesystem",
+			dxErr.EType)
+		return fuse.EIO
+	}
+}
+
 func (fsys *Filesys) StatFS(ctx context.Context, op *fuseops.StatFSOp) error {
 	return nil
 }
@@ -144,7 +163,7 @@ func (fsys *Filesys) calcExpirationTime(a fuseops.InodeAttributes) time.Time {
 		// A file created locally. It is probably being written to,
 		// so there is no sense in caching for a long time
 		if fsys.options.Verbose {
-			log.Printf("Setting zero attribute expiration time")
+			log.Printf("Setting small attribute expiration time")
 		}
 
 		return time.Now().Add(1 * time.Second)
@@ -211,6 +230,175 @@ func (fsys *Filesys) GetInodeAttributes(ctx context.Context, op *fuseops.GetInod
 	op.Attributes = node.GetAttrs()
 	op.AttributesExpiration = fsys.calcExpirationTime(op.Attributes)
 
+	return nil
+}
+
+func (fsys *Filesys) MkDir(ctx context.Context, op *fuseops.MkDirOp) error {
+	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
+
+	if fsys.options.Verbose {
+		log.Printf("Create(%s)", op.Name)
+	}
+	if fsys.options.ReadOnly {
+		return syscall.EPERM
+	}
+
+	// the parent is supposed to be a directory
+	node, ok, err := fsys.mdb.LookupByInode(ctx, int64(op.Parent))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		// parent directory does not exist
+		return fuse.ENOENT
+	}
+	parentDir := node.(Dir)
+
+	// Check if the directory exists
+	_, ok, err = fsys.mdb.LookupInDir(ctx, &parentDir, op.Name)
+	if err != nil {
+		return err
+	}
+	if ok {
+		// The directory already exists
+		return fuse.EEXIST
+	}
+
+	// The mode must be 777 for fuse to work properly
+	mode := os.ModeDir | os.ModePerm
+
+	// create the directory on dnanexus
+	httpClient := <- fsys.httpClientPool
+	defer func() {
+		fsys.httpClientPool <- httpClient
+	} ()
+	folderFullPath := parentDir.ProjFolder + "/" + op.Name
+	err = DxFolderNew(ctx, httpClient, &fsys.dxEnv, parentDir.ProjId, folderFullPath)
+	if err != nil {
+		switch err.(type) {
+		case *dxda.DxError:
+			// A dnanexus error
+			dxErr := err.(*dxda.DxError)
+			log.Printf("Error in creating directory (%s:%s) on dnanexus: %s",
+				parentDir.ProjId, folderFullPath, dxErr.Error())
+			return fsys.dxErrorToFilesystemError(*dxErr)
+		default:
+			// A "regular" error
+			return err
+		}
+	}
+
+	// Add the directory to the database
+	now := time.Now()
+	nowSeconds := now.Unix()
+	dnode, err := fsys.mdb.CreateDir(
+		parentDir.ProjId,
+		folderFullPath,
+		nowSeconds,
+		nowSeconds,
+		mode,
+		parentDir.FullPath + "/" + op.Name)
+	if err != nil {
+		return err
+	}
+
+	// Fill in the response, the details for the new subdirectory
+	childAttrs := fuseops.InodeAttributes{
+		Nlink:  1,
+		Mode:   mode,
+		Atime:  now,
+		Mtime:  now,
+		Ctime:  now,
+		Crtime: now,
+		Uid:    fsys.options.Uid,
+		Gid:    fsys.options.Gid,
+	}
+	tWindow := fsys.calcExpirationTime(childAttrs)
+	op.Entry = fuseops.ChildInodeEntry{
+		Child : fuseops.InodeID(dnode),
+		Attributes : childAttrs,
+		AttributesExpiration : tWindow,
+		EntryExpiration : tWindow,
+	}
+	return nil
+}
+
+
+func (fsys *Filesys) RmDir(ctx context.Context, op *fuseops.RmDirOp) error {
+	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
+
+	if fsys.options.Verbose {
+		log.Printf("Create(%s)", op.Name)
+	}
+	if fsys.options.ReadOnly {
+		return syscall.EPERM
+	}
+
+	// the parent is supposed to be a directory
+	node, ok, err := fsys.mdb.LookupByInode(ctx, int64(op.Parent))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		// parent directory does not exist
+		return fuse.ENOENT
+	}
+	parentDir := node.(Dir)
+
+	// Check if the directory exists
+	childNode, ok, err := fsys.mdb.LookupInDir(ctx, &parentDir, op.Name)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		// The directory does not exist
+		return fuse.ENOENT
+	}
+
+	var childDir Dir
+	switch childNode.(type) {
+	case File:
+		return fuse.ENOTDIR
+	case Dir:
+		childDir = childNode.(Dir)
+	}
+
+	// check that the directory is empty
+	dentries, err := fsys.readEntireDir(ctx, childDir)
+	if err != nil {
+		return err
+	}
+	if len(dentries) > 0 {
+		return fuse.ENOTEMPTY
+	}
+
+	// The directory exists and is empty, we can remove it.
+	httpClient := <- fsys.httpClientPool
+	defer func() {
+		fsys.httpClientPool <- httpClient
+	} ()
+	folderFullPath := parentDir.ProjFolder + "/" + op.Name
+	err = DxFolderRemove(ctx, httpClient, &fsys.dxEnv, parentDir.ProjId, folderFullPath)
+	if err != nil {
+		switch err.(type) {
+		case *dxda.DxError:
+			// A dnanexus error
+			dxErr := err.(*dxda.DxError)
+			log.Printf("Error in removing directory (%s:%s) on dnanexus: %s",
+				parentDir.ProjId, folderFullPath, dxErr.Error())
+			return fsys.dxErrorToFilesystemError(*dxErr)
+		default:
+			// A "regular" error
+			return err
+		}
+	}
+
+	// Remove the directory from the database
+	if err := fsys.mdb.RemoveEmptyDir(childDir.Inode); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -309,22 +497,7 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 			log.Printf("Error in creating file (%s:%s/%s) on dnanexus: %s",
 				parentDir.ProjId, parentDir.ProjFolder, op.Name,
 				dxErr.Error())
-			switch dxErr.EType {
-			case "InvalidInput":
-				return fuse.EINVAL
-			case "PermissionDenied":
-				return syscall.EPERM
-			case "InvalidType":
-				return fuse.EINVAL
-			case "ResourceNotFound":
-				return fuse.ENOENT
-			case "Unauthorized":
-				return syscall.EPERM
-			default:
-				log.Printf("unexpected dnanexus error type (%s), returning EIO which will unmount the filesystem",
-					dxErr.EType)
-				return fuse.EIO
-			}
+			return fsys.dxErrorToFilesystemError(*dxErr)
 		default:
 			// A "regular" error
 			return err
@@ -374,6 +547,10 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 		fd : writer,
 	}
 	op.Handle = fsys.insertIntoFileHandleTable(&fh)
+	return nil
+}
+
+func (fsys *Filesys) Unlink(ctx context.Context, op *fuseops.UnlinkOp) error {
 	return nil
 }
 

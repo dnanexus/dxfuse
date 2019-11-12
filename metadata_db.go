@@ -511,7 +511,7 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 }
 
 // Create an entry representing one remote file. This has
-// two use cases:
+// several use cases:
 //  1) Create a singleton file from the manifest
 //  2) Create a new file, and upload it later to the platform
 //  3) Discover a file in a directory, which may actually be a link to another file.
@@ -628,6 +628,62 @@ func (mdb *MetadataDb) createEmptyDir(
 		return 0, err
 	}
 	return inode, nil
+}
+
+// Assumption: the directory does not already exist in the database.
+func (mdb *MetadataDb) CreateDir(
+	projId string,
+	projFolder string,
+	ctime int64,
+	mtime int64,
+	mode os.FileMode,
+	dirPath string) (int64, error) {
+	txn, err := mdb.db.Begin()
+	if err != nil {
+		log.Printf("CreateDir: error opening transaction")
+		return 0, err
+	}
+	dnode, err := mdb.createEmptyDir(txn, projId, projFolder, ctime, mtime, mode, dirPath, true)
+	if err != nil {
+		txn.Rollback()
+		log.Printf("error in create dir, rolling back transaction")
+		return 0, err
+	}
+	if err := txn.Commit(); err != nil {
+		log.Printf("CreateDir: error in commit")
+		return 0, err
+	}
+	return dnode, nil
+}
+
+// Remove a directory from the database
+func (mdb *MetadataDb) RemoveEmptyDir(inode int64) error {
+	txn, err := mdb.db.Begin()
+	if err != nil {
+		return err
+	}
+
+	sqlStmt := fmt.Sprintf(`
+                DELETE FROM directories
+                WHERE inode='%d';`,
+		inode)
+	if _, err := txn.Exec(sqlStmt); err != nil {
+		txn.Rollback()
+		log.Printf("RemoveEmptyDir(%d): error in directories table removal", inode)
+		return err
+	}
+
+	sqlStmt = fmt.Sprintf(`
+                DELETE FROM namespace
+                WHERE inode='%d';`,
+		inode)
+	if _, err := txn.Exec(sqlStmt); err != nil {
+		txn.Rollback()
+		log.Printf("RemoveEmptyDir(%d): error in namespace table removal", inode)
+		return err
+	}
+
+	return txn.Commit()
 }
 
 // Update the directory populated flag to TRUE

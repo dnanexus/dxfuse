@@ -153,10 +153,10 @@ func NewPrefetchGlobalState(verboseLevel int) *PrefetchGlobalState {
 	maxNumChunksReadAhead = MaxInt(1, maxNumChunksReadAhead)
 
 	// calculate how much memory will be used in the worst cast.
-	// Each stream uses three chunks, which could go as high as prefetchMaxIoSize.
-	// In addition, we are spreading around maxNumChunksReadAhead chunks.
-	streamBytes := 3 * prefetchMaxIoSize
-	totalMemoryBytes := streamBytes * maxNumEntriesInTable
+	// - Each stream uses two chunks.
+	// - In addition, we are spreading around [maxNumChunksReadAhead] chunks.
+	// Each chunk could be as large as [prefetchMaxIoSize].
+	totalMemoryBytes := 2 * maxNumEntriesInTable * prefetchMaxIoSize
 	totalMemoryBytes += maxNumChunksReadAhead * prefetchMaxIoSize
 
 	log.Printf("maximal memory usage: %dMiB", totalMemoryBytes / MiB)
@@ -425,7 +425,7 @@ func (pgs *PrefetchGlobalState) newPrefetchFileMetadata(fh *FileHandle) *Prefetc
 	entry.cache = Cache{
 		prefetchIoSize : prefetchMinIoSize,
 		numChunksReadAhead : 1,
-		maxNumIovecs : 3,
+		maxNumIovecs : 2,
 		startByte : 0,
 		endByte : prefetchMinIoSize - 1,
 		iovecs : make([](*Iovec), 1),
