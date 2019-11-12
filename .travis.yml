@@ -27,14 +27,11 @@ addons:
 install:
 - mkdir -p $GOPATH
 - go get github.com/google/subcommands
-- go install github.com/google/subcommands
 - go get github.com/dnanexus/dxda
-- go install github.com/dnanexus/dxda
-- go install github.com/dnanexus/dxda/cmd/dx-download-agent
-- go get -u github.com/jacobsa/fuse
+- go get github.com/jacobsa/fuse
 - go get github.com/dnanexus/dxfuse
 - tree $GOPATH
-- go build -o $GOPATH/bin/dxfuse $GOPATH/src/github.com/dnanexus/dxfuse/main/main.go
+- go build -o $GOPATH/bin/dxfuse $GOPATH/src/github.com/dnanexus/dxfuse/cli/main.go
 
 script:
   - $GOPATH/bin/dxfuse --help
