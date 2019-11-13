@@ -640,18 +640,18 @@ func (mdb *MetadataDb) CreateDir(
 	dirPath string) (int64, error) {
 	txn, err := mdb.db.Begin()
 	if err != nil {
-		log.Printf("CreateDir: error opening transaction")
-		return 0, err
+		log.Printf(err.Error())
+		return 0, fmt.Errorf("CreateDir: error opening transaction")
 	}
 	dnode, err := mdb.createEmptyDir(txn, projId, projFolder, ctime, mtime, mode, dirPath, true)
 	if err != nil {
 		txn.Rollback()
-		log.Printf("error in create dir, rolling back transaction")
-		return 0, err
+		log.Printf(err.Error())
+		return 0, fmt.Errorf("error in create dir, rolling back transaction")
 	}
 	if err := txn.Commit(); err != nil {
-		log.Printf("CreateDir: error in commit")
-		return 0, err
+		log.Printf(err.Error())
+		return 0, fmt.Errorf("CreateDir: error in commit")
 	}
 	return dnode, nil
 }
@@ -1147,6 +1147,62 @@ func (mdb *MetadataDb) CreateFile(
 		Nlink : 1,
 		InlineData : localPath,
 	}, nil
+}
+
+// reduce link count by one. If it reaches zero, delete the file.
+//
+// TODO: take into account the case of ForgetInode, and files that are open, but unlinked.
+func (mdb *MetadataDb) Unlink(ctx context.Context, file File) error {
+	txn, err := mdb.db.Begin()
+	if err != nil {
+		log.Printf(err.Error())
+		return fmt.Errorf("Unlink error opening transaction")
+	}
+
+	nlink := file.Nlink - 1
+	if nlink > 0 {
+		// reduce one from the link count. It is still positive,
+		// so there is nothing else to do
+		sqlStmt := fmt.Sprintf(`
+  		           UPDATE data_objects
+                           SET nlink = '%d'
+                           WHERE inode = '%d'`,
+			nlink, file.Inode)
+		if _, err := txn.Exec(sqlStmt); err != nil {
+			log.Printf(err.Error())
+			return fmt.Errorf("could not reduce the link count for inode=%d to %d",
+				file.Inode, nlink)
+		}
+	} else {
+		// the link hit zero, we can remove the file
+		sqlStmt := fmt.Sprintf(`
+                           DELETE FROM namespace
+                           WHERE inode='%d';`,
+			file.Inode)
+		if _, err := txn.Exec(sqlStmt); err != nil {
+			log.Printf(err.Error())
+			return fmt.Errorf("could not delete row for inode=%d from the namespace table",
+				file.Inode, nlink)
+		}
+
+		sqlStmt = fmt.Sprintf(`
+                           DELETE FROM data_objects
+                           WHERE inode='%d';`,
+			file.Inode)
+		if _, err := txn.Exec(sqlStmt); err != nil {
+			log.Printf(err.Error())
+			return fmt.Errorf("could not delete row for inode=%d from the data_objects table",
+				file.Inode)
+		}
+
+	}
+
+	if err := txn.Commit(); err != nil {
+		log.Printf(err.Error())
+		return fmt.Errorf("Unlink inode=%dcommit failed", file.Inode)
+	}
+
+	return nil
 }
 
 func (mdb *MetadataDb) UpdateFile(

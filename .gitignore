@@ -2,3 +2,4 @@ main
 __pycache__
 dxfs2
 dxfuse
+ENV

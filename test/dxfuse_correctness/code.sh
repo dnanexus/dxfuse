@@ -296,6 +296,42 @@ function create_dir {
     tree $top_dir/$write_dir
 }
 
+# create directory on mounted FS
+function create_remove_dir {
+    top_dir=$mountpoint/$projName
+    write_dir="jumble"
+
+    mkdir $write_dir
+    rmdir $write_dir
+    mkdir $write_dir
+
+    # copy files
+    echo "copying small files"
+    cp $top_dir/correctness/small/*  $write_dir/
+
+    # compare resulting files
+    echo "comparing files"
+    files=$(find $top_dir/correctness/small -type f)
+    for f in $files; do
+        b_name=$(basename $f)
+        diff $f $write_dir/$b_name
+    done
+
+    echo "making empty new sub-directories"
+    mkdir $write_dir/E
+    mkdir $write_dir/F
+    echo "catch 22" > $write_dir/E/Z.txt
+
+    tree $write_dir
+
+    echo "letting the files complete uploading"
+    sleep 10
+    dx ls -l $projectName:/$target_dir
+
+    echo "removing directory recursively"
+    rm -rf $write_dir
+}
+
 main() {
     # Get all the DX environment variables, so that dxfuse can use them
     echo "loading the dx environment"
@@ -369,6 +405,9 @@ main() {
 #
     echo "create directory"
     create_dir
+
+    echo "create/remove directory"
+    create_remove_dir
 
     echo "unmounting dxfuse"
     sudo umount $mountpoint

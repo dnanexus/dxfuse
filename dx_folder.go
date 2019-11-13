@@ -97,3 +97,48 @@ func DxFolderRemove(
 
 	return nil
 }
+
+
+type RequestRemoveObjects struct {
+	Objects   []string `json:"objects"`
+	Force     bool   `json:"force"`
+}
+
+type ReplyRemoveObjects struct {
+	Id string `json:"id"`
+}
+
+
+func DxRemoveObjects(
+	ctx context.Context,
+	httpClient *retryablehttp.Client,
+	dxEnv *dxda.DXEnvironment,
+	projId string,
+	objectIds []string) error {
+
+	var request RequestRemoveObjects
+	request.Objects = objectIds
+	request.Force = false
+
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return err
+	}
+	repJs, err := dxda.DxAPI(
+		ctx,
+		httpClient,
+		NumRetriesDefault,
+		dxEnv,
+		fmt.Sprintf("%s/removeObjects", projId),
+		string(payload))
+	if err != nil {
+		return err
+	}
+
+	var reply ReplyFolderRemove
+	if err := json.Unmarshal(repJs, &reply); err != nil {
+		return err
+	}
+
+	return nil
+}
