@@ -110,15 +110,11 @@ type PrefetchFileMetadata struct {
 	cond                *sync.Cond
 }
 
-func time2string(t time.Time) string {
-	return fmt.Sprintf("%02d:%02d:%02d", t.Hour(), t.Minute(), t.Second())
-}
-
 // write a log message, and add a header
 func (pfm PrefetchFileMetadata) log(a string, args ...interface{}) {
 	msg := fmt.Sprintf(a, args...)
 	now := time.Now()
-	log.Printf("%s prefetch(%s): %s", time2string(now), pfm.fh.f.Name, msg)
+	log.Printf("%s prefetch(%s): %s", Time2string(now), pfm.fh.f.Name, msg)
 }
 
 // global limits
@@ -137,7 +133,7 @@ type PrefetchGlobalState struct {
 func (pgs PrefetchGlobalState) log(a string, args ...interface{}) {
 	msg := fmt.Sprintf(a, args...)
 	now := time.Now()
-	log.Printf("%s prefetch: %s", time2string(now), msg)
+	log.Printf("%s prefetch: %s", Time2string(now), msg)
 }
 
 func NewPrefetchGlobalState(verboseLevel int) *PrefetchGlobalState {

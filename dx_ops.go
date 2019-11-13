@@ -2,7 +2,9 @@ package dxfuse
 
 import (
 	"context"
+	"crypto/md5"
 	"encoding/json"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"time"
@@ -240,4 +242,57 @@ func DxFileCloseAndWait(
 		}
 	}
 	return nil
+}
+
+type RequestUploadChunk struct {
+	Size  int     `json:"size"`
+	Index int     `json:"index"`
+	Md5   string  `json:"md5"`
+}
+
+type ReplyUploadChunk struct {
+	Url     string            `json:"url"`
+	Expires int64             `json:"expires"`
+	Headers map[string]string `json:"headers"`
+}
+
+func dxFileUploadPart(
+	ctx context.Context,
+	httpClient *retryablehttp.Client,
+	dxEnv *dxda.DXEnvironment,
+	fileId string,
+	index int,
+	data []byte) error {
+
+	md5Sum := md5.Sum(data)
+	uploadReq := RequestUploadChunk{
+		Size: len(data),
+		Index: index,
+		Md5: hex.EncodeToString(md5Sum[:]),
+	}
+	log.Printf("%v", uploadReq)
+
+	reqJson, err := json.Marshal(uploadReq)
+	if err != nil {
+		return err
+	}
+	replyJs, err := dxda.DxAPI(
+		ctx,
+		httpClient,
+		NumRetriesDefault,
+		dxEnv,
+		fmt.Sprintf("%s/upload", fileId),
+		string(reqJson))
+	if err != nil {
+		log.Printf(err.Error())
+		return err
+	}
+
+	var reply ReplyUploadChunk
+	if err = json.Unmarshal(replyJs, &reply); err != nil {
+		return err
+	}
+
+	_, err = dxda.DxHttpRequest(ctx, httpClient, NumRetriesDefault, "PUT", reply.Url, reply.Headers, data)
+	return err
 }

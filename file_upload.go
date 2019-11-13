@@ -2,12 +2,8 @@ package dxfuse
 
 import (
 	"context"
-	"crypto/md5"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"sync"
@@ -17,18 +13,6 @@ import (
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/jacobsa/fuse"
 )
-
-type RequestUploadChunk struct {
-	Size  int     `json:"size"`
-	Index int     `json:"index"`
-	Md5   string  `json:"md5"`
-}
-
-type ReplyUploadChunk struct {
-	Url     string            `json:"url"`
-	Expires int64             `json:"expires"`
-	Headers map[string]string `json:"headers"`
-}
 
 type Chunk struct {
 	fileId  string
@@ -55,6 +39,12 @@ type FileUploadGlobalState struct {
 	fileUploadQueue chan FileUploadReq
 	chunkQueue      chan *Chunk
 	wg              sync.WaitGroup
+	mutex           sync.Mutex
+	mdb            *MetadataDb
+
+	// list of files undergoing upload. If the flag is true, the file should be
+	// uploaded. If it is false, the upload was cancelled.
+	ongoingOps      map[string]bool
 }
 
 const (
@@ -67,47 +57,6 @@ const (
 	fileCloseWaitTime = 5 * time.Second
 	fileCloseMaxWaitTime = 10 * time.Minute
 )
-
-func dxFileUploadPart(
-	ctx context.Context,
-	httpClient *retryablehttp.Client,
-	dxEnv *dxda.DXEnvironment,
-	fileId string,
-	index int,
-	data []byte) error {
-
-	md5Sum := md5.Sum(data)
-	uploadReq := RequestUploadChunk{
-		Size: len(data),
-		Index: index,
-		Md5: hex.EncodeToString(md5Sum[:]),
-	}
-	log.Printf("%v", uploadReq)
-
-	reqJson, err := json.Marshal(uploadReq)
-	if err != nil {
-		return err
-	}
-	replyJs, err := dxda.DxAPI(
-		ctx,
-		httpClient,
-		NumRetriesDefault,
-		dxEnv,
-		fmt.Sprintf("%s/upload", fileId),
-		string(reqJson))
-	if err != nil {
-		log.Printf(err.Error())
-		return err
-	}
-
-	var reply ReplyUploadChunk
-	if err = json.Unmarshal(replyJs, &reply); err != nil {
-		return err
-	}
-
-	_, err = dxda.DxHttpRequest(ctx, httpClient, NumRetriesDefault, "PUT", reply.Url, reply.Headers, data)
-	return err
-}
 
 func NewFileUploadGlobalState(
 	options Options,
@@ -124,9 +73,12 @@ func NewFileUploadGlobalState(
 		projId2Desc : projId2Desc,
 		fileUploadQueue : make(chan FileUploadReq),
 
-		// limit the size of the chunk queue, so we don't spend
+		// limit the size of the chunk queue, so we don't
 		// have too many chunks stored in memory.
 		chunkQueue : make(chan *Chunk, chunkQueueSize),
+
+		mutex : sync.Mutex{},
+		ongoingOps : make(map[string]bool, 0),
 	}
 
 	// Create a bunch of threads
@@ -143,6 +95,13 @@ func NewFileUploadGlobalState(
 	return fugs
 }
 
+// write a log message, and add a header
+func (fugs FileUploadGlobalState) log(a string, args ...interface{}) {
+	msg := fmt.Sprintf(a, args...)
+	now := time.Now()
+	log.Printf("%s file_upload: %s", Time2string(now), msg)
+}
+
 func (fugs *FileUploadGlobalState) Shutdown() {
 	// signal all upload threads to stop
 	close(fugs.fileUploadQueue)
@@ -152,6 +111,16 @@ func (fugs *FileUploadGlobalState) Shutdown() {
 	fugs.wg.Wait()
 }
 
+func (fugs *FileUploadGlobalState) CancelUpload(fileId string) {
+	fugs.mutex.Lock()
+	fugs.mutex.Unlock()
+	_, ok := fugs.ongoingOps[fileId]
+	if !ok {
+		// The file is not being uploaded. We are done.
+		return
+	}
+	fugs.ongoingOps[fileId] = false
+}
 
 // A worker dedicated to performing data-upload operations
 func (fugs *FileUploadGlobalState) bulkDataWorker() {
@@ -165,7 +134,7 @@ func (fugs *FileUploadGlobalState) bulkDataWorker() {
 			return
 		}
 		if fugs.options.Verbose {
-			log.Printf("Uploading chunk=%d len=%d", chunk.index, len(chunk.data))
+			fugs.log("Uploading chunk=%d len=%d", chunk.index, len(chunk.data))
 		}
 
 		// upload the data, and store the error code in the chunk
@@ -239,7 +208,7 @@ func (fugs *FileUploadGlobalState) calcPartSize(param FileUploadParameters, file
 func readFileExtent(filename string, ofs int64, len int) ([]byte, error) {
 	fReader, err := os.Open(filename)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer fReader.Close()
 
@@ -248,7 +217,7 @@ func readFileExtent(filename string, ofs int64, len int) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if int64(recvLen) != len {
+	if recvLen != len {
 		panic(fmt.Sprintf("short read, got %d bytes instead of %d",
 			recvLen, len))
 	}
@@ -270,7 +239,7 @@ func (fugs *FileUploadGlobalState) uploadFileData(
 		// This is a small file, upload it synchronously.
 		// This ensures that only large chunks are uploaded by the bulk-threads,
 		// improving fairness.
-		data, err := readFileExtent(upReq.localPath, ofs, upReq.fileSize)
+		data, err := readFileExtent(upReq.localPath, 0, int(upReq.fileSize))
 		if err != nil {
 			return err
 		}
@@ -290,7 +259,7 @@ func (fugs *FileUploadGlobalState) uploadFileData(
 	for ofs <= fileEndOfs {
 		chunkEndOfs := MinInt64(ofs + upReq.partSize - 1, fileEndOfs)
 		chunkLen := chunkEndOfs - ofs
-		buf, err := readFileExtent(upReq.localPath, ofs, chunkLen)
+		buf, err := readFileExtent(upReq.localPath, ofs, int(chunkLen))
 		if err != nil {
 			return err
 		}
@@ -318,7 +287,7 @@ func (fugs *FileUploadGlobalState) uploadFileData(
 	var finalErr error
 	for _, chunk := range(fileParts) {
 		if chunk.err != nil {
-			log.Printf("failed to upload file %s part %d, error=%s",
+			fugs.log("failed to upload file %s part %d, error=%s",
 				chunk.fileId, chunk.index, chunk.err.Error())
 			finalErr = chunk.err
 		}
@@ -329,7 +298,7 @@ func (fugs *FileUploadGlobalState) uploadFileData(
 
 func (fugs *FileUploadGlobalState) createEmptyFile(
 	httpClient *retryablehttp.Client,
-	upReq FileUploadReq) {
+	upReq FileUploadReq) error {
 	// The file is empty
 	if upReq.uploadParams.EmptyLastPartAllowed {
 		// we need to upload an empty part, only
@@ -337,17 +306,54 @@ func (fugs *FileUploadGlobalState) createEmptyFile(
 		ctx := context.TODO()
 		err := dxFileUploadPart(ctx, httpClient, &fugs.dxEnv, upReq.id, 1, make([]byte, 0))
 		if err != nil {
-			log.Printf("error uploading empty chunk to file %s, error = %s",
-				upReq.id, err.Error())
-			return
+			fugs.log("error uploading empty chunk to file %s", upReq.id)
+			return err
 		}
 	} else {
 		// The file can have no parts.
 	}
+	return nil
+}
+
+func (fugs *FileUploadGlobalState) uploadFileDataAndWait(
+	client *retryablehttp.Client,
+	upReq FileUploadReq) error {
+	if fugs.options.Verbose {
+		fugs.log("Upload file-size=%d part-size=%d", upReq.fileSize, upReq.partSize)
+	}
+
+	if upReq.fileSize == 0 {
+		// Create an empty file
+		if err := fugs.createEmptyFile(client, upReq); err != nil {
+			return err
+		}
+	} else {
+		// loop over the parts, and upload them
+		if err := fugs.uploadFileData(client, upReq); err != nil {
+			return err
+		}
+	}
 
 	if fugs.options.Verbose {
-		log.Printf("Closing %s", upReq.id)
+		fugs.log("Closing %s", upReq.id)
 	}
+	ctx := context.TODO()
+	return DxFileCloseAndWait(ctx, client, &fugs.dxEnv, upReq.id, fugs.options.Verbose)
+}
+
+// check if the upload has been cancelled
+func (fugs *FileUploadGlobalState) shouldUpload(fileid string) bool {
+	fugs.mutex.Lock()
+	defer fugs.mutex.Unlock()
+
+	return fugs.ongoingOps[fileid]
+}
+
+func (fugs *FileUploadGlobalState) uploadComplete(fileid string) {
+	fugs.mutex.Lock()
+	defer fugs.mutex.Unlock()
+
+	delete(fugs.ongoingOps, fileid)
 }
 
 func (fugs *FileUploadGlobalState) createFileWorker() {
@@ -360,31 +366,35 @@ func (fugs *FileUploadGlobalState) createFileWorker() {
 			fugs.wg.Done()
 			return
 		}
-		fileSize := upReq.fileSize
 
-		if fugs.options.Verbose {
-			log.Printf("Upload file-size=%d part-size=%d", fileSize, upReq.partSize)
+		// check if the upload has been cancelled
+		if !fugs.shouldUpload(upReq.id) {
+			fugs.log("file %s was removed, no need to upload %s", upReq.id)
+			fugs.uploadComplete(upReq.id)
+			continue
 		}
 
-		if fileSize == 0 {
-			// Create an empty file, and continue to the next request
-			fugs.createEmptyFile(client, upReq)
-		} else {
-			// loop over the parts, and upload them
-			if err := fugs.uploadFileData(client, upReq); err != nil {
-				log.Printf("upload error to file %s, error = %s", upReq.id, err.Error())
-				continue
-			}
-		}
+		err := fugs.uploadFileDataAndWait(client, upReq)
 
-		if fugs.options.Verbose {
-			log.Printf("Closing %s", upReq.id)
-		}
-		ctx := context.TODO()
-		err := DxFileCloseAndWait(ctx, client, &fugs.dxEnv, upReq.id, fugs.options.Verbose)
 		if err != nil {
-			log.Printf("failed to close file %s, error = %s", upReq.id, err.Error())
+			// Upload failed. Do not erase the local copy.
+			//
+			// Note: we have not entire eliminated the race condition
+			// between uploading and removing a file. We may still
+			// get errors in good path cases.
+			if (fugs.shouldUpload(upReq.id)) {
+				fugs.log("Error during upload of file %s", upReq.id)
+				fugs.log(err.Error())
+			}
+			fugs.uploadComplete(upReq.id)
+			continue
 		}
+
+		// Update the database to point to the remote file copy. This saves
+		// space on the local drive.
+		//fugs.mdb.UpdateFileMakeRemote(context.TODO(), upReq.id)
+
+		fugs.uploadComplete(upReq.id)
 	}
 }
 
@@ -398,12 +408,19 @@ func (fugs *FileUploadGlobalState) UploadFile(f File, fileSize int64) error {
 
 	partSize, err := fugs.calcPartSize(projDesc.UploadParams, fileSize)
 	if err != nil {
-		log.Printf(`
+		fugs.log(`
 There is a problem with the file size, it cannot be uploaded
 to the platform due to part size constraints. Error=%s`,
 			err.Error())
 		return fuse.EINVAL
 	}
+
+	// Add the file to the "being-uploaded" list.
+	// we will need this in the corner case of deleting the file while
+	// it is being uploaded.
+	fugs.mutex.Lock()
+	fugs.ongoingOps[f.Id] = true
+	fugs.mutex.Unlock()
 
 	fugs.fileUploadQueue <- FileUploadReq{
 		id : f.Id,

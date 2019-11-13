@@ -331,7 +331,7 @@ function create_remove_dir {
     echo "removing directory recursively"
     rm -rf $write_dir
 
-    dx tree ls $projName:
+    dx ls $projName:
 }
 
 main() {

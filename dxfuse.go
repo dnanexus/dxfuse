@@ -98,10 +98,13 @@ func NewDxfuse(
 		projId2Desc[pDesc.Id] = *pDesc
 	}
 
-
 	if !options.ReadOnly {
 		// initialize background upload state
 		fsys.fugs = NewFileUploadGlobalState(options, dxEnv, projId2Desc)
+
+		// Provide the upload module with a reference to the database.
+		// This is needed to report the end of an upload.
+		fsys.fugs.mdb = mdb
 	}
 	return fsys, nil
 }
@@ -621,6 +624,10 @@ func (fsys *Filesys) Unlink(ctx context.Context, op *fuseops.UnlinkOp) error {
 		log.Printf("database error in unlink %s", err.Error())
 		return fuse.EIO
 	}
+
+	// Report to the upload module, that we are cancelling the upload
+	// for this file.
+	fsys.fugs.CancelUpload(fileToRemove.Id)
 
 	// remove the file on the platform
 	httpClient := <- fsys.httpClientPool

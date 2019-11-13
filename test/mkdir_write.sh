@@ -47,8 +47,8 @@ echo "catch 22" > $write_dir/E/Z.txt
 
 tree $write_dir
 
-echo "letting the files complete uploading"
-sleep 10
+#echo "letting the files complete uploading"
+#sleep 10
 dx ls -l $projectName:/$target_dir
 
 echo "removing directory recursively"

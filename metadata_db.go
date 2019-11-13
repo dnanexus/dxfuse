@@ -1195,7 +1195,7 @@ func (mdb *MetadataDb) Unlink(ctx context.Context, file File) error {
 				file.Inode)
 		}
 
-		if file.Kind == RW_FILE || file.Kind == RO_LocalCopy {
+		if file.Kind == RW_File || file.Kind == RO_LocalCopy {
 			// remove the file data so it does not take up space on disk.
 			// This might be undergoing upload at the moment. Removing the local
 			// file will cause the download to fail early, which is what we
@@ -1208,7 +1208,7 @@ func (mdb *MetadataDb) Unlink(ctx context.Context, file File) error {
 
 	if err := txn.Commit(); err != nil {
 		log.Printf(err.Error())
-		return fmt.Errorf("Unlink inode=%dcommit failed", file.Inode)
+		return fmt.Errorf("Unlink inode=%d commit failed", file.Inode)
 	}
 
 	return nil
@@ -1244,6 +1244,33 @@ func (mdb *MetadataDb) UpdateFile(
 	}
 	return txn.Commit()
 }
+
+
+func (mdb *MetadataDb) UpdateFileMakeRemote(ctx context.Context, fileId string) error {
+	if mdb.options.Verbose {
+		log.Printf("Make file remote fileId=%s", fileId)
+	}
+
+	txn, err := mdb.db.Begin()
+	if err != nil {
+		log.Printf(err.Error())
+		return fmt.Errorf("UpdateFileMakeRemote error opening transaction")
+	}
+
+	sqlStmt := fmt.Sprintf(`
+ 		        UPDATE data_objects
+                        SET Mode = '%s', InlineData=''
+			WHERE id = '%s';`,
+		fileReadOnlyMode, fileId)
+
+	if _, err := txn.Exec(sqlStmt); err != nil {
+		txn.Rollback()
+		log.Printf(err.Error())
+		return fmt.Errorf("UpdateFileMakeRemote error executing transaction")
+	}
+	return txn.Commit()
+}
+
 
 func (mdb *MetadataDb) Shutdown() {
 	if err := mdb.db.Close(); err != nil {

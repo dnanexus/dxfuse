@@ -1,6 +1,7 @@
 package dxfuse
 
 import (
+	"fmt"
 	"os"
 	"sync"
 	"time"
@@ -255,4 +256,8 @@ func MinInt(x, y int) int {
 // golang structure
 func SecondsToTime(t int64) time.Time {
 	return time.Unix(t, 0)
+}
+
+func Time2string(t time.Time) string {
+	return fmt.Sprintf("%02d:%02d:%02d", t.Hour(), t.Minute(), t.Second())
 }
