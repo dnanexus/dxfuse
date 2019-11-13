@@ -1195,6 +1195,15 @@ func (mdb *MetadataDb) Unlink(ctx context.Context, file File) error {
 				file.Inode)
 		}
 
+		if file.Kind == RW_FILE || file.Kind == RO_LocalCopy {
+			// remove the file data so it does not take up space on disk.
+			// This might be undergoing upload at the moment. Removing the local
+			// file will cause the download to fail early, which is what we
+			// want.
+			if err := os.Remove(file.InlineData); err != nil {
+				log.Printf(err.Error())
+			}
+		}
 	}
 
 	if err := txn.Commit(); err != nil {

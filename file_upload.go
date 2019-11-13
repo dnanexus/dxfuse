@@ -18,18 +18,6 @@ import (
 	"github.com/jacobsa/fuse"
 )
 
-type RequestNewFile struct {
-	ProjId   string `json:"project"`
-	Name     string `json:"name"`
-	Folder   string `json:"folder"`
-	Parents  bool   `json:"parents"`
-	Nonce    string `json:"nonce"`
-}
-
-type ReplyNewFile struct {
-	Id string `json:"id"`
-}
-
 type RequestUploadChunk struct {
 	Size  int     `json:"size"`
 	Index int     `json:"index"`
@@ -79,91 +67,6 @@ const (
 	fileCloseWaitTime = 5 * time.Second
 	fileCloseMaxWaitTime = 10 * time.Minute
 )
-
-func DxFileNew(
-	ctx context.Context,
-	httpClient *retryablehttp.Client,
-	dxEnv *dxda.DXEnvironment,
-	nonceStr string,
-	projId string,
-	fname string,
-	folder string) (string, error) {
-
-	var request RequestNewFile
-	request.ProjId = projId
-	request.Name = fname
-	request.Folder = folder
-	request.Parents = false
-	request.Nonce = nonceStr
-
-	payload, err := json.Marshal(request)
-	if err != nil {
-		return "", err
-	}
-	repJs, err := dxda.DxAPI(ctx, httpClient, NumRetriesDefault, dxEnv, "file/new", string(payload))
-	if err != nil {
-		return "", err
-	}
-
-	var reply ReplyNewFile
-	if err := json.Unmarshal(repJs, &reply); err != nil {
-		return "", err
-	}
-
-	// got a file ID back
-	return reply.Id, nil
-}
-
-func DxFileCloseAndWait(
-	ctx context.Context,
-	httpClient *retryablehttp.Client,
-	dxEnv *dxda.DXEnvironment,
-	fid string,
-	verbose bool) error {
-
-	_, err := dxda.DxAPI(
-		ctx,
-		httpClient,
-		NumRetriesDefault,
-		dxEnv,
-		fmt.Sprintf("%s/close", fid),
-		"{}")
-	if err != nil {
-		return err
-	}
-
-        // wait for file to achieve closed state
-	start := time.Now()
-	deadline := start.Add(fileCloseMaxWaitTime)
-        for true {
-		fDesc, err := DxDescribe(ctx, httpClient, dxEnv, fid, false)
-		if err != nil {
-			return err
-		}
-		switch fDesc.State {
-		case "closed":
-			// done. File is closed.
-			return nil
-		case "closing":
-			// not done yet.
-			if verbose {
-				elapsed := time.Now().Sub(start)
-				log.Printf("Waited %s for file %s to close", elapsed.String(), fid)
-			}
-			time.Sleep(fileCloseWaitTime)
-
-			// don't wait too long
-			if time.Now().After(deadline) {
-				return fmt.Errorf("Waited %s for file %s to close, stopping the wait",
-					fileCloseMaxWaitTime.String(), fid)
-			}
-			continue
-		default:
-			return fmt.Errorf("data object %s has bad state %s", fid, fDesc.State)
-		}
-	}
-	return nil
-}
 
 func dxFileUploadPart(
 	ctx context.Context,
@@ -332,8 +235,28 @@ func (fugs *FileUploadGlobalState) calcPartSize(param FileUploadParameters, file
 	return param.MaximumPartSize, nil
 }
 
-// Upload the parts. The first chunk is uploaded synchronously, the
-// others are uploaded by worker threads.
+// read a range in a file
+func readFileExtent(filename string, ofs int64, len int) ([]byte, error) {
+	fReader, err := os.Open(filename)
+	if err != nil {
+		return err
+	}
+	defer fReader.Close()
+
+	buf := make([]byte, len)
+	recvLen, err := fReader.ReadAt(buf, ofs)
+	if err != nil {
+		return nil, err
+	}
+	if int64(recvLen) != len {
+		panic(fmt.Sprintf("short read, got %d bytes instead of %d",
+			recvLen, len))
+	}
+	return buf, nil
+}
+
+// Upload the parts. Small files are uploaded synchronously, large
+// files are uploaded by worker threads.
 //
 // note: chunk indexes start at 1 (not zero)
 func (fugs *FileUploadGlobalState) uploadFileData(
@@ -343,23 +266,13 @@ func (fugs *FileUploadGlobalState) uploadFileData(
 		panic("The file is empty")
 	}
 
-	fReader, err := os.Open(upReq.localPath)
-	if err != nil {
-		return err
-	}
-	defer fReader.Close()
-
 	if upReq.fileSize <= upReq.partSize {
 		// This is a small file, upload it synchronously.
 		// This ensures that only large chunks are uploaded by the bulk-threads,
 		// improving fairness.
-		data, err := ioutil.ReadAll(fReader)
+		data, err := readFileExtent(upReq.localPath, ofs, upReq.fileSize)
 		if err != nil {
 			return err
-		}
-		if int64(len(data)) != upReq.fileSize {
-			panic(fmt.Sprintf("short read, got %d bytes instead of %d",
-				len(data), upReq.fileSize))
 		}
 		return dxFileUploadPart(
 			context.TODO(),
@@ -377,14 +290,9 @@ func (fugs *FileUploadGlobalState) uploadFileData(
 	for ofs <= fileEndOfs {
 		chunkEndOfs := MinInt64(ofs + upReq.partSize - 1, fileEndOfs)
 		chunkLen := chunkEndOfs - ofs
-		buf := make([]byte, chunkLen)
-		len, err := fReader.ReadAt(buf, ofs)
+		buf, err := readFileExtent(upReq.localPath, ofs, chunkLen)
 		if err != nil {
 			return err
-		}
-		if int64(len) != chunkLen {
-			panic(fmt.Sprintf("short read, got %d bytes instead of %d",
-				len, chunkLen))
 		}
 		chunk := &Chunk{
 			fileId : upReq.id,
@@ -393,7 +301,8 @@ func (fugs *FileUploadGlobalState) uploadFileData(
 			fwg : &fileWg,
 			err : nil,
 		}
-		// enqueue an upload request
+		// enqueue an upload request. This can block, if there
+		// are many chunks.
 		fileWg.Add(1)
 		fugs.chunkQueue <- chunk
 		fileParts = append(fileParts, chunk)

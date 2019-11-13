@@ -1,7 +1,7 @@
 # Release Notes
 
 ## v0.13
-- Additional operations supported: create directory, remove directory, remove file
+- Additional operations supported: create directory, remove directory, file unlink
 
 ## v0.12  12-Nov-2019
 - Migrated to the [jacobsa](https://github.com/jacobsa/fuse) golang fuse filesystem package

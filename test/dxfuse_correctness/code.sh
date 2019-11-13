@@ -326,10 +326,12 @@ function create_remove_dir {
 
     echo "letting the files complete uploading"
     sleep 10
-    dx ls -l $projectName:/$target_dir
+    dx ls -l $projName:/$write_dir
 
     echo "removing directory recursively"
     rm -rf $write_dir
+
+    dx tree ls $projName:
 }
 
 main() {
@@ -359,50 +361,50 @@ main() {
     dx rm -r $projName:/write_test_dir2 >& /dev/null || true
     dx mkdir -p $projName:/write_test_dir
 
-#    echo "download recursively with dx download"
-#    dx download --no-progress -o $dxTrgDir -r  dxfuse_test_data:/$dxDirOnProject
-#
-#    # do not exit immediately if there are differences; we want to see the files
-#    # that aren't the same
-#    diff -r --brief $dxpyDir $dxfuseDir > diff.txt || true
-#    if [[ -s diff.txt ]]; then
-#        echo "Difference in basic file structure"
-#        cat diff.txt
-#        exit 1
-#    fi
-#
-#    # find
-#    echo "find"
-#    check_find
-#
-#    # grep
-#    echo "grep"
-#    check_grep
-#
-#    # tree
-#    echo "tree"
-#    check_tree
-#
-#    # ls
-#    echo "ls -R"
-#    check_ls
-#
-#    # find
-#    echo "head, tail, wc"
-#    check_cmd_line_utils
-#
-#    echo "parallel downloads"
-#    check_parallel_cat
-#
-#    echo "can write to a small file"
-#    check_file_write_content
-#
-#    echo "can write several files to a directory"
-#    write_files
-#
-#    echo "can't write to read-only project"
-#    write_to_read_only_project
-#
+    echo "download recursively with dx download"
+    dx download --no-progress -o $dxTrgDir -r  dxfuse_test_data:/$dxDirOnProject
+
+    # do not exit immediately if there are differences; we want to see the files
+    # that aren't the same
+    diff -r --brief $dxpyDir $dxfuseDir > diff.txt || true
+    if [[ -s diff.txt ]]; then
+        echo "Difference in basic file structure"
+        cat diff.txt
+        exit 1
+    fi
+
+    # find
+    echo "find"
+    check_find
+
+    # grep
+    echo "grep"
+    check_grep
+
+    # tree
+    echo "tree"
+    check_tree
+
+    # ls
+    echo "ls -R"
+    check_ls
+
+    # find
+    echo "head, tail, wc"
+    check_cmd_line_utils
+
+    echo "parallel downloads"
+    check_parallel_cat
+
+    echo "can write to a small file"
+    check_file_write_content
+
+    echo "can write several files to a directory"
+    write_files
+
+    echo "can't write to read-only project"
+    write_to_read_only_project
+
     echo "create directory"
     create_dir
 
