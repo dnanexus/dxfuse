@@ -271,9 +271,10 @@ function write_to_read_only_project {
 
 # create directory on mounted FS
 function create_dir {
-    top_dir=$mountpoint/$projName
-    write_dir="write_test_dir2"
+    local top_dir=$1
+    local write_dir="write_test_dir2"
 
+    cd $top_dir
     mkdir $write_dir
 
     # copy files to new directory
@@ -298,9 +299,11 @@ function create_dir {
 
 # create directory on mounted FS
 function create_remove_dir {
-    top_dir=$mountpoint/$projName
-    write_dir="jumble"
+    local flag=$1
+    local top_dir=$2
+    local write_dir="jumble"
 
+    cd $top_dir
     mkdir $write_dir
     rmdir $write_dir
     mkdir $write_dir
@@ -324,14 +327,101 @@ function create_remove_dir {
 
     tree $write_dir
 
-    echo "letting the files complete uploading"
-    sleep 10
-    dx ls -l $projName:/$write_dir
+    if [[ $flag == "yes" ]]; then
+        echo "letting the files complete uploading"
+        sleep 10
+    fi
+    dx ls -l $projName:
 
     echo "removing directory recursively"
     rm -rf $write_dir
 
     dx ls $projName:
+}
+
+# removing a non-empty directory fails
+function rmdir_non_empty {
+    local write_dir=$1
+
+    mkdir $write_dir
+    cd $write_dir
+
+    mkdir E
+    echo "permanente creek" > E/X.txt
+
+    set +e
+    rmdir E >& /dev/null
+    rc=$?
+    set -e
+    if [[ $rc == 0 ]]; then
+        echo "Error, removing non empty directory should fail"
+        exit 1
+    fi
+
+    rm -rf $write_dir
+}
+
+# removing a non-existent directory fails
+function rmdir_not_exist {
+    local top_dir=$1
+    cd $top_dir
+
+    set +e
+    rmdir E >& /dev/null
+    rc=$?
+    set -e
+    if [[ $rc == 0 ]]; then
+        echo "Error, removing non existent directory should fail"
+        exit 1
+    fi
+}
+
+# create an existing directory fails
+function mkdir_existing {
+    local write_dir=$1
+    mkdir $write_dir
+
+    set +e
+    mkdir $write_dir >& /dev/null
+    rc=$?
+    set -e
+    if [[ $rc == 0 ]]; then
+        echo "Error, creating an existing directory should fail"
+        exit 1
+    fi
+
+    rm -rf $write_dir
+}
+
+function file_create_existing {
+    local top_dir=$1
+    cd $top_dir
+
+    echo "happy days" > hello.txt
+
+    set +e
+    echo "nothing much" > hello.txt
+    rc=$?
+    set -e
+    if [[ $rc == 0 ]]; then
+        echo "Error, could modify an existing file"
+        exit 1
+    fi
+    rm -f hello.txt
+}
+
+function file_remove_non_exist {
+    local top_dir=$1
+    cd $top_dir
+
+    set +e
+    rm hello.txt
+    rc=$?
+    set -e
+    if [[ $rc == 0 ]]; then
+        echo "Error, could remove a non-existent file"
+        exit 1
+    fi
 }
 
 main() {
@@ -361,59 +451,73 @@ main() {
     dx rm -r $projName:/write_test_dir2 >& /dev/null || true
     dx mkdir -p $projName:/write_test_dir
 
-    echo "download recursively with dx download"
-    dx download --no-progress -o $dxTrgDir -r  dxfuse_test_data:/$dxDirOnProject
-
-    # do not exit immediately if there are differences; we want to see the files
-    # that aren't the same
-    diff -r --brief $dxpyDir $dxfuseDir > diff.txt || true
-    if [[ -s diff.txt ]]; then
-        echo "Difference in basic file structure"
-        cat diff.txt
-        exit 1
-    fi
-
-    # find
-    echo "find"
-    check_find
-
-    # grep
-    echo "grep"
-    check_grep
-
-    # tree
-    echo "tree"
-    check_tree
-
-    # ls
-    echo "ls -R"
-    check_ls
-
-    # find
-    echo "head, tail, wc"
-    check_cmd_line_utils
-
-    echo "parallel downloads"
-    check_parallel_cat
-
-    echo "can write to a small file"
-    check_file_write_content
-
-    echo "can write several files to a directory"
-    write_files
-
-    echo "can't write to read-only project"
-    write_to_read_only_project
-
-    echo "create directory"
-    create_dir
-
+#    echo "download recursively with dx download"
+#    dx download --no-progress -o $dxTrgDir -r  dxfuse_test_data:/$dxDirOnProject
+#
+#    # do not exit immediately if there are differences; we want to see the files
+#    # that aren't the same
+#    diff -r --brief $dxpyDir $dxfuseDir > diff.txt || true
+#    if [[ -s diff.txt ]]; then
+#        echo "Difference in basic file structure"
+#        cat diff.txt
+#        exit 1
+#    fi
+#
+#    # find
+#    echo "find"
+#    check_find
+#
+#    # grep
+#    echo "grep"
+#    check_grep
+#
+#    # tree
+#    echo "tree"
+#    check_tree
+#
+#    # ls
+#    echo "ls -R"
+#    check_ls
+#
+#    # find
+#    echo "head, tail, wc"
+#    check_cmd_line_utils
+#
+#    echo "parallel downloads"
+#    check_parallel_cat
+#
+#    echo "can write to a small file"
+#    check_file_write_content
+#
+#    echo "can write several files to a directory"
+#    write_files
+#
+#    echo "can't write to read-only project"
+#    write_to_read_only_project
+#
+#    echo "create directory"
+#    create_dir "$mountpoint/$projName"
+#
     echo "create/remove directory"
-    create_remove_dir
+    create_remove_dir "yes" "$mountpoint/$projName"
+    create_remove_dir "no" "$mountpoint/$projName"
+
+    echo "mkdir rmdir"
+    rmdir_non_empty "$mountpoint/$projName/sunny"
+    rmdir_not_exist "$mountpoint/$projName"
+    mkdir_existing  "$mountpoint/$projName/sunny"
+
+    echo "file create remove"
+    file_create_existing "$mountpoint/$projName"
+    file_remove_non_exist "$mountpoint/$projName"
 
     echo "unmounting dxfuse"
+    cd $HOME
     sudo umount $mountpoint
 
     # wait until the filesystem is done running
     wait $dxfuse_pid
+
+    dx rm -r $projName:/write_test_dir >& /dev/null || true
+    dx rm -r $projName:/write_test_dir2 >& /dev/null || true
 }

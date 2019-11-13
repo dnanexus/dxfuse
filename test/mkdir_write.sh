@@ -1,10 +1,39 @@
 #!/bin/bash -ex
 
 mountpoint="/tmp/MNT"
-projectName="dxfuse_test_data"
+projName="dxfuse_test_data"
 target_dir="write_test_dir"
-top_dir="$mountpoint/$projectName"
-write_dir=$top_dir/$target_dir
+top_dir="$mountpoint/$projName"
+
+
+function file_create_existing {
+    local write_dir=$1
+    cd $write_dir
+
+    echo "happy days" > hello.txt
+
+    set +e
+    echo "nothing much" > hello.txt
+    rc=$?
+    set -e
+    if [[ $rc == 0 ]]; then
+        echo "Error, could modify an existing file"
+    fi
+    rm -f hello.txt
+}
+
+function file_remove_non_exist {
+    local write_dir=$1
+    cd $write_dir
+
+    set +e
+    rm hello.txt
+    rc=$?
+    set -e
+    if [[ $rc == 0 ]]; then
+        echo "Error, could remove a non-existent file"
+    fi
+}
 
 # Get all the DX environment variables, so that dxfuse can use them
 echo "loading the dx environment"
@@ -14,46 +43,24 @@ rm -f ENV
 dx env --bash > ENV
 source ENV >& /dev/null
 
+dx rm -r $projName:/$target_dir >& /dev/null || true
+dx mkdir $projName:/$target_dir
+
 # create a fresh mountpoint
 mkdir -p $mountpoint
 
 # Start the dxfuse daemon in the background, and wait for it to initilize.
 echo "Mounting dxfuse"
-sudo -E /go/bin/dxfuse -verbose 1 $mountpoint $projectName &
+sudo -E /go/bin/dxfuse -verbose 1 $mountpoint $projName &
 dxfuse_pid=$!
 sleep 2
 
-# create directory on mounted FS
-mkdir $write_dir
-rmdir $write_dir
-mkdir $write_dir
+echo "file create remove"
+file_create_existing "$mountpoint/$projName/$target_dir"
+file_remove_non_exist "$mountpoint/$projName"
 
-# copy files
-echo "copying small files"
-cp $top_dir/correctness/small/*  $write_dir/
-
-# compare resulting files
-echo "comparing files"
-files=$(find $top_dir/correctness/small -type f)
-for f in $files; do
-    b_name=$(basename $f)
-    diff $f $write_dir/$b_name
-done
-
-echo "making empty new sub-directories"
-mkdir $write_dir/E
-mkdir $write_dir/F
-echo "catch 22" > $write_dir/E/Z.txt
-
-tree $write_dir
-
-#echo "letting the files complete uploading"
-#sleep 10
-dx ls -l $projectName:/$target_dir
-
-echo "removing directory recursively"
-rm -rf $write_dir
-
+# unmount cleanly
+cd $HOME
 sudo umount $mountpoint
 
 # wait until the filesystem is done running
