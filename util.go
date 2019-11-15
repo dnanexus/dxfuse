@@ -260,7 +260,7 @@ func SecondsToTime(t int64) time.Time {
 }
 
 func Time2string(t time.Time) string {
-	return fmt.Sprintf("%02d:%02d:%02d", t.Hour(), t.Minute(), t.Second())
+	return fmt.Sprintf("%02d:%02d:%02d.%03d", t.Hour(), t.Minute(), t.Second(), t.Nanosecond()/1000000)
 }
 
 // add a timestamp and module name, to a log message

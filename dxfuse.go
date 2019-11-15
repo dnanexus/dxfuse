@@ -885,7 +885,7 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 	switch fh.fKind {
 	case RO_Remote:
 		// Read-only file that is accessed remotely
-		fsys.pgs.RemoveStreamEntry(fh)
+		fsys.pgs.RemoveStreamEntry(fh, false)
 		return nil
 
 	case RW_File:
@@ -964,9 +964,9 @@ func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp,
 
 	// See if the data has already been prefetched.
 	// This call will wait, if a prefetch IO is in progress.
-	prefetchData := fsys.pgs.CacheLookup(fh, op.Offset, endOfs)
-	if prefetchData != nil {
-		op.BytesRead = copy(op.Dst, prefetchData)
+	ok, len := fsys.pgs.CacheLookup(fh, op.Offset, endOfs, op.Dst)
+	if ok {
+		op.BytesRead = len
 		return nil
 	}
 
