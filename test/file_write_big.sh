@@ -27,31 +27,29 @@ dxfuse_pid=$!
 sleep 2
 
 # copy files
-#echo "copying small files"
-#cp $top_dir/correctness/small/*  $write_dir/
-
-# compare resulting files
-#echo "comparing files"
-#files=$(find $top_dir/correctness/small -type f)
-#for f in $files; do
-#    b_name=$(basename $f)
-#    diff $f $write_dir/$b_name
-#done
-
-echo "copying large files"
-#cp $top_dir/correctness/large/*  $write_dir/
-cp $top_dir/correctness/large/ubuntu.tar.gz  $write_dir/
+echo "copying small files"
+cp $top_dir/correctness/small/*  $write_dir/
 
 # compare resulting files
 echo "comparing files"
-#files=$(find $top_dir/correctness/large -type f)
-#for f in $files; do
-#    b_name=$(basename $f)
-#    diff $f $write_dir/$b_name
-#done
-#diff $top_dir/correctness/large/ubuntu.tar.gz  $write_dir/ubuntu.tar.gz
+files=$(find $top_dir/correctness/small -type f)
+for f in $files; do
+    b_name=$(basename $f)
+    diff $f $write_dir/$b_name
+done
 
-#ls -l $top_dir/$target_dir
+echo "copying large files"
+cp $top_dir/correctness/large/*  $write_dir/
+
+# compare resulting files
+echo "comparing files"
+files=$(find $top_dir/correctness/large -type f)
+for f in $files; do
+    b_name=$(basename $f)
+    diff $f $write_dir/$b_name
+done
+
+ls -l $top_dir/$target_dir
 
 sudo umount $mountpoint
 

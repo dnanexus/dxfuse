@@ -225,14 +225,14 @@ func (pgs *PrefetchGlobalState) readData(
 	headers["Range"] = fmt.Sprintf("bytes=%d-%d", startByte, endByte)
 
 	// Safety procedure to force timeout to prevent hanging
-	ctx, cancel := context.WithCancel(context.TODO())
+	/*ctx, cancel := context.WithCancel(context.TODO())
 	timer := time.AfterFunc(readRequestTimeout, func() {
 		cancel()
 	})
-	defer timer.Stop()
+	defer timer.Stop()*/
 
 	for tCnt := 0; tCnt < 3; tCnt++ {
-		data, err := dxda.DxHttpRequest(ctx, client, NumRetriesDefault, "GET", url.URL, headers, []byte("{}"))
+		data, err := dxda.DxHttpRequest(context.TODO(), client, NumRetriesDefault, "GET", url.URL, headers, []byte("{}"))
 		recvLen := int64(len(data))
 
 		if recvLen != expectedLen {
@@ -315,10 +315,11 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 		pfm, ok := pgs.files[ioReq.fh]
 		if !ok {
 			// file is not tracked anymore
-			pfm.log("Dropping prefetch IO, file is no longer tracked")
+			pgs.log("Dropping prefetch IO [%d -- %d], file is no longer tracked",
+				ioReq.startByte, ioReq.endByte)
 		} else {
 			if err != nil {
-				pfm.log("Prefetch error ofs=%d len=%d error=%s",
+				pfm.log("Prefetch error [%d -- %d] error=%s",
 					ioReq.startByte, ioReq.endByte, err.Error())
 				pgs.hitError(pfm)
 			} else {
