@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -92,6 +91,12 @@ func (m *Manifest)Validate() error {
 	return nil
 }
 
+// write a log message, and add a header
+func (m Manifest) log(a string, args ...interface{}) {
+	LogMsg("manifest", a, args...)
+}
+
+
 func (m *Manifest) Clean() {
 	for i, _ := range m.Files {
 		fl := &m.Files[i]
@@ -138,7 +143,7 @@ func MakeManifestFromProjectIds(
 	for _, pId := range projectIds {
 		pDesc, err := DxDescribeProject(ctx, tmpHttpClient, &dxEnv, pId)
 		if err != nil {
-			log.Printf("Could not describe project %s, check permissions", pId)
+			LogMsg("Could not describe project %s, check permissions", pId)
 			return nil, err
 		}
 		projDescs[pDesc.Id] = *pDesc
@@ -338,7 +343,7 @@ func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnviron
 	for pId, _ := range projectIds {
 		pDesc, err := DxDescribeProject(ctx, tmpHttpClient, &dxEnv, pId)
 		if err != nil {
-			log.Printf("Could not describe project %s, check permissions", pId)
+			m.log("Could not describe project %s, check permissions", pId)
 			return err
 		}
 		projDescs[pDesc.Id] = *pDesc

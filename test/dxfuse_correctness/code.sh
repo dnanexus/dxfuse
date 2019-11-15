@@ -394,34 +394,53 @@ function mkdir_existing {
 }
 
 function file_create_existing {
-    local top_dir=$1
-    cd $top_dir
+    local write_dir=$1
+    cd $write_dir
 
     echo "happy days" > hello.txt
 
     set +e
-    echo "nothing much" > hello.txt
+    (echo "nothing much" > hello.txt) >& /tmp/cmd_results.txt
     rc=$?
     set -e
+
     if [[ $rc == 0 ]]; then
         echo "Error, could modify an existing file"
         exit 1
     fi
+    result=$(cat /tmp/cmd_results.txt)
+    if [[ ( ! $result =~ "Permission denied" ) && ( ! $result =~ "Operation not permitted" ) ]]; then
+        echo "Error, incorrect command results, writing to hello.txt"
+        cat /tmp/cmd_results.txt
+
+        echo "===== log ======="
+        cat /var/log/dxfuse.log
+        exit 1
+    fi
+
     rm -f hello.txt
 }
 
 function file_remove_non_exist {
-    local top_dir=$1
-    cd $top_dir
+    local write_dir=$1
+    cd $write_dir
 
     set +e
-    rm hello.txt
+    (rm hello.txt) >& /tmp/cmd_results.txt
     rc=$?
     set -e
+
     if [[ $rc == 0 ]]; then
         echo "Error, could remove a non-existent file"
         exit 1
     fi
+    result=$(cat /tmp/cmd_results.txt)
+    if [[ ! $result =~ "No such file or directory" ]]; then
+        echo "Error, incorrect command results"
+        cat /tmp/cmd_results.txt
+        exit 1
+    fi
+
 }
 
 main() {
@@ -449,55 +468,56 @@ main() {
 
     dx rm -r $projName:/write_test_dir >& /dev/null || true
     dx rm -r $projName:/write_test_dir2 >& /dev/null || true
+    dx rm -f $projName:/hello.txt >& /dev/null || true
     dx mkdir -p $projName:/write_test_dir
 
-#    echo "download recursively with dx download"
-#    dx download --no-progress -o $dxTrgDir -r  dxfuse_test_data:/$dxDirOnProject
-#
-#    # do not exit immediately if there are differences; we want to see the files
-#    # that aren't the same
-#    diff -r --brief $dxpyDir $dxfuseDir > diff.txt || true
-#    if [[ -s diff.txt ]]; then
-#        echo "Difference in basic file structure"
-#        cat diff.txt
-#        exit 1
-#    fi
-#
-#    # find
-#    echo "find"
-#    check_find
-#
-#    # grep
-#    echo "grep"
-#    check_grep
-#
-#    # tree
-#    echo "tree"
-#    check_tree
-#
-#    # ls
-#    echo "ls -R"
-#    check_ls
-#
-#    # find
-#    echo "head, tail, wc"
-#    check_cmd_line_utils
-#
-#    echo "parallel downloads"
-#    check_parallel_cat
-#
-#    echo "can write to a small file"
-#    check_file_write_content
-#
-#    echo "can write several files to a directory"
-#    write_files
-#
-#    echo "can't write to read-only project"
-#    write_to_read_only_project
-#
-#    echo "create directory"
-#    create_dir "$mountpoint/$projName"
-#
+    echo "download recursively with dx download"
+    dx download --no-progress -o $dxTrgDir -r  dxfuse_test_data:/$dxDirOnProject
+
+    # do not exit immediately if there are differences; we want to see the files
+    # that aren't the same
+    diff -r --brief $dxpyDir $dxfuseDir > diff.txt || true
+    if [[ -s diff.txt ]]; then
+        echo "Difference in basic file structure"
+        cat diff.txt
+        exit 1
+    fi
+
+    # find
+    echo "find"
+    check_find
+
+    # grep
+    echo "grep"
+    check_grep
+
+    # tree
+    echo "tree"
+    check_tree
+
+    # ls
+    echo "ls -R"
+    check_ls
+
+    # find
+    echo "head, tail, wc"
+    check_cmd_line_utils
+
+    echo "parallel downloads"
+    check_parallel_cat
+
+    echo "can write to a small file"
+    check_file_write_content
+
+    echo "can write several files to a directory"
+    write_files
+
+    echo "can't write to read-only project"
+    write_to_read_only_project
+
+    echo "create directory"
+    create_dir "$mountpoint/$projName"
+
     echo "create/remove directory"
     create_remove_dir "yes" "$mountpoint/$projName"
     create_remove_dir "no" "$mountpoint/$projName"

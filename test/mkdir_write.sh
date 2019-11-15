@@ -1,4 +1,4 @@
-#!/bin/bash -ex
+#!/bin/bash -e
 
 mountpoint="/tmp/MNT"
 projName="dxfuse_test_data"
@@ -13,12 +13,21 @@ function file_create_existing {
     echo "happy days" > hello.txt
 
     set +e
-    echo "nothing much" > hello.txt
+    (echo "nothing much" > hello.txt) >& /tmp/cmd_results.txt
     rc=$?
     set -e
+
     if [[ $rc == 0 ]]; then
         echo "Error, could modify an existing file"
+        exit 1
     fi
+    result=$(cat /tmp/cmd_results.txt)
+    if [[ ( ! $result =~ "Permission denied" ) && ( ! $result =~ "Operation not permitted" ) ]]; then
+        echo "Error, incorrect command results"
+        cat /tmp/cmd_results.txt
+        exit 1
+    fi
+
     rm -f hello.txt
 }
 
@@ -27,12 +36,21 @@ function file_remove_non_exist {
     cd $write_dir
 
     set +e
-    rm hello.txt
+    (rm hello.txt) >& /tmp/cmd_results.txt
     rc=$?
     set -e
+
     if [[ $rc == 0 ]]; then
         echo "Error, could remove a non-existent file"
+        exit 1
     fi
+    result=$(cat /tmp/cmd_results.txt)
+    if [[ ! $result =~ "No such file or directory" ]]; then
+        echo "Error, incorrect command results"
+        cat /tmp/cmd_results.txt
+        exit 1
+    fi
+
 }
 
 # Get all the DX environment variables, so that dxfuse can use them
@@ -45,6 +63,7 @@ source ENV >& /dev/null
 
 dx rm -r $projName:/$target_dir >& /dev/null || true
 dx mkdir $projName:/$target_dir
+dx rm -f $projName:/hello.txt >& /dev/null || true
 
 # create a fresh mountpoint
 mkdir -p $mountpoint
@@ -56,7 +75,7 @@ dxfuse_pid=$!
 sleep 2
 
 echo "file create remove"
-file_create_existing "$mountpoint/$projName/$target_dir"
+file_create_existing "$mountpoint/$projName"
 file_remove_non_exist "$mountpoint/$projName"
 
 # unmount cleanly

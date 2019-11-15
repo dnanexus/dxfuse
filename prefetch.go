@@ -112,9 +112,8 @@ type PrefetchFileMetadata struct {
 
 // write a log message, and add a header
 func (pfm PrefetchFileMetadata) log(a string, args ...interface{}) {
-	msg := fmt.Sprintf(a, args...)
-	now := time.Now()
-	log.Printf("%s prefetch(%s): %s", Time2string(now), pfm.fh.f.Name, msg)
+	hdr := fmt.Sprintf("prefetch(%s)", pfm.fh.f.Name)
+	LogMsg(hdr, a, args...)
 }
 
 // global limits
@@ -131,9 +130,7 @@ type PrefetchGlobalState struct {
 
 // write a log message, and add a header
 func (pgs PrefetchGlobalState) log(a string, args ...interface{}) {
-	msg := fmt.Sprintf(a, args...)
-	now := time.Now()
-	log.Printf("%s prefetch: %s", Time2string(now), msg)
+	LogMsg("prefetch", a, args...)
 }
 
 func NewPrefetchGlobalState(verboseLevel int) *PrefetchGlobalState {
@@ -205,6 +202,7 @@ func check(value bool) {
 }
 
 func (pgs *PrefetchGlobalState) readData(
+	fh FileHandle,
 	client *retryablehttp.Client,
 	startByte int64,
 	endByte int64,
@@ -213,7 +211,7 @@ func (pgs *PrefetchGlobalState) readData(
 	// http request.
 	expectedLen := endByte - startByte + 1
 	if pgs.verbose {
-		pgs.log("reading extent from DNAx ofs=%d len=%d", startByte, expectedLen)
+		pgs.log("(%s) reading extent from DNAx ofs=%d len=%d", fh.f.Name, startByte, expectedLen)
 	}
 
 	headers := make(map[string]string)
@@ -231,7 +229,7 @@ func (pgs *PrefetchGlobalState) readData(
 
 		if recvLen != expectedLen {
 			// retry (only) in the case of short read
-			log.Printf("received length is wrong, got %d, expected %d. Retrying.", recvLen, expectedLen)
+			pgs.log("received length is wrong, got %d, expected %d. Retrying.", recvLen, expectedLen)
 			continue
 		}
 
@@ -326,7 +324,7 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 
 		// perform the IO. We don't want to hold any locks while we
 		// are doing this, because this request could take a long time.
-		data, err := pgs.readData(client, ioReq.startByte, ioReq.endByte, ioReq.url)
+		data, err := pgs.readData(*ioReq.fh, client, ioReq.startByte, ioReq.endByte, ioReq.url)
 		ioReq.data = data
 
 		pgs.mutex.Lock()
@@ -638,7 +636,6 @@ func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIn
 }
 
 
-
 // submit IOs for holes that we think require prefetch
 func (pgs *PrefetchGlobalState) submitIoForHoles(pfm *PrefetchFileMetadata) {
 	for _, chunk := range(pfm.cache.iovecs) {
@@ -700,7 +697,7 @@ func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 		nReadAhead = MaxInt(1, nReadAhead)
 
 		pfm.cache.numChunksReadAhead = nReadAhead
-		pfm.cache.maxNumIovecs = nReadAhead + 2
+		pfm.cache.maxNumIovecs = nReadAhead + 1
 	}
 
 	pgs.moveCacheWindow(pfm, last)
@@ -710,6 +707,51 @@ func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 	if pfm.cache.endByte >= pfm.fh.f.Size - 1 {
 		pfm.state = PFM_EOF
 	}
+}
+
+/*
+Our iovec is A. The others are B, C, etc.
+Here are the possible positions of A to any other range are:
+
+           -------A------
+---B---                     ----C-----
+        ---D--  --E--  ---F---
+        ---------------G---------------
+*/
+func (iov Iovec) intersect(startOfs int64, endOfs int64) bool {
+	if iov.startByte > endOfs {
+		// case B
+		return false
+	}
+	if iov.endByte < startOfs {
+		// case C
+		return false
+	}
+	// there is some intersection
+	return true
+}
+
+// presumption: there is some intersection
+func (iov Iovec) intersectBuffer(startOfs int64, endOfs int64) []byte {
+	// these are offsets in the entire file
+	bgnByte := MaxInt64(iov.startByte, startOfs)
+	endByte := MinInt64(iov.endByte, endOfs)
+
+	// normalize, to offets inside the buffer
+	bgnByte -= iov.startByte
+	endByte -= iov.startByte
+
+	return iov.data[bgnByte:endByte]
+}
+
+// append to slices
+func appendBuffers(a []byte, b []byte) []byte {
+	m := len(a)
+	n := m + len(b)
+	retbuf := make([]byte, n)
+	copy(retbuf[0:m-1], a)
+	copy(retbuf[m:n-1], b)
+	return retbuf
 }
 
 // If the range is entirely in cache, return a byte array with the data.
@@ -725,28 +767,28 @@ func (pgs *PrefetchGlobalState) getDataFromCache(
 	}
 
 	// go through the io-vectors, and check if they contain the range
+	var retData []byte
 	for _, iov := range pfm.cache.iovecs {
-		if iov.startByte <= startOfs &&
-			iov.endByte >= endOfs {
+		if iov.intersect(startOfs, endOfs) {
 			// its inside this iovec
 			if iov.data == nil {
 				// waiting for prefetch to come back with data
 				return nil
 			}
-			bgnByte := startOfs - iov.startByte
-			endByte := endOfs - iov.startByte
-			return iov.data[bgnByte : endByte+1]
+			subBuf := iov.intersectBuffer(startOfs, endOfs)
+			if retData == nil {
+				retData = subBuf
+			} else {
+				// An IO that stradle boundaries
+				if pgs.verbose {
+					pfm.log("Data is in cache, but falls on an iovec boundary ofs=%d len=%d",
+						startOfs, (endOfs - startOfs + 1))
+				}
+				retData = appendBuffers(retData, subBuf)
+			}
 		}
 	}
-
-	// FIXME: we don't handle IOs that stradle boundaries of
-	// cached data. nil is returned for such cases.
-	//
-	if pgs.verbose {
-		pfm.log("Data is in cache, but falls on an iovec boundary ofs=%d len=%d",
-			startOfs, (endOfs - startOfs))
-	}
-	return nil
+	return retData
 }
 
 // This is done on behalf of a user read request, check if this range is cached of prefetched
@@ -796,20 +838,18 @@ func (pgs *PrefetchGlobalState) cacheLookup1(fh *FileHandle, startOfs int64, end
 		pgs.markAccessedAndMaybeStartPrefetch(pfm, startOfs, endOfs)
 
 		// we may need to wait for a prefetch IO to return
-		for pfm.state == PFM_PREFETCH_IN_PROGRESS {
-			data := pgs.getDataFromCache(pfm, startOfs, endOfs)
-			if data != nil {
-				return data, DATA_IN_CACHE
-			}
-			// data is not in cache yet, we are waiting for a
-			// prefetch IO.
-			if pgs.verbose {
-				pfm.log("went to sleep io=[%d -- %d]", startOfs, endOfs)
-			}
-			pfm.cond.Wait()
-			if pgs.verbose {
-				pfm.log("woke up from waiting")
-			}
+		data := pgs.getDataFromCache(pfm, startOfs, endOfs)
+		if data != nil {
+			return data, DATA_IN_CACHE
+		}
+		// data is not in cache yet, we are waiting for a
+		// prefetch IO.
+		if pgs.verbose {
+			pfm.log("went to sleep io=[%d -- %d]", startOfs, endOfs)
+		}
+		pfm.cond.Wait()
+		if pgs.verbose {
+			pfm.log("woke up from waiting")
 		}
 		return nil, DATA_IN_CACHE
 

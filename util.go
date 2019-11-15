@@ -2,6 +2,7 @@ package dxfuse
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"sync"
 	"time"
@@ -260,4 +261,11 @@ func SecondsToTime(t int64) time.Time {
 
 func Time2string(t time.Time) string {
 	return fmt.Sprintf("%02d:%02d:%02d", t.Hour(), t.Minute(), t.Second())
+}
+
+// add a timestamp and module name, to a log message
+func LogMsg(moduleName string, a string, args ...interface{}) {
+	msg := fmt.Sprintf(a, args...)
+	now := time.Now()
+	log.Printf("%s %s: %s", Time2string(now), moduleName, msg)
 }

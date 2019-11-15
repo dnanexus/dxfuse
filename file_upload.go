@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"sync"
 	"time"
@@ -97,9 +96,7 @@ func NewFileUploadGlobalState(
 
 // write a log message, and add a header
 func (fugs FileUploadGlobalState) log(a string, args ...interface{}) {
-	msg := fmt.Sprintf(a, args...)
-	now := time.Now()
-	log.Printf("%s file_upload: %s", Time2string(now), msg)
+	LogMsg("file_upload", a, args...)
 }
 
 func (fugs *FileUploadGlobalState) Shutdown() {
