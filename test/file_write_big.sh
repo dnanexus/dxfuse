@@ -39,15 +39,20 @@ for f in $files; do
 done
 
 echo "copying large files"
-cp $top_dir/correctness/large/*  $write_dir/
+#cp $top_dir/correctness/large/*  $write_dir/
+t_file=wgEncodeUwRepliSeqBg02esG1bAlnRep1.bam.bai
+cp $top_dir/correctness/large/$t_file $write_dir/$t_file
 
 # compare resulting files
-echo "comparing files"
-files=$(find $top_dir/correctness/large -type f)
-for f in $files; do
-    b_name=$(basename $f)
-    diff $f $write_dir/$b_name
-done
+#echo "comparing files"
+#files=$(find $top_dir/correctness/large -type f)
+#for f in $files; do
+#    b_name=$(basename $f)
+#    diff $f $write_dir/$b_name
+#done
+
+diff $top_dir/correctness/large/$t_file $write_dir/$t_file
+
 
 ls -l $top_dir/$target_dir
 

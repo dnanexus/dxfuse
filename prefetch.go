@@ -106,7 +106,7 @@ type PrefetchFileMetadata struct {
 
 // write a log message, and add a header
 func (pfm PrefetchFileMetadata) log(a string, args ...interface{}) {
-	hdr := fmt.Sprintf("prefetch(%s)", pfm.fh.f.Name)
+	hdr := fmt.Sprintf("prefetch(%s %d)", pfm.fh.f.Name, pfm.fh.f.Inode)
 	LogMsg(hdr, a, args...)
 }
 
@@ -213,7 +213,7 @@ func (pgs *PrefetchGlobalState) readData(
 	// http request.
 	expectedLen := endByte - startByte + 1
 	if pgs.verbose {
-		pgs.log("(%s) reading extent from DNAx ofs=%d len=%d", fh.f.Name, startByte, expectedLen)
+		pgs.log("(%s %d) reading extent from DNAx ofs=%d len=%d", fh.f.Name, fh.f.Inode, startByte, expectedLen)
 	}
 
 	headers := make(map[string]string)
@@ -437,7 +437,7 @@ func (pgs *PrefetchGlobalState) CreateStreamEntry(fh *FileHandle) {
 	}
 
 	if pgs.verbose {
-		pgs.log("CreateStreamEntry %s", fh.f.Name)
+		pgs.log("CreateStreamEntry (%s %d)", fh.f.Name, fh.f.Inode)
 	}
 	pgs.files[fh] = pgs.newPrefetchFileMetadata(fh)
 }
@@ -450,7 +450,7 @@ func (pgs *PrefetchGlobalState) RemoveStreamEntry(fh *FileHandle, already_locked
 
 	if pfm, ok := pgs.files[fh]; ok {
 		if pgs.verbose {
-			pgs.log("RemoveStreamEntry %s", fh.f.Name)
+			pgs.log("RemoveStreamEntry (%s %d)", fh.f.Name, fh.f.Inode)
 		}
 
 		// wake up any waiting synchronous user IOs
@@ -697,12 +697,14 @@ func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 			pfm.cache.maxNumIovecs = nReadAhead + 1
 		}
 	}
-	pgs.moveCacheWindow(pfm, last)
-	pgs.submitIoForHoles(pfm)
+	if pfm.state == PFM_PREFETCH_IN_PROGRESS {
+		pgs.moveCacheWindow(pfm, last)
+		pgs.submitIoForHoles(pfm)
 
-	// Have we reached the end of the file?
-	if pfm.cache.endByte >= pfm.fh.f.Size - 1 {
-		pfm.state = PFM_EOF
+		// Have we reached the end of the file?
+		if pfm.cache.endByte >= pfm.fh.f.Size - 1 {
+			pfm.state = PFM_EOF
+		}
 	}
 }
 
@@ -741,21 +743,15 @@ func (iov Iovec) intersectBuffer(startOfs int64, endOfs int64) []byte {
 	return iov.data[bgnByte:endByte]
 }
 
-// If the range is entirely in cache, copy the data into the buffer, and return true.
-// Otherwise, return false.
+// assumption: the range is entirely in cache.
+// copy the data into the buffer, and return true, and the length of the data.
 //
-// Also, return the length of the data.
+// If there is a problem, return false, and zero length.
 func (pgs *PrefetchGlobalState) getDataFromCache(
 	pfm *PrefetchFileMetadata,
 	startOfs int64,
 	endOfs int64,
 	data []byte) (bool, int) {
-	// quick check to see if the data is in cache.
-	if !(pfm.cache.startByte <= startOfs &&
-		pfm.cache.endByte >= endOfs) {
-		return false, 0
-	}
-
 	cursor := 0
 	for _, iov := range pfm.cache.iovecs {
 		if iov.intersect(startOfs, endOfs) {
@@ -763,8 +759,9 @@ func (pgs *PrefetchGlobalState) getDataFromCache(
 			if iov.data == nil {
 				// waiting for prefetch to come back with data
 				iov.cond.Wait()
-				if pfm.state == PFM_IO_ERROR {
+				if pfm.state == PFM_IO_ERROR || iov.data == nil {
 					// situation has changed while we were asleep
+					// there is no data
 					return false, 0
 				}
 			}

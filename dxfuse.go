@@ -828,8 +828,10 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 		return fuse.ENOSYS
 	}
 
-	// Create an entry in the prefetch table, if the file is eligable
-	fsys.pgs.CreateStreamEntry(fh)
+	if fh.fKind == RO_Remote {
+		// Create an entry in the prefetch table, if the file is eligable
+		fsys.pgs.CreateStreamEntry(fh)
+	}
 
 	// add to the open-file table, so we can recognize future accesses to
 	// the same handle.
@@ -982,8 +984,8 @@ func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp,
 	// add an extent in the file that we want to read
 	headers["Range"] = fmt.Sprintf("bytes=%d-%d", op.Offset, endOfs)
 	if fsys.options.Verbose {
-		fsys.log("network read  %s ofs=%d len=%d endOfs=%d lastByteInFile=%d",
-			fh.f.Name, op.Offset, reqSize, endOfs, lastByteInFile)
+		fsys.log("network read  (%s %d) ofs=%d len=%d endOfs=%d lastByteInFile=%d",
+			fh.f.Name, fh.f.Inode, op.Offset, reqSize, endOfs, lastByteInFile)
 	}
 
 	// Take an http client from the pool. Return it when done.
