@@ -9,6 +9,7 @@ dxfuseTrgDir="${baseDir}/dxfuseCopy"
 mountpoint="${baseDir}/MNT"
 
 dxDirOnProject="benchmarks"
+#dxDirOnProject="symlinks"
 #dxDirOnProject="correctness/small"
 
 ######################################################################
@@ -36,7 +37,7 @@ main() {
     echo $files
 
     mkdir -p $HOME/out/result
-    echo "method,time(seconds),filename" > $HOME/out/result/result.txt
+    echo "file size, method, time(seconds), method, time(seconds)" > $HOME/out/result/result.txt
 
     for fname in $files; do
         fname="$(basename $fname)"
@@ -60,8 +61,7 @@ main() {
         diff /tmp/X_dxfuse /tmp/X_dx_cat
 
         sizeDesc=$(ls -lh /tmp/X_dxfuse | cut -d ' ' -f 5)
-        echo "dx-cat,$runtime1,$sizeDesc"  >> $HOME/out/result/result.txt
-        echo "dxfuse,$runtime2,$sizeDesc"  >> $HOME/out/result/result.txt
+        echo "$sizeDesc, dx-cat, $runtime1, dxfuse, $runtime2"  >> $HOME/out/result/result.txt
     done
 
     echo "unmounting dxfuse"
