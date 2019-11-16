@@ -740,7 +740,7 @@ func (iov Iovec) intersectBuffer(startOfs int64, endOfs int64) []byte {
 	bgnByte -= iov.startByte
 	endByte -= iov.startByte
 
-	return iov.data[bgnByte:endByte]
+	return iov.data[bgnByte : endByte+1]
 }
 
 // assumption: the range is entirely in cache.
@@ -751,7 +751,7 @@ func (pgs *PrefetchGlobalState) getDataFromCache(
 	pfm *PrefetchFileMetadata,
 	startOfs int64,
 	endOfs int64,
-	data []byte) (bool, int) {
+	data  []byte) (bool, int) {
 	cursor := 0
 	for _, iov := range pfm.cache.iovecs {
 		if iov.intersect(startOfs, endOfs) {
