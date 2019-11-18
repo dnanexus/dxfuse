@@ -269,3 +269,28 @@ func LogMsg(moduleName string, a string, args ...interface{}) {
 	now := time.Now()
 	log.Printf("%s %s: %s", Time2string(now), moduleName, msg)
 }
+
+
+//
+// 1024   => 1KB
+// 10240  => 10KB
+// 1100000 => 1MB
+func BytesToString(numBytes int64) string {
+	byteModifier := []string {"B", "KB", "MB", "GB", "TB", "EB", "ZB" }
+
+	digits := make([]int, 0)
+	for numBytes > 0 {
+		d := int(numBytes % 1024)
+		digits = append(digits, d)
+		numBytes = numBytes / 1024
+	}
+
+	// which digit is the most significant?
+	msd := len(digits)
+	if msd >= len(byteModifier) {
+		// This number is so large that we don't have a modifier
+		// for it.
+		return fmt.Sprintf("%dB", numBytes)
+	}
+	return fmt.Sprintf("%d%s", digits[msd], byteModifier[msd])
+}

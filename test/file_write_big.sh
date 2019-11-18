@@ -1,13 +1,13 @@
 #!/bin/bash -ex
 
 mountpoint="/tmp/MNT"
-projectName="dxfuse_test_data"
+projName="dxfuse_test_data"
 target_dir="write_test_dir"
-top_dir="$mountpoint/$projectName"
+top_dir="$mountpoint/$projName"
 write_dir=$top_dir/$target_dir
 
-dx rm -r $projectName:/$target_dir || true
-dx mkdir -p $projectName:/$target_dir
+dx rm -r $projName:/$target_dir || true
+dx mkdir -p $projName:/$target_dir
 
 # Get all the DX environment variables, so that dxfuse can use them
 echo "loading the dx environment"
@@ -22,9 +22,15 @@ mkdir -p $mountpoint
 
 # Start the dxfuse daemon in the background, and wait for it to initilize.
 echo "Mounting dxfuse"
-sudo -E /go/bin/dxfuse -verbose 2 $mountpoint $projectName &
+sudo -E /go/bin/dxfuse -verbose 2 $mountpoint $projName &
 dxfuse_pid=$!
 sleep 2
+
+
+echo "stream one file"
+cat $top_dir/symlinks/wgEncodeUwRepliSeqBg02esS1AlnRep1.bam.bai >& /tmp/wgEncodeUwRepliSeqBg02esS1AlnRep1.bam.bai
+#dx download $projName:/symlinks/wgEncodeUwRepliSeqBg02esS1AlnRep1.bam.bai
+
 
 # copy files
 echo "copying small files"
@@ -61,4 +67,4 @@ sudo umount $mountpoint
 # wait until the filesystem is done running
 wait $dxfuse_pid
 
-dx ls -l $projectName:/$target_dir
+dx ls -l $projName:/$target_dir

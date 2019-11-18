@@ -1,4 +1,4 @@
-#!/bin/bash -e
+#!/bin/bash -ex
 
 ######################################################################
 ## constants
@@ -448,7 +448,9 @@ main() {
     echo "loading the dx environment"
 
     # don't leak the token to stdout
-    source environment >& /dev/null
+    #source environment >& /dev/null
+    dx env --bash > ENV
+    source ENV >& /dev/null
 
     # clean and make fresh directories
     for d in $dxTrgDir $mountpoint; do
@@ -456,13 +458,14 @@ main() {
     done
 
     # Start the dxfuse daemon in the background, and wait for it to initilize.
+    verbose=1
     echo "Mounting dxfuse"
     flags=""
     if [[ $verbose != "" ]]; then
         flags="-verbose 1"
     fi
     #sudo -E dxfuse $flags $mountpoint $DX_PROJECT_CONTEXT_ID &
-    sudo -E dxfuse $flags $mountpoint dxfuse_test_data dxfuse_test_read_only &
+    sudo -E /go/bin/dxfuse $flags $mountpoint dxfuse_test_data dxfuse_test_read_only &
     dxfuse_pid=$!
     sleep 2
 
@@ -471,37 +474,37 @@ main() {
     dx rm -f $projName:/hello.txt >& /dev/null || true
     dx mkdir -p $projName:/write_test_dir
 
-    echo "download recursively with dx download"
-    dx download --no-progress -o $dxTrgDir -r  dxfuse_test_data:/$dxDirOnProject
+#    echo "download recursively with dx download"
+#    dx download --no-progress -o $dxTrgDir -r  dxfuse_test_data:/$dxDirOnProject
 
     # do not exit immediately if there are differences; we want to see the files
     # that aren't the same
-    diff -r --brief $dxpyDir $dxfuseDir > diff.txt || true
-    if [[ -s diff.txt ]]; then
-        echo "Difference in basic file structure"
-        cat diff.txt
-        exit 1
-    fi
+#    diff -r --brief $dxpyDir $dxfuseDir > diff.txt || true
+#    if [[ -s diff.txt ]]; then
+#        echo "Difference in basic file structure"
+#        cat diff.txt
+#        exit 1
+#    fi
 
     # find
-    echo "find"
-    check_find
+#    echo "find"
+#    check_find
 
     # grep
-    echo "grep"
-    check_grep
+#    echo "grep"
+#    check_grep
 
     # tree
-    echo "tree"
-    check_tree
+#    echo "tree"
+#    check_tree
 
     # ls
-    echo "ls -R"
-    check_ls
+#    echo "ls -R"
+#    check_ls
 
     # find
-    echo "head, tail, wc"
-    check_cmd_line_utils
+#    echo "head, tail, wc"
+#    check_cmd_line_utils
 
     echo "parallel downloads"
     check_parallel_cat
@@ -540,6 +543,6 @@ main() {
 
     dx rm -r $projName:/write_test_dir >& /dev/null || true
     dx rm -r $projName:/write_test_dir2 >& /dev/null || true
-
-    sleep 100000
 }
+
+main
