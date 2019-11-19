@@ -471,37 +471,37 @@ main() {
     dx rm -f $projName:/hello.txt >& /dev/null || true
     dx mkdir -p $projName:/write_test_dir
 
-    echo "download recursively with dx download"
-    dx download --no-progress -o $dxTrgDir -r  dxfuse_test_data:/$dxDirOnProject
-
-    # do not exit immediately if there are differences; we want to see the files
-    # that aren't the same
-    diff -r --brief $dxpyDir $dxfuseDir > diff.txt || true
-    if [[ -s diff.txt ]]; then
-        echo "Difference in basic file structure"
-        cat diff.txt
-        exit 1
-    fi
-
-    # find
-    echo "find"
-    check_find
-
-    # grep
-    echo "grep"
-    check_grep
-
-    # tree
-    echo "tree"
-    check_tree
-
-    # ls
-    echo "ls -R"
-    check_ls
-
-    # find
-    echo "head, tail, wc"
-    check_cmd_line_utils
+#    echo "download recursively with dx download"
+#    dx download --no-progress -o $dxTrgDir -r  dxfuse_test_data:/$dxDirOnProject
+#
+#    # do not exit immediately if there are differences; we want to see the files
+#    # that aren't the same
+#    diff -r --brief $dxpyDir $dxfuseDir > diff.txt || true
+#    if [[ -s diff.txt ]]; then
+#        echo "Difference in basic file structure"
+#        cat diff.txt
+#        exit 1
+#    fi
+#
+#    # find
+#    echo "find"
+#    check_find
+#
+#    # grep
+#    echo "grep"
+#    check_grep
+#
+#    # tree
+#    echo "tree"
+#    check_tree
+#
+#    # ls
+#    echo "ls -R"
+#    check_ls
+#
+#    # find
+#    echo "head, tail, wc"
+#    check_cmd_line_utils
 
     echo "parallel downloads"
     check_parallel_cat

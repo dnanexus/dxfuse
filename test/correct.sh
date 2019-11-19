@@ -462,7 +462,7 @@ main() {
     echo "Mounting dxfuse"
     flags=""
     if [[ $verbose != "" ]]; then
-        flags="-verbose 1"
+        flags="-verbose 2"
     fi
     #sudo -E dxfuse $flags $mountpoint $DX_PROJECT_CONTEXT_ID &
     sudo -E /go/bin/dxfuse $flags $mountpoint dxfuse_test_data dxfuse_test_read_only &

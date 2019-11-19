@@ -1182,7 +1182,7 @@ func (mdb *MetadataDb) Unlink(ctx context.Context, file File) error {
 		if _, err := txn.Exec(sqlStmt); err != nil {
 			log.Printf(err.Error())
 			return fmt.Errorf("could not delete row for inode=%d from the namespace table",
-				file.Inode, nlink)
+				file.Inode)
 		}
 
 		sqlStmt = fmt.Sprintf(`
@@ -1259,7 +1259,7 @@ func (mdb *MetadataDb) UpdateFileMakeRemote(ctx context.Context, fileId string) 
 
 	sqlStmt := fmt.Sprintf(`
  		        UPDATE data_objects
-                        SET Mode = '%s', InlineData=''
+                        SET Mode = '%d', InlineData=''
 			WHERE id = '%s';`,
 		fileReadOnlyMode, fileId)
 

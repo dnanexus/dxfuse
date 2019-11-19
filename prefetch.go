@@ -36,14 +36,20 @@ const (
 	minFileSize = 2 * MiB     // do not track files smaller than this size
 
 	// An prefetch request time limit
-	readRequestTimeout = 90 * time.Second
+	readRequestTimeout = 3 * 60 * time.Second
 )
 
-// enumerate type for the state of a PFM (file metadata)
 const (
+	// enumerated type for the state of a PFM (file metadata)
 	PFM_DETECT_SEQ = 1      // Beginning of the file, detecting if access is sequential
 	PFM_PREFETCH_IN_PROGRESS = 2  // normal case --- prefetch is ongoing
 	PFM_EOF = 3   // reached the end of the file
+
+	// state of an io-vector
+	IOV_HOLE = 1      // empty
+	IOV_IN_FLIGHT = 2 // in progress
+	IOV_DONE = 3      // completed successfully
+	IOV_ERRORED = 4   // completed with an error
 )
 
 // A request that one of the IO-threads will pick up
@@ -54,7 +60,6 @@ type IoReq struct {
 	ioSize      int64   // The io size
 	startByte   int64   // start byte, counting from the beginning of the file.
 	endByte     int64
-	data        []byte
 }
 
 type Iovec struct {
@@ -64,11 +69,8 @@ type Iovec struct {
 	touched        uint64  // mark the areas that have been accessed by the user
 	data         []byte
 
-	// do we want the data? We leave holes when we are detecting
-	// sequential access.
-	submitted      bool    // have we issued a prefetch IO to get this chunk?
-	received       bool    // has it come back?
-	err            bool    // has it come back with an error
+	// io-vector statue (ongoing, done, errored)
+	state          int
 
 	// Allow user reads to wait until prefetch IO complete
 	cond                *sync.Cond
@@ -85,6 +87,13 @@ type Cache struct {
 	iovecs             [](*Iovec)
 }
 
+type MeasureWindow struct {
+	timestamp            time.Time
+	numIOs               int
+	numBytesPrefetched   int64
+	numPrefetchIOs       int
+}
+
 type PrefetchFileMetadata struct {
 	// the file being tracked
 	fh                  *FileHandle
@@ -93,9 +102,7 @@ type PrefetchFileMetadata struct {
 	lastIoTimestamp      time.Time  // Last time an IO hit this file
 	hiUserAccessOfs      int64      // highest file offset accessed by the user
 	sequentiallyAccessed bool       // estimate if this file is sequentially accessed
-	numIOs               int
-	numPrefetchIOs       int
-	numBytesPrefetched   int64
+	mw                   MeasureWindow // statistics for stream
 
 	// cached io vectors.
 	// The assumption is that the user is accessing the last io-vector.
@@ -108,17 +115,81 @@ func fileDesc(f File) string {
 	return fmt.Sprintf("%d", f.Inode)
 }
 
+/*
+Our iovec is A. The others are B, C, etc.
+Here are the possible positions of A to any other range are:
+
+           -------A------
+---B---                     ----C-----
+        ---D--  --E--  ---F---
+        ---------------G---------------
+*/
+func (iov Iovec) intersect(startOfs int64, endOfs int64) bool {
+	if iov.startByte > endOfs {
+		// case B
+		return false
+	}
+	if iov.endByte < startOfs {
+		// case C
+		return false
+	}
+	// there is some intersection
+	return true
+}
+
+// presumption: there is some intersection
+func (iov Iovec) intersectBuffer(startOfs int64, endOfs int64) []byte {
+	// these are offsets in the entire file
+	bgnByte := MaxInt64(iov.startByte, startOfs)
+	endByte := MinInt64(iov.endByte, endOfs)
+
+	// normalize, to offets inside the buffer
+	bgnByte -= iov.startByte
+	endByte -= iov.startByte
+
+	return iov.data[bgnByte : endByte+1]
+}
+
+func (iov Iovec) copyBuffer(startOfs int64, endOfs int64, data []byte) int {
+	subBuf := iov.intersectBuffer(startOfs, endOfs)
+	len := copy(data, subBuf)
+	return len
+}
+
+func (iov Iovec) stateString() string {
+	switch iov.state {
+	case IOV_HOLE: return "HOLE"
+	case IOV_IN_FLIGHT: return "IN_FLIGHT"
+	case IOV_DONE: return "DONE"
+	case IOV_ERRORED: return "ERRORED"
+	default:
+		panic(fmt.Sprintf("bad state for iovec %d", iov.state))
+	}
+}
+
 // write a log message, and add a header
 func (pfm PrefetchFileMetadata) log(a string, args ...interface{}) {
 	hdr := fmt.Sprintf("prefetch(%s)", fileDesc(pfm.fh.f))
 	LogMsg(hdr, a, args...)
 }
 
+// report on the last delta time
 func (pfm PrefetchFileMetadata) logReport(now time.Time) {
-	pfm.log("numIovecs=%d  cache-size=%d  numIOs=%d  numPrefetchIOs=%d  data-prefetched=%s",
+	delta := now.Sub(pfm.mw.timestamp)
+
+	// bandwidth in megabytes per second
+	bandwidthMiBSec := float64(pfm.mw.numBytesPrefetched) / (delta.Seconds() * MiB)
+
+	pfm.log("numIovecs=%d size(cache)=%d #IOs=%d #prefetchIOs=%d bandwidth=%.1f MiB/sec",
 		pfm.cache.maxNumIovecs, len(pfm.cache.iovecs),
-		pfm.numIOs, pfm.numPrefetchIOs,
-		fmt.Sprintf("%dMiB", pfm.numBytesPrefetched / MiB ))
+		pfm.mw.numIOs, pfm.mw.numPrefetchIOs,
+		bandwidthMiBSec)
+
+	// reset the measurement window
+	pfm.mw.timestamp = now
+	pfm.mw.numIOs = 0
+	pfm.mw.numBytesPrefetched = 0
+	pfm.mw.numPrefetchIOs = 0
 }
 
 
@@ -135,7 +206,7 @@ type PrefetchGlobalState struct {
 }
 
 // write a log message, and add a header
-func (pgs PrefetchGlobalState) log(a string, args ...interface{}) {
+func (pgs *PrefetchGlobalState) log(a string, args ...interface{}) {
 	LogMsg("prefetch", a, args...)
 }
 
@@ -210,8 +281,9 @@ func check(value bool) {
 
 // Got an error. Release all waiting IO.
 func (pgs *PrefetchGlobalState) hitError(pfm *PrefetchFileMetadata) {
-	for _, iovec := range pfm.cache.iovecs {
-		iovec.err = true
+	for i, _ := range pfm.cache.iovecs {
+		iovec := pfm.cache.iovecs[i]
+		iovec.state = IOV_ERRORED
 		iovec.cond.Broadcast()
 	}
 }
@@ -237,14 +309,14 @@ func (pgs *PrefetchGlobalState) readData(
 	}
 	headers["Range"] = fmt.Sprintf("bytes=%d-%d", startByte, endByte)
 
-	for tCnt := 0; tCnt < 3; tCnt++ {
-		// Safety procedure to force timeout to prevent hanging
-		ctx, cancel := context.WithCancel(context.TODO())
-		timer := time.AfterFunc(readRequestTimeout, func() {
-			cancel()
-		})
-		defer timer.Stop()
+	// Safety procedure to force timeout to prevent hanging
+	ctx, cancel := context.WithCancel(context.TODO())
+	timer := time.AfterFunc(readRequestTimeout, func() {
+		cancel()
+	})
+	defer timer.Stop()
 
+	for tCnt := 0; tCnt < 3; tCnt++ {
 		data, err := dxda.DxHttpRequest(ctx, client, NumRetriesDefault, "GET", url.URL, headers, []byte("{}"))
 		if err != nil {
 			if err == context.DeadlineExceeded || err == context.Canceled {
@@ -291,12 +363,7 @@ func findIovecIndex(pfm *PrefetchFileMetadata, ioReq IoReq) int {
 
 // We are holding the global lock at this point.
 // Wake up waiting IOs, if any.
-func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq IoReq, err error) {
-	if err != nil {
-		pfm.log("prefetch io error [%d -- %d] %s",
-			ioReq.startByte, ioReq.endByte, err.Error())
-	}
-
+func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq IoReq, data []byte, err error) {
 	// Find the index for this chunk in the cache. The chunks may be different
 	// size, so we need to scan.
 	iovIdx := findIovecIndex(pfm, ioReq)
@@ -306,16 +373,21 @@ func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq
 		return
 	}
 	check(pfm.cache.iovecs[iovIdx].data == nil)
-	pfm.cache.iovecs[iovIdx].data = ioReq.data
-	pfm.cache.iovecs[iovIdx].received = true
-	pfm.cache.iovecs[iovIdx].err = (err != nil)
+	if err == nil {
+		pfm.cache.iovecs[iovIdx].data = data
+		pfm.cache.iovecs[iovIdx].state = IOV_DONE
 
-	// wake up waiting IOs
+		// statistics
+		pfm.mw.numBytesPrefetched += int64(len(data))
+		pfm.mw.numPrefetchIOs++
+	} else {
+		pfm.log("prefetch io error [%d -- %d] %s",
+			ioReq.startByte, ioReq.endByte, err.Error())
+		pfm.cache.iovecs[iovIdx].state = IOV_ERRORED
+	}
+
+	// wake up waiting user IOs
 	pfm.cache.iovecs[iovIdx].cond.Broadcast()
-
-	// statistics
-	pfm.numPrefetchIOs++
-	pfm.numBytesPrefetched += int64(len(ioReq.data))
 }
 
 
@@ -342,12 +414,7 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 			pgs.log("%s dropping prefetch IO [%d -- %d], file is no longer tracked",
 				fileDesc(ioReq.fh.f), ioReq.startByte, ioReq.endByte)
 		} else {
-			if err != nil {
-				pgs.addIoReqToCache(pfm, ioReq, err)
-			} else {
-				ioReq.data = data
-				pgs.addIoReqToCache(pfm, ioReq, nil)
-			}
+			pgs.addIoReqToCache(pfm, ioReq, data, err)
 		}
 		pgs.mutex.Unlock()
 	}
@@ -384,7 +451,8 @@ func (pgs *PrefetchGlobalState) tableCleanupWorker() {
 		now := time.Now()
 		pgs.mutex.Lock()
 		// print a report for each stream
-		for _, pfm := range pgs.files {
+		for i, _ := range pgs.files {
+			pfm := pgs.files[i]
 			pfm.logReport(now)
 		}
 
@@ -416,8 +484,7 @@ func (pgs *PrefetchGlobalState) newPrefetchFileMetadata(fh *FileHandle) *Prefetc
 	entry.lastIoTimestamp = time.Now()
 	entry.hiUserAccessOfs = 0
 	entry.sequentiallyAccessed = false
-	entry.numIOs = 0
-	entry.numPrefetchIOs = 0
+	entry.mw.timestamp = time.Now()
 
 	// Initial state of the file; detect if it is accessed sequentially.
 	entry.state = PFM_DETECT_SEQ
@@ -437,7 +504,7 @@ func (pgs *PrefetchGlobalState) newPrefetchFileMetadata(fh *FileHandle) *Prefetc
 		endByte : entry.cache.endByte,
 		touched : 0,
 		data : nil,
-		submitted : false,
+		state : IOV_HOLE,
 		cond : sync.NewCond(&pgs.mutex),
 	}
 	return &entry
@@ -591,7 +658,7 @@ func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIn
 				endByte : endByte,
 				touched : 0,
 				data : nil,
-				submitted : true,
+				state : IOV_IN_FLIGHT,
 				cond : sync.NewCond(&pgs.mutex),
 			}
 			pgs.ioQueue <- IoReq{
@@ -624,9 +691,7 @@ func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIn
 			if pfm.cache.iovecs[i].endByte < pfm.hiUserAccessOfs {
 				// The user has already passed this point in the file.
 				// it can be discarded.
-				pfm.cache.iovecs[i].data = nil
-				if pfm.state == PFM_PREFETCH_IN_PROGRESS &&
-					pfm.cache.iovecs[i].submitted {
+				if pfm.state == PFM_PREFETCH_IN_PROGRESS {
 					// Estimate if the file is sequentially accessed,
 					// by checking if the chunk we are discarding was fully accessed.
 					numAccessed := bits.OnesCount64(pfm.cache.iovecs[i].touched)
@@ -653,11 +718,8 @@ func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIn
 	if pgs.verboseLevel >= 2 {
 		pfm.log("range =[%d -- %d]", pfm.cache.startByte, pfm.cache.endByte)
 		for i, iovec := range pfm.cache.iovecs {
-			hasData := "nil"
-			if iovec.data != nil {
-				hasData = "data"
-			}
-			pfm.log("cache %d -> [%d -- %d]  %s", i, iovec.startByte, iovec.endByte, hasData)
+			pfm.log("cache %d -> [%d -- %d]  %s", i, iovec.startByte, iovec.endByte,
+				iovec.stateString())
 		}
 	}
 }
@@ -717,41 +779,6 @@ func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 	}
 }
 
-/*
-Our iovec is A. The others are B, C, etc.
-Here are the possible positions of A to any other range are:
-
-           -------A------
----B---                     ----C-----
-        ---D--  --E--  ---F---
-        ---------------G---------------
-*/
-func (iov Iovec) intersect(startOfs int64, endOfs int64) bool {
-	if iov.startByte > endOfs {
-		// case B
-		return false
-	}
-	if iov.endByte < startOfs {
-		// case C
-		return false
-	}
-	// there is some intersection
-	return true
-}
-
-// presumption: there is some intersection
-func (iov Iovec) intersectBuffer(startOfs int64, endOfs int64) []byte {
-	// these are offsets in the entire file
-	bgnByte := MaxInt64(iov.startByte, startOfs)
-	endByte := MinInt64(iov.endByte, endOfs)
-
-	// normalize, to offets inside the buffer
-	bgnByte -= iov.startByte
-	endByte -= iov.startByte
-
-	return iov.data[bgnByte : endByte+1]
-}
-
 // assumption: the range is entirely in cache.
 // copy the data into the buffer, and return true, and the length of the data.
 //
@@ -761,23 +788,28 @@ func (pgs *PrefetchGlobalState) getDataFromCache(
 	startOfs int64,
 	endOfs int64,
 	data  []byte) (bool, int) {
+	first, last := pgs.findCoveredRange(pfm, startOfs, endOfs)
 	cursor := 0
-	for _, iov := range pfm.cache.iovecs {
-		if !iov.intersect(startOfs, endOfs) {
-			continue
-		}
-		// its inside this iovec
-		if iov.submitted && !iov.received {
+	for i := first; i <= last; i++ {
+		iov := pfm.cache.iovecs[i]
+		switch iov.state {
+		case IOV_HOLE:
+			return false, 0
+
+		case IOV_IN_FLIGHT:
 			// waiting for prefetch to come back with data.
 			// note: when we wake up, the IO may have come back
 			// with an error.
 			iov.cond.Wait()
-		}
-		if iov.received && !iov.err {
-			subBuf := iov.intersectBuffer(startOfs, endOfs)
-			len := copy(data[cursor:], subBuf)
-			cursor += len
-		} else {
+			if iov.state != IOV_DONE {
+				return false, 0
+			}
+			cursor += iov.copyBuffer(startOfs, endOfs, data[cursor:])
+
+		case IOV_DONE:
+			cursor += iov.copyBuffer(startOfs, endOfs, data[cursor:])
+
+		case IOV_ERRORED:
 			// there is no data.
 			return false, 0
 		}
@@ -822,7 +854,7 @@ func (pgs *PrefetchGlobalState) CacheLookup(fh *FileHandle, startOfs int64, endO
 	// accounting and statistics
 	pfm.lastIoTimestamp = now
 	pfm.hiUserAccessOfs = MaxInt64(pfm.hiUserAccessOfs, startOfs)
-	pfm.numIOs++
+	pfm.mw.numIOs++
 
 	switch pfm.state {
 	case PFM_DETECT_SEQ:

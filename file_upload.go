@@ -95,7 +95,7 @@ func NewFileUploadGlobalState(
 }
 
 // write a log message, and add a header
-func (fugs FileUploadGlobalState) log(a string, args ...interface{}) {
+func (fugs *FileUploadGlobalState) log(a string, args ...interface{}) {
 	LogMsg("file_upload", a, args...)
 }
 
@@ -366,7 +366,7 @@ func (fugs *FileUploadGlobalState) createFileWorker() {
 
 		// check if the upload has been cancelled
 		if !fugs.shouldUpload(upReq.id) {
-			fugs.log("file %s was removed, no need to upload %s", upReq.id)
+			fugs.log("file %s was removed, no need to upload", upReq.id)
 			fugs.uploadComplete(upReq.id)
 			continue
 		}

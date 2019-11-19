@@ -110,7 +110,7 @@ func NewDxfuse(
 }
 
 // write a log message, and add a header
-func (fsys Filesys) log(a string, args ...interface{}) {
+func (fsys *Filesys) log(a string, args ...interface{}) {
 	LogMsg("dxfuse", a, args...)
 }
 
@@ -883,6 +883,10 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 		return nil
 	}
 
+	// release the file handle itself
+	delete(fsys.fhTable, op.Handle)
+	fsys.fhFreeList = append(fsys.fhFreeList, op.Handle)
+
 	// Clear the state involved with this open file descriptor
 	switch fh.fKind {
 	case RO_Remote:
@@ -939,11 +943,6 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 	default:
 		panic(fmt.Sprintf("Invalid file kind %d", fh.fKind))
 	}
-
-	// release the file handle itself
-	delete(fsys.fhTable, op.Handle)
-	fsys.fhFreeList = append(fsys.fhFreeList, op.Handle)
-	return nil
 }
 
 
