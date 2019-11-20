@@ -23,21 +23,18 @@ dxfuse_pid=$!
 sleep 2
 
 
-files=$(find $top_dir/symlinks -type f)
-for f in $files; do
-    echo "comparing $f"
-    b_name=$(basename $f)
+trg_dir="${baseDir}/dxCopySymlinks"
+dxfuseDir="$top_dir/symlinks"
+rm -rf $trg_dir
+mkdir -p $trg_dir
 
-    rm -f /tmp/B
-    dx download $projName:/symlinks/$b_name -o /tmp/B
-    diff $f /tmp/B
-    rc=$!
-    if [[ $rc == 0 ]]; then
-        echo "Files match"
-    else
-        echo "Error: files do not match"
-    fi
-done
+dx download --no-progress -o $trg_dir -r  $projName:/symlinks
+diff -r --brief $dxfuseDir/symlinks $trg_dir > diff.txt || true
+if [[ -s diff.txt ]]; then
+    echo "Difference in symlink content"
+    cat diff.txt
+    exit 1
+fi
 
 sudo umount $mountpoint
 

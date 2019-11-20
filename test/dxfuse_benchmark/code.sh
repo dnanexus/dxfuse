@@ -67,7 +67,7 @@ main() {
     echo "projName = $projName"
 
     measure_and_compare $mountpoint/$projName benchmarks $HOME/out/result/result.txt
-#    measure_and_compare $mountpoint/$projName symlinks $HOME/out/result/result_sym.txt
+#    measure_and_compare $mountpoint/$projName benchmarks_symlinks $HOME/out/result/result_symlinks.txt
 
     echo "unmounting dxfuse"
     sudo umount $mountpoint
@@ -77,8 +77,8 @@ main() {
         dx-jobutil-add-output --array --class=array:string result $line
     done
 
-#    results_sym=$(cat $HOME/out/result/result_sym.txt)
-#    for line in $results_sym; do
-#        dx-jobutil-add-output --array --class=array:string result_sym $line
+#    result_symlinks=$(cat $HOME/out/result/result_symlinks.txt)
+#    for line in $result_symlinks; do
+#        dx-jobutil-add-output --array --class=array:string result_symlinks $line
 #    done
 }

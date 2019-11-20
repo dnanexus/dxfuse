@@ -7,7 +7,6 @@ projName="dxfuse_test_data"
 dxDirOnProject="correctness"
 
 baseDir="$HOME/dxfuse_test"
-dxTrgDir="${baseDir}/dxCopy"
 mountpoint="${baseDir}/MNT"
 
 dxfuseDir="$mountpoint/$projName/$dxDirOnProject"
@@ -443,6 +442,20 @@ function file_remove_non_exist {
 
 }
 
+function compare_symlink_content {
+    local trg_dir="${baseDir}/dxCopySymlinks"
+    rm -rf $trg_dir
+    mkdir -p $trg_dir
+
+    dx download --no-progress -o $trg_dir -r  $projName:/symlinks
+    diff -r --brief $mountpoint/$projName/symlinks $trg_dir/symlinks > diff.txt || true
+    if [[ -s diff.txt ]]; then
+        echo "Difference in symlink content"
+        cat diff.txt
+        exit 1
+    fi
+}
+
 main() {
     # Get all the DX environment variables, so that dxfuse can use them
     echo "loading the dx environment"
@@ -451,9 +464,7 @@ main() {
     source environment >& /dev/null
 
     # clean and make fresh directories
-    for d in $dxTrgDir $mountpoint; do
-        mkdir -p $d
-    done
+    mkdir -p $mountpoint
 
     # bash generate random alphanumeric strings
     target_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
@@ -475,7 +486,12 @@ main() {
     dxfuse_pid=$!
     sleep 2
 
+#    echo "comparing symlink content"
+#    compare_symlink_content
+
     echo "download recursively with dx download"
+    dxTrgDir="${baseDir}/dxCopy"
+    mkdir $dxTrgDir
     dx download --no-progress -o $dxTrgDir -r  dxfuse_test_data:/$dxDirOnProject
 
     # do not exit immediately if there are differences; we want to see the files
