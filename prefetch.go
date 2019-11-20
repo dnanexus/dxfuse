@@ -484,12 +484,10 @@ func (pgs *PrefetchGlobalState) tableCleanupWorker() {
 			candidates = append(candidates, f)
 		}
 		pgs.mutex.Unlock()
-		pgs.log("%d candidates", len(candidates))
 
 		// go over the table, and find all the files not worth tracking
 		now := time.Now()
-		for i, f := range candidates {
-			pgs.log("candidate %d", i)
+		for _, f := range candidates {
 			pfm := pgs.getAndLockPfm(f)
 			if pfm != nil {
 				// print a report for each stream
@@ -858,7 +856,9 @@ func (pgs *PrefetchGlobalState) isDataInCache(
 			// waiting for prefetch to come back with data.
 			// note: when we wake up, the IO may have come back
 			// with an error.
-			pfm.log("isDataInCache: wait")
+			if pgs.verboseLevel >= 2 {
+				pfm.log("isDataInCache: wait")
+			}
 			iov.cond.Wait()
 			return DATA_WAIT
 
