@@ -153,7 +153,7 @@ function check_grep {
 function check_parallel_cat {
     top_dir="$mountpoint/$projName/reference_data"
     target_dir="/tmp/write_test_dir"
-    TOTAL_NUM_FILES=4
+    TOTAL_NUM_FILES=3
 
     mkdir -p $target_dir
     all_files=$(find $top_dir -type f)
@@ -459,9 +459,8 @@ main() {
     echo "Mounting dxfuse"
     flags=""
     if [[ $verbose != "" ]]; then
-        flags="-verbose 1"
+        flags="-verbose 2"
     fi
-    #sudo -E dxfuse $flags $mountpoint $DX_PROJECT_CONTEXT_ID &
     sudo -E dxfuse $flags $mountpoint dxfuse_test_data dxfuse_test_read_only &
     dxfuse_pid=$!
     sleep 2

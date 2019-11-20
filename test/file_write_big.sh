@@ -1,6 +1,7 @@
 #!/bin/bash -ex
 
-mountpoint="/tmp/MNT"
+baseDir="$HOME/dxfuse_test"
+mountpoint="${baseDir}/MNT"
 projName="dxfuse_test_data"
 target_dir="write_test_dir"
 top_dir="$mountpoint/$projName"

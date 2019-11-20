@@ -830,7 +830,7 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 
 	if fh.fKind == RO_Remote {
 		// Create an entry in the prefetch table, if the file is eligable
-		fsys.pgs.CreateStreamEntry(fh)
+		fsys.pgs.CreateStreamEntry(fh.f, *fh.url)
 	}
 
 	// add to the open-file table, so we can recognize future accesses to
@@ -891,7 +891,7 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 	switch fh.fKind {
 	case RO_Remote:
 		// Read-only file that is accessed remotely
-		fsys.pgs.RemoveStreamEntry(fh, false)
+		fsys.pgs.RemoveStreamEntry(fh.f)
 		return nil
 
 	case RW_File:
@@ -965,7 +965,7 @@ func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp,
 
 	// See if the data has already been prefetched.
 	// This call will wait, if a prefetch IO is in progress.
-	ok, len := fsys.pgs.CacheLookup(fh, op.Offset, endOfs, op.Dst)
+	ok, len := fsys.pgs.CacheLookup(fh.f, op.Offset, endOfs, op.Dst)
 	if ok {
 		op.BytesRead = len
 		return nil
