@@ -20,7 +20,7 @@ function measure_and_compare {
     echo $files
 
     mkdir -p $HOME/out/result
-    echo "file size, method, time(seconds), method, time(seconds)" > $output_file
+    echo "file-size,method1,time(seconds),method2,time(seconds)" > $output_file
 
     for fname in $files; do
         fname="$(basename $fname)"
@@ -44,7 +44,7 @@ function measure_and_compare {
         diff /tmp/X_dxfuse /tmp/X_dx_cat
 
         sizeDesc=$(ls -lh /tmp/X_dxfuse | cut -d ' ' -f 5)
-        echo "$sizeDesc, dx-cat, $runtime1, dxfuse, $runtime2"  >> $output_file
+        echo "$sizeDesc,dx-cat,$runtime1,dxfuse,$runtime2"  >> $output_file
     done
 }
 

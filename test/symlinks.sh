@@ -1,4 +1,4 @@
-#!/bin/bash -ex
+#!/bin/bash
 
 baseDir="$HOME/dxfuse_test"
 mountpoint="${baseDir}/MNT"
@@ -23,11 +23,21 @@ dxfuse_pid=$!
 sleep 2
 
 
-echo "stream one file"
-cat $top_dir/symlinks/1000G_2504_high_coverage.sequence.index > /tmp/A
-dx download $projName:/symlinks/1000G_2504_high_coverage.sequence.index -o /tmp/B
+files=$(find $top_dir/symlinks -type f)
+for f in $files; do
+    echo "comparing $f"
+    b_name=$(basename $f)
 
-diff /tmp/A /tmp/B
+    rm -f /tmp/B
+    dx download $projName:/symlinks/$b_name -o /tmp/B
+    diff $f /tmp/B
+    rc=$!
+    if [[ $rc == 0 ]]; then
+        echo "Files match"
+    else
+        echo "Error: files do not match"
+    fi
+done
 
 sudo umount $mountpoint
 
