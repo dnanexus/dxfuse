@@ -151,12 +151,12 @@ function check_grep {
 
 # copy a bunch of files in parallel
 function check_parallel_cat {
-    top_dir="$mountpoint/$projName/reference_data"
-    target_dir="/tmp/write_test_dir"
-    TOTAL_NUM_FILES=3
+    local top_dir="$mountpoint/$projName/reference_data"
+    local target_dir="/tmp/write_test_dir"
+    local TOTAL_NUM_FILES=3
 
     mkdir -p $target_dir
-    all_files=$(find $top_dir -type f)
+    local all_files=$(find $top_dir -type f)
 
     # limit the number of files in the test
     num_files=0
@@ -171,7 +171,7 @@ function check_parallel_cat {
     done
 
     # copy the chosen files in parallel
-    pids=()
+    local pids=()
     for f in $files; do
         echo "copying $f"
         b_name=$(basename $f)
@@ -197,10 +197,10 @@ function check_parallel_cat {
 # copy a file and check that platform has the correct content
 #
 function check_file_write_content {
-    content="nothing much"
-    target_dir="write_test_dir"
-    top_dir=$mountpoint/$projName
-    write_dir=$top_dir/$target_dir
+    local top_dir=$1
+    local target_dir=$2
+    local write_dir=$top_dir/$target_dir
+    local content="nothing much"
 
     echo "write_dir = $write_dir"
 
@@ -221,7 +221,7 @@ function check_file_write_content {
     dx ls -l $projName:/$target_dir/A.txt
 
     # compare the data
-    content2=$(dx cat $projName:/$target_dir/A.txt)
+    local content2=$(dx cat $projName:/$target_dir/A.txt)
     if [[ "$content" == "$content2" ]]; then
         echo "correct"
     else
@@ -234,9 +234,9 @@ function check_file_write_content {
 # copy files inside the mounted filesystem
 #
 function write_files {
-    target_dir="write_test_dir"
-    top_dir=$mountpoint/$projName
-    write_dir=$top_dir/$target_dir
+    local top_dir=$1
+    local target_dir=$2
+    local write_dir=$top_dir/$target_dir
 
     echo "write_dir = $write_dir"
     ls -l $write_dir
@@ -246,7 +246,7 @@ function write_files {
 
     # compare resulting files
     echo "comparing files"
-    files=$(find $top_dir/correctness/large -type f)
+    local files=$(find $top_dir/correctness/large -type f)
     for f in $files; do
         b_name=$(basename $f)
         diff $f $write_dir/$b_name
@@ -258,7 +258,7 @@ function write_files {
 function write_to_read_only_project {
     ls $mountpoint/dxfuse_test_read_only
     (echo "hello" > $mountpoint/dxfuse_test_read_only/A.txt) >& cmd_results.txt || true
-    result=$(cat cmd_results.txt)
+    local result=$(cat cmd_results.txt)
 
     echo "result=$result"
     if [[  $result =~ "Operation not permitted" ]]; then
@@ -272,7 +272,7 @@ function write_to_read_only_project {
 # create directory on mounted FS
 function create_dir {
     local top_dir=$1
-    local write_dir="write_test_dir2"
+    local write_dir=$2
 
     cd $top_dir
     mkdir $write_dir
@@ -283,7 +283,7 @@ function create_dir {
 
     # compare resulting files
     echo "comparing files"
-    files=$(find $top_dir/correctness/small -type f)
+    local files=$(find $top_dir/correctness/small -type f)
     for f in $files; do
         b_name=$(basename $f)
         diff $f $write_dir/$b_name
@@ -301,7 +301,7 @@ function create_dir {
 function create_remove_dir {
     local flag=$1
     local top_dir=$2
-    local write_dir="jumble"
+    local write_dir=$3
 
     cd $top_dir
     mkdir $write_dir
@@ -314,7 +314,7 @@ function create_remove_dir {
 
     # compare resulting files
     echo "comparing files"
-    files=$(find $top_dir/correctness/small -type f)
+    local files=$(find $top_dir/correctness/small -type f)
     for f in $files; do
         b_name=$(basename $f)
         diff $f $write_dir/$b_name
@@ -455,6 +455,16 @@ main() {
         mkdir -p $d
     done
 
+    # bash generate random alphanumeric strings
+    target_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+    target_dir2=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+    target_dir3=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+    writeable_dirs=($target_dir $target_dir2 $target_dir3)
+    for d in ${writeable_dirs[@]}; do
+        dx rm -r $projName:/$d >& /dev/null || true
+    done
+    dx mkdir $projName:/$target_dir
+
     # Start the dxfuse daemon in the background, and wait for it to initilize.
     echo "Mounting dxfuse"
     flags=""
@@ -465,61 +475,56 @@ main() {
     dxfuse_pid=$!
     sleep 2
 
-    dx rm -r $projName:/write_test_dir >& /dev/null || true
-    dx rm -r $projName:/write_test_dir2 >& /dev/null || true
-    dx rm -f $projName:/hello.txt >& /dev/null || true
-    dx mkdir -p $projName:/write_test_dir
+    echo "download recursively with dx download"
+    dx download --no-progress -o $dxTrgDir -r  dxfuse_test_data:/$dxDirOnProject
 
-#    echo "download recursively with dx download"
-#    dx download --no-progress -o $dxTrgDir -r  dxfuse_test_data:/$dxDirOnProject
-#
-#    # do not exit immediately if there are differences; we want to see the files
-#    # that aren't the same
-#    diff -r --brief $dxpyDir $dxfuseDir > diff.txt || true
-#    if [[ -s diff.txt ]]; then
-#        echo "Difference in basic file structure"
-#        cat diff.txt
-#        exit 1
-#    fi
-#
-#    # find
-#    echo "find"
-#    check_find
-#
-#    # grep
-#    echo "grep"
-#    check_grep
-#
-#    # tree
-#    echo "tree"
-#    check_tree
-#
-#    # ls
-#    echo "ls -R"
-#    check_ls
-#
-#    # find
-#    echo "head, tail, wc"
-#    check_cmd_line_utils
+    # do not exit immediately if there are differences; we want to see the files
+    # that aren't the same
+    diff -r --brief $dxpyDir $dxfuseDir > diff.txt || true
+    if [[ -s diff.txt ]]; then
+        echo "Difference in basic file structure"
+        cat diff.txt
+        exit 1
+    fi
+
+    # find
+    echo "find"
+    check_find
+
+    # grep
+    echo "grep"
+    check_grep
+
+    # tree
+    echo "tree"
+    check_tree
+
+    # ls
+    echo "ls -R"
+    check_ls
+
+    # find
+    echo "head, tail, wc"
+    check_cmd_line_utils
 
     echo "parallel downloads"
     check_parallel_cat
 
     echo "can write to a small file"
-    check_file_write_content
+    check_file_write_content "$mountpoint/$projName" $target_dir
 
     echo "can write several files to a directory"
-    write_files
+    write_files "$mountpoint/$projName" $target_dir
 
     echo "can't write to read-only project"
     write_to_read_only_project
 
     echo "create directory"
-    create_dir "$mountpoint/$projName"
+    create_dir "$mountpoint/$projName" $target_dir2
 
     echo "create/remove directory"
-    create_remove_dir "yes" "$mountpoint/$projName"
-    create_remove_dir "no" "$mountpoint/$projName"
+    create_remove_dir "yes" "$mountpoint/$projName" $target_dir3
+    create_remove_dir "no" "$mountpoint/$projName" $target_dir3
 
     echo "mkdir rmdir"
     rmdir_non_empty "$mountpoint/$projName/sunny"
@@ -537,8 +542,7 @@ main() {
     # wait until the filesystem is done running
     wait $dxfuse_pid
 
-    dx rm -r $projName:/write_test_dir >& /dev/null || true
-    dx rm -r $projName:/write_test_dir2 >& /dev/null || true
-
-    sleep 100000
+    for d in ${writeable_dirs[@]}; do
+        dx rm -r $projName:/$d >& /dev/null || true
+    done
 }

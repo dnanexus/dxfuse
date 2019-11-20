@@ -8,11 +8,45 @@ dxTrgDir="${baseDir}/dxCopy"
 dxfuseTrgDir="${baseDir}/dxfuseCopy"
 mountpoint="${baseDir}/MNT"
 
-dxDirOnProject="benchmarks"
-#dxDirOnProject="symlinks"
-#dxDirOnProject="correctness/small"
-
 ######################################################################
+
+function measure_and_compare {
+    local top_dir=$1
+    local data_dir=$2
+    local output_file=$3
+
+    echo "Discover the benchmark files"
+    files=$(ls $top_dir/$data_dir)
+    echo $files
+
+    mkdir -p $HOME/out/result
+    echo "file size, method, time(seconds), method, time(seconds)" > $output_file
+
+    for fname in $files; do
+        fname="$(basename $fname)"
+        echo $fname
+        rm -f /tmp/X_dxfuse
+        rm -f /tmp/X_dx_cat
+
+        echo "downloading with dx cat"
+        start=`date +%s`
+        dx cat "$DX_PROJECT_CONTEXT_ID:/$data_dir/$fname" > /tmp/X_dx_cat
+        end=`date +%s`
+        runtime1=$((end-start))
+
+        start=`date +%s`
+        echo "copying from dxfuse"
+        cat "$mountpoint/$projName/$data_dir/$fname" > /tmp/X_dxfuse
+        end=`date +%s`
+        runtime2=$((end-start))
+
+        echo "sanity check, compare data"
+        diff /tmp/X_dxfuse /tmp/X_dx_cat
+
+        sizeDesc=$(ls -lh /tmp/X_dxfuse | cut -d ' ' -f 5)
+        echo "$sizeDesc, dx-cat, $runtime1, dxfuse, $runtime2"  >> $output_file
+    done
+}
 
 main() {
     # Get all the DX environment variables, so that dxfuse can use them
@@ -32,37 +66,8 @@ main() {
     projName=$(ls $mountpoint)
     echo "projName = $projName"
 
-    echo "Discover the benchmark files"
-    files=$(ls $mountpoint/$projName/$dxDirOnProject)
-    echo $files
-
-    mkdir -p $HOME/out/result
-    echo "file size, method, time(seconds), method, time(seconds)" > $HOME/out/result/result.txt
-
-    for fname in $files; do
-        fname="$(basename $fname)"
-        echo $fname
-        rm -f /tmp/X_dxfuse
-        rm -f /tmp/X_dx_cat
-
-        echo "downloading with dx cat"
-        start=`date +%s`
-        dx cat "$DX_PROJECT_CONTEXT_ID:/$dxDirOnProject/$fname" > /tmp/X_dx_cat
-        end=`date +%s`
-        runtime1=$((end-start))
-
-        start=`date +%s`
-        echo "copying from dxfuse"
-        cat "$mountpoint/$projName/$dxDirOnProject/$fname" > /tmp/X_dxfuse
-        end=`date +%s`
-        runtime2=$((end-start))
-
-        echo "sanity check, compare data"
-        diff /tmp/X_dxfuse /tmp/X_dx_cat
-
-        sizeDesc=$(ls -lh /tmp/X_dxfuse | cut -d ' ' -f 5)
-        echo "$sizeDesc, dx-cat, $runtime1, dxfuse, $runtime2"  >> $HOME/out/result/result.txt
-    done
+    measure_and_compare $mountpoint/$projName benchmarks $HOME/out/result/result.txt
+#    measure_and_compare $mountpoint/$projName symlinks $HOME/out/result/result_sym.txt
 
     echo "unmounting dxfuse"
     sudo umount $mountpoint
@@ -72,5 +77,8 @@ main() {
         dx-jobutil-add-output --array --class=array:string result $line
     done
 
-    #dx-upload-all-outputs
+#    results_sym=$(cat $HOME/out/result/result_sym.txt)
+#    for line in $results_sym; do
+#        dx-jobutil-add-output --array --class=array:string result_sym $line
+#    done
 }

@@ -907,7 +907,7 @@ func (pgs *PrefetchGlobalState) getDataFromCache(
 	numTries := 3
 	for i := 0; i < numTries; i++ {
 		retCode := pgs.isDataInCache(pfm, startOfs, endOfs)
-		if pgs.verbose {
+		if pgs.verboseLevel >= 2 {
 			pfm.log("isDataInCache=%s", cacheCode2string(retCode))
 		}
 		switch retCode {
@@ -920,8 +920,10 @@ func (pgs *PrefetchGlobalState) getDataFromCache(
 		case DATA_WAIT:
 			// wait until the data arrives
 			// release locks, and try again
-			pfm.mutex.Unlock()
-			pfm = pgs.getAndLockPfm(pfm.f)
+			//
+			// TODO: do we really need this?
+			//pfm.mutex.Unlock()
+			//pfm = pgs.getAndLockPfm(pfm.f)
 			continue
 
 		default:

@@ -1,17 +1,9 @@
-#!/bin/bash -e
+#!/bin/bash -ex
 
-mountpoint="/tmp/MNT"
+baseDir="$HOME/dxfuse_test"
+mountpoint="${baseDir}/MNT"
 projName="dxfuse_test_data"
-target_dir="write_test_dir"
 top_dir="$mountpoint/$projName"
-
-function run_sambamba {
-    local bamfile=$1
-
-    sambamba flagstat -t `nproc` $bamfile
-}
-
-
 
 # Get all the DX environment variables, so that dxfuse can use them
 echo "loading the dx environment"
@@ -26,14 +18,17 @@ mkdir -p $mountpoint
 
 # Start the dxfuse daemon in the background, and wait for it to initilize.
 echo "Mounting dxfuse"
-sudo -E /go/bin/dxfuse -verbose 1 $mountpoint $projName &
+sudo -E /go/bin/dxfuse -verbose 2 $mountpoint $projName &
 dxfuse_pid=$!
 sleep 2
 
-run_sambamba $top_dir/symlinks/wgEncodeUwRepliSeqBg02esS1AlnRep1.bam
 
-# unmount cleanly
-cd $HOME
+echo "stream one file"
+cat $top_dir/symlinks/1000G_2504_high_coverage.sequence.index > /tmp/A
+dx download $projName:/symlinks/1000G_2504_high_coverage.sequence.index -o /tmp/B
+
+diff /tmp/A /tmp/B
+
 sudo umount $mountpoint
 
 # wait until the filesystem is done running

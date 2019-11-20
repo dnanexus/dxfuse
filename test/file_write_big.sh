@@ -32,7 +32,6 @@ echo "stream one file"
 cat $top_dir/symlinks/wgEncodeUwRepliSeqBg02esS1AlnRep1.bam.bai >& /tmp/wgEncodeUwRepliSeqBg02esS1AlnRep1.bam.bai
 #dx download $projName:/symlinks/wgEncodeUwRepliSeqBg02esS1AlnRep1.bam.bai
 
-
 # copy files
 echo "copying small files"
 cp $top_dir/correctness/small/*  $write_dir/

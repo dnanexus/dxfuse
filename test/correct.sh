@@ -1,4 +1,4 @@
-#!/bin/bash -ex
+#!/bin/bash -e
 
 ######################################################################
 ## constants
@@ -153,7 +153,7 @@ function check_grep {
 function check_parallel_cat {
     top_dir="$mountpoint/$projName/reference_data"
     target_dir="/tmp/write_test_dir"
-    TOTAL_NUM_FILES=4
+    TOTAL_NUM_FILES=3
 
     mkdir -p $target_dir
     all_files=$(find $top_dir -type f)
@@ -197,10 +197,10 @@ function check_parallel_cat {
 # copy a file and check that platform has the correct content
 #
 function check_file_write_content {
-    content="nothing much"
-    target_dir="write_test_dir"
-    top_dir=$mountpoint/$projName
-    write_dir=$top_dir/$target_dir
+    local top_dir=$1
+    local target_dir=$2
+    local content="nothing much"
+    local write_dir=$top_dir/$target_dir
 
     echo "write_dir = $write_dir"
 
@@ -234,9 +234,9 @@ function check_file_write_content {
 # copy files inside the mounted filesystem
 #
 function write_files {
-    target_dir="write_test_dir"
-    top_dir=$mountpoint/$projName
-    write_dir=$top_dir/$target_dir
+    local top_dir=$1
+    local target_dir=$2
+    local write_dir=$top_dir/$target_dir
 
     echo "write_dir = $write_dir"
     ls -l $write_dir
@@ -272,7 +272,7 @@ function write_to_read_only_project {
 # create directory on mounted FS
 function create_dir {
     local top_dir=$1
-    local write_dir="write_test_dir2"
+    local write_dir=$2
 
     cd $top_dir
     mkdir $write_dir
@@ -301,7 +301,7 @@ function create_dir {
 function create_remove_dir {
     local flag=$1
     local top_dir=$2
-    local write_dir="jumble"
+    local write_dir=$3
 
     cd $top_dir
     mkdir $write_dir
@@ -443,106 +443,107 @@ function file_remove_non_exist {
 
 }
 
-main() {
-    # Get all the DX environment variables, so that dxfuse can use them
-    echo "loading the dx environment"
+# Get all the DX environment variables, so that dxfuse can use them
+echo "loading the dx environment"
 
-    # don't leak the token to stdout
-    #source environment >& /dev/null
-    dx env --bash > ENV
-    source ENV >& /dev/null
+# don't leak the token to stdout
+#source environment >& /dev/null
+rm -f ENV
+dx env --bash > ENV
+source ENV >& /dev/null
 
-    # clean and make fresh directories
-    for d in $dxTrgDir $mountpoint; do
-        mkdir -p $d
-    done
+# clean and make fresh directories
+for d in $dxTrgDir $mountpoint; do
+    mkdir -p $d
+done
 
-    # Start the dxfuse daemon in the background, and wait for it to initilize.
-    verbose=1
-    echo "Mounting dxfuse"
-    flags=""
-    if [[ $verbose != "" ]]; then
-        flags="-verbose 2"
-    fi
-    #sudo -E dxfuse $flags $mountpoint $DX_PROJECT_CONTEXT_ID &
-    sudo -E /go/bin/dxfuse $flags $mountpoint dxfuse_test_data dxfuse_test_read_only &
-    dxfuse_pid=$!
-    sleep 2
-
-    dx rm -r $projName:/write_test_dir >& /dev/null || true
-    dx rm -r $projName:/write_test_dir2 >& /dev/null || true
-    dx rm -f $projName:/hello.txt >& /dev/null || true
-    dx mkdir -p $projName:/write_test_dir
+# Start the dxfuse daemon in the background, and wait for it to initilize.
+echo "Mounting dxfuse"
+flags=""
+#    if [[ $verbose != "" ]]; then
+flags="-verbose 2"
+#    fi
+sudo -E /go/bin/dxfuse $flags $mountpoint dxfuse_test_data dxfuse_test_read_only &
+dxfuse_pid=$!
+sleep 2
 
 #    echo "download recursively with dx download"
 #    dx download --no-progress -o $dxTrgDir -r  dxfuse_test_data:/$dxDirOnProject
-
-    # do not exit immediately if there are differences; we want to see the files
-    # that aren't the same
+#
+#    # do not exit immediately if there are differences; we want to see the files
+#    # that aren't the same
 #    diff -r --brief $dxpyDir $dxfuseDir > diff.txt || true
 #    if [[ -s diff.txt ]]; then
 #        echo "Difference in basic file structure"
 #        cat diff.txt
 #        exit 1
 #    fi
-
-    # find
+#
+#    # find
 #    echo "find"
 #    check_find
-
-    # grep
+#
+#    # grep
 #    echo "grep"
 #    check_grep
-
-    # tree
+#
+#    # tree
 #    echo "tree"
 #    check_tree
-
-    # ls
+#
+#    # ls
 #    echo "ls -R"
 #    check_ls
-
-    # find
+#
+#    # find
 #    echo "head, tail, wc"
 #    check_cmd_line_utils
 
-    echo "parallel downloads"
-    check_parallel_cat
+tree $mountpoint
 
-    echo "can write to a small file"
-    check_file_write_content
+echo "parallel downloads"
+check_parallel_cat
 
-    echo "can write several files to a directory"
-    write_files
+# bash generate random alphanumeric string
+target_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 8 | head -n 1)
+dx rm -r $projName:/$target_dir >& /dev/null || true
 
-    echo "can't write to read-only project"
-    write_to_read_only_project
+echo "can write to a small file"
+check_file_write_content "$mountpoint/$projName" $target_dir
 
-    echo "create directory"
-    create_dir "$mountpoint/$projName"
+echo "can write several files to a directory"
+write_files "$mountpoint/$projName" $target_dir
 
-    echo "create/remove directory"
-    create_remove_dir "yes" "$mountpoint/$projName"
-    create_remove_dir "no" "$mountpoint/$projName"
+echo "can't write to read-only project"
+write_to_read_only_project
 
-    echo "mkdir rmdir"
-    rmdir_non_empty "$mountpoint/$projName/sunny"
-    rmdir_not_exist "$mountpoint/$projName"
-    mkdir_existing  "$mountpoint/$projName/sunny"
+echo "create directory"
+target_dir2=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 8 | head -n 1)
+dx rm -r $projName:/$target_dir2 >& /dev/null || true
+create_dir "$mountpoint/$projName" $target_dir2
 
-    echo "file create remove"
-    file_create_existing "$mountpoint/$projName"
-    file_remove_non_exist "$mountpoint/$projName"
+echo "create/remove directory"
+target_dir3=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 8 | head -n 1)
+dx rm -r $projName:/$target_dir3 >& /dev/null || true
+create_remove_dir "yes" "$mountpoint/$projName" $target_dir3
+create_remove_dir "no" "$mountpoint/$projName" $target_dir3
 
-    echo "unmounting dxfuse"
-    cd $HOME
-    sudo umount $mountpoint
+echo "mkdir rmdir"
+rmdir_non_empty "$mountpoint/$projName/sunny"
+rmdir_not_exist "$mountpoint/$projName"
+mkdir_existing  "$mountpoint/$projName/sunny"
 
-    # wait until the filesystem is done running
-    wait $dxfuse_pid
+echo "file create remove"
+file_create_existing "$mountpoint/$projName"
+file_remove_non_exist "$mountpoint/$projName"
 
-    dx rm -r $projName:/write_test_dir >& /dev/null || true
-    dx rm -r $projName:/write_test_dir2 >& /dev/null || true
-}
+echo "unmounting dxfuse"
+cd $HOME
+sudo umount $mountpoint
 
-main
+# wait until the filesystem is done running
+wait $dxfuse_pid
+
+for d in $target_dir $target_dir2 $target_dir3; do
+    dx rm -r $projName:/$d >& /dev/null || true
+done
