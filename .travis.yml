@@ -46,7 +46,7 @@ script:
 - sleep 2
 - tree /tmp/mount
 - version=$($dxfuse --version)
-- mkdir /tmp/mount/dxfuse_test_data/releases/$version
-- cp $dxfuse /tmp/mount/dxfuse_test_data/releases/$version
+- mkdir -p /tmp/mount/dxfuse_test_data/releases/$version
+- cp -f $dxfuse /tmp/mount/dxfuse_test_data/releases/$version
 - sudo umount /tmp/mount
 - wait $dxfuse_pid
