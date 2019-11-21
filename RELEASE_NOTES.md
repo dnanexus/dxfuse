@@ -1,6 +1,6 @@
 # Release Notes
 
-## v0.13
+## v0.13 21-Nov-2019
 - Additional operations supported: create directory, remove directory, file unlink
 
 ## v0.12  12-Nov-2019
