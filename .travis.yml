@@ -25,9 +25,7 @@ addons:
   apt:
     packages:
     - apt-transport-https
-    - wget
     - git
-    - tree
 
 install:
 - mkdir -p $GOPATH
@@ -44,7 +42,7 @@ script:
 - sudo $dxfuse /tmp/mount project-FbZ25gj04J9B8FJ3Gb5fVP41 &
 - dxfuse_pid=$!
 - sleep 2
-- tree /tmp/mount
+- ls -R /tmp/mount
 - version=$($dxfuse --version)
 - mkdir -p /tmp/mount/dxfuse_test_data/releases/$version
 - cp -f $dxfuse /tmp/mount/dxfuse_test_data/releases/$version
