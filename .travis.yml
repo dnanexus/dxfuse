@@ -39,7 +39,7 @@ install:
 - go get github.com/dnanexus/dxda
 - go get github.com/jacobsa/fuse
 - go get github.com/dnanexus/dxfuse
-- GOOS=darwin go build -o $GOPATH/bin/dxfuse-$TRAVIS_OS_NAME $GOPATH/src/github.com/dnanexus/dxfuse/cli/main.go
+- go build -o $GOPATH/bin/dxfuse-$TRAVIS_OS_NAME $GOPATH/src/github.com/dnanexus/dxfuse/cli/main.go
 
 script:
 - dxfuse=$GOPATH/bin/dxfuse-$TRAVIS_OS_NAME
@@ -52,7 +52,8 @@ script:
 # start the filesystem
 - sudo -E $dxfuse $mountpoint dxfuse_test_data &
 - dxfuse_pid=$!
-- sleep 2
+- sleep 3
+- sudo cat /var/log/dxfuse.log
 
 # tests go here
 - sudo ls -l $mountpoint
