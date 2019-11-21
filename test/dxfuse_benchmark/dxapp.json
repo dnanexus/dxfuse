@@ -13,7 +13,13 @@
   "outputSpec": [
     {
       "name": "result",
-      "class": "array:string"
+      "class": "array:string",
+      "optional" : true
+    },
+    {
+      "name": "result_symlinks",
+      "class": "array:string",
+      "optional" : true
     }
   ],
   "runSpec": {
@@ -26,5 +32,8 @@
     "file": "code.sh",
     "distribution": "Ubuntu",
     "release": "16.04"
+  },
+  "access": {
+    "network" : [ "*" ]
   }
 }

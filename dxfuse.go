@@ -98,12 +98,20 @@ func NewDxfuse(
 		projId2Desc[pDesc.Id] = *pDesc
 	}
 
-
 	if !options.ReadOnly {
 		// initialize background upload state
 		fsys.fugs = NewFileUploadGlobalState(options, dxEnv, projId2Desc)
+
+		// Provide the upload module with a reference to the database.
+		// This is needed to report the end of an upload.
+		fsys.fugs.mdb = mdb
 	}
 	return fsys, nil
+}
+
+// write a log message, and add a header
+func (fsys *Filesys) log(a string, args ...interface{}) {
+	LogMsg("dxfuse", a, args...)
 }
 
 func (fsys *Filesys) Shutdown() {
@@ -111,7 +119,7 @@ func (fsys *Filesys) Shutdown() {
 		// shutdown has already been called.
 		// We are not waiting for anything, and just
 		// unmounting the filesystem here.
-		log.Printf("Shutdown called a second time, skipping the normal sequence")
+		fsys.log("Shutdown called a second time, skipping the normal sequence")
 		return
 	}
 	fsys.shutdownCalled = true
@@ -122,7 +130,7 @@ func (fsys *Filesys) Shutdown() {
 	// to do with it.
 	//
 	// We do not remove the metadata database file, so it could be inspected offline.
-	log.Printf("Shutting down dxfuse")
+	fsys.log("Shutting down dxfuse")
 
 	// stop any background operations the metadata database may be running.
 	fsys.mdb.Shutdown()
@@ -131,9 +139,29 @@ func (fsys *Filesys) Shutdown() {
 	fsys.pgs.Shutdown()
 
 	// complete pending uploads
-	fsys.fugs.Shutdown()
+	if !fsys.options.ReadOnly {
+		fsys.fugs.Shutdown()
+	}
 }
 
+func (fsys *Filesys) dxErrorToFilesystemError(dxErr dxda.DxError) error {
+	switch dxErr.EType {
+	case "InvalidInput":
+		return fuse.EINVAL
+	case "PermissionDenied":
+		return syscall.EPERM
+	case "InvalidType":
+		return fuse.EINVAL
+	case "ResourceNotFound":
+		return fuse.ENOENT
+	case "Unauthorized":
+		return syscall.EPERM
+	default:
+		fsys.log("unexpected dnanexus error type (%s), returning EIO which will unmount the filesystem",
+			dxErr.EType)
+		return fuse.EIO
+	}
+}
 
 func (fsys *Filesys) StatFS(ctx context.Context, op *fuseops.StatFSOp) error {
 	return nil
@@ -144,7 +172,7 @@ func (fsys *Filesys) calcExpirationTime(a fuseops.InodeAttributes) time.Time {
 		// A file created locally. It is probably being written to,
 		// so there is no sense in caching for a long time
 		if fsys.options.Verbose {
-			log.Printf("Setting zero attribute expiration time")
+			fsys.log("Setting small attribute expiration time")
 		}
 
 		return time.Now().Add(1 * time.Second)
@@ -161,7 +189,8 @@ func (fsys *Filesys) LookUpInode(ctx context.Context, op *fuseops.LookUpInodeOp)
 
 	node, ok, err := fsys.mdb.LookupByInode(ctx, int64(op.Parent))
 	if err != nil {
-		return err
+		fsys.log("database error in LookupInode: %s", err.Error())
+		return fuse.EIO
 	}
 	if !ok {
 		// parent directory does not exist
@@ -171,7 +200,8 @@ func (fsys *Filesys) LookUpInode(ctx context.Context, op *fuseops.LookUpInodeOp)
 
 	node, ok, err = fsys.mdb.LookupInDir(ctx, &parentDir, op.Name)
 	if err != nil {
-		return err
+		fsys.log("database error in LookUpInode: %s", err.Error())
+		return fuse.EIO
 	}
 	if !ok {
 		// file does not exist
@@ -197,20 +227,264 @@ func (fsys *Filesys) GetInodeAttributes(ctx context.Context, op *fuseops.GetInod
 	// Grab the inode.
 	node, ok, err := fsys.mdb.LookupByInode(ctx, int64(op.Inode))
 	if err != nil {
-		log.Printf(err.Error())
-		return fmt.Errorf("GetInodeAttributes error")
+		fsys.log("database error in GetInodeAttributes: %s", err.Error())
+		return fuse.EIO
 	}
 	if !ok {
 		return fuse.ENOENT
 	}
 	if fsys.options.Verbose {
-		log.Printf("GetInodeAttributes(inode=%d, %v)", int64(op.Inode), node)
+		fsys.log("GetInodeAttributes(inode=%d, %v)", int64(op.Inode), node)
 	}
 
 	// Fill in the response.
 	op.Attributes = node.GetAttrs()
 	op.AttributesExpiration = fsys.calcExpirationTime(op.Attributes)
 
+	return nil
+}
+
+// if the file is writable, we can modify some of the attributes.
+// otherwise, this is a permission error.
+func (fsys *Filesys) SetInodeAttributes(ctx context.Context, op *fuseops.SetInodeAttributesOp) error {
+	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
+
+	// Grab the inode.
+	node, ok, err := fsys.mdb.LookupByInode(ctx, int64(op.Inode))
+	if err != nil {
+		fsys.log("SetInodeAttributes: database error %s", err.Error())
+		return fuse.EIO
+	}
+	if !ok {
+		return fuse.ENOENT
+	}
+	if fsys.options.Verbose {
+		fsys.log("SetInodeAttributes(inode=%d, %v)", int64(op.Inode), node)
+	}
+
+	var file File
+	switch node.(type) {
+	case File:
+		file = node.(File)
+	case Dir:
+		// can't modify directory attributes
+		return syscall.EPERM
+	}
+
+	// we know it is a file.
+	// check if this is a read-only file.
+	attrs := file.GetAttrs()
+	if attrs.Mode == fileReadOnlyMode {
+		return syscall.EPERM
+	}
+
+	// update the file
+	oldSize := attrs.Size
+	if op.Size != nil {
+		attrs.Size = *op.Size
+	}
+	if op.Mode != nil {
+		attrs.Mode = *op.Mode
+	}
+	if op.Mtime != nil {
+		attrs.Mtime = *op.Mtime
+	}
+	// we don't handle atime
+	if err := fsys.mdb.UpdateFile(ctx, file, int64(attrs.Size), attrs.Mtime, attrs.Mode); err != nil {
+		fsys.log("database error in OpenFile %s", err.Error())
+		return fuse.EIO
+	}
+
+	if op.Size != nil && *op.Size != oldSize {
+		// The size changed, truncate the file
+		localPath := file.InlineData
+		if err := os.Truncate(localPath, int64(*op.Size)); err != nil {
+			fsys.log("Error truncating inode=%d from %d to %d",
+				op.Inode, oldSize, op.Size)
+			return err
+		}
+	}
+
+	// Fill in the response.
+	op.Attributes = attrs
+	op.AttributesExpiration = fsys.calcExpirationTime(attrs)
+
+	return nil
+}
+
+func (fsys *Filesys) MkDir(ctx context.Context, op *fuseops.MkDirOp) error {
+	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
+
+	if fsys.options.Verbose {
+		fsys.log("Create(%s)", op.Name)
+	}
+	if fsys.options.ReadOnly {
+		return syscall.EPERM
+	}
+
+	// the parent is supposed to be a directory
+	node, ok, err := fsys.mdb.LookupByInode(ctx, int64(op.Parent))
+	if err != nil {
+		fsys.log("database error in MkDir: %s", err.Error())
+		return fuse.EIO
+	}
+	if !ok {
+		// parent directory does not exist
+		return fuse.ENOENT
+	}
+	parentDir := node.(Dir)
+
+	// Check if the directory exists
+	_, ok, err = fsys.mdb.LookupInDir(ctx, &parentDir, op.Name)
+	if err != nil {
+		fsys.log("database error in MkDir: %s", err.Error())
+		return fuse.EIO
+	}
+	if ok {
+		// The directory already exists
+		return fuse.EEXIST
+	}
+
+	// The mode must be 777 for fuse to work properly
+	// We -ignore- the mode set by the user.
+	mode := dirReadWriteMode
+
+	// create the directory on dnanexus
+	httpClient := <- fsys.httpClientPool
+	defer func() {
+		fsys.httpClientPool <- httpClient
+	} ()
+	folderFullPath := parentDir.ProjFolder + "/" + op.Name
+	err = DxFolderNew(ctx, httpClient, &fsys.dxEnv, parentDir.ProjId, folderFullPath)
+	if err != nil {
+		switch err.(type) {
+		case *dxda.DxError:
+			// A dnanexus error
+			dxErr := err.(*dxda.DxError)
+			fsys.log("Error in creating directory (%s:%s) on dnanexus: %s",
+				parentDir.ProjId, folderFullPath, dxErr.Error())
+			return fsys.dxErrorToFilesystemError(*dxErr)
+		default:
+			// A "regular" error
+			return err
+		}
+	}
+
+	// Add the directory to the database
+	now := time.Now()
+	nowSeconds := now.Unix()
+	dnode, err := fsys.mdb.CreateDir(
+		parentDir.ProjId,
+		folderFullPath,
+		nowSeconds,
+		nowSeconds,
+		mode,
+		parentDir.FullPath + "/" + op.Name)
+	if err != nil {
+		fsys.log("database error in MkDir: %s", err.Error())
+		return fuse.EIO
+	}
+
+	// Fill in the response, the details for the new subdirectory
+	childAttrs := fuseops.InodeAttributes{
+		Nlink:  1,
+		Mode:   mode,
+		Atime:  now,
+		Mtime:  now,
+		Ctime:  now,
+		Crtime: now,
+		Uid:    fsys.options.Uid,
+		Gid:    fsys.options.Gid,
+	}
+	tWindow := fsys.calcExpirationTime(childAttrs)
+	op.Entry = fuseops.ChildInodeEntry{
+		Child : fuseops.InodeID(dnode),
+		Attributes : childAttrs,
+		AttributesExpiration : tWindow,
+		EntryExpiration : tWindow,
+	}
+	return nil
+}
+
+
+func (fsys *Filesys) RmDir(ctx context.Context, op *fuseops.RmDirOp) error {
+	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
+
+	if fsys.options.Verbose {
+		fsys.log("Create(%s)", op.Name)
+	}
+	if fsys.options.ReadOnly {
+		return syscall.EPERM
+	}
+
+	// the parent is supposed to be a directory
+	node, ok, err := fsys.mdb.LookupByInode(ctx, int64(op.Parent))
+	if err != nil {
+		fsys.log("database error in RmDir: %s", err.Error())
+		return fuse.EIO
+	}
+	if !ok {
+		// parent directory does not exist
+		return fuse.ENOENT
+	}
+	parentDir := node.(Dir)
+
+	// Check if the directory exists
+	childNode, ok, err := fsys.mdb.LookupInDir(ctx, &parentDir, op.Name)
+	if err != nil {
+		fsys.log("database error in RmDir: %s", err.Error())
+		return fuse.EIO
+	}
+	if !ok {
+		// The directory does not exist
+		return fuse.ENOENT
+	}
+
+	var childDir Dir
+	switch childNode.(type) {
+	case File:
+		return fuse.ENOTDIR
+	case Dir:
+		childDir = childNode.(Dir)
+	}
+
+	// check that the directory is empty
+	dentries, err := fsys.readEntireDir(ctx, childDir)
+	if err != nil {
+		return err
+	}
+	if len(dentries) > 0 {
+		return fuse.ENOTEMPTY
+	}
+
+	// The directory exists and is empty, we can remove it.
+	httpClient := <- fsys.httpClientPool
+	defer func() {
+		fsys.httpClientPool <- httpClient
+	} ()
+	folderFullPath := parentDir.ProjFolder + "/" + op.Name
+	err = DxFolderRemove(ctx, httpClient, &fsys.dxEnv, parentDir.ProjId, folderFullPath)
+	if err != nil {
+		switch err.(type) {
+		case *dxda.DxError:
+			// A dnanexus error
+			dxErr := err.(*dxda.DxError)
+			fsys.log("Error in removing directory (%s:%s) on dnanexus: %s",
+				parentDir.ProjId, folderFullPath, dxErr.Error())
+			return fsys.dxErrorToFilesystemError(*dxErr)
+		default:
+			// A "regular" error
+			return err
+		}
+	}
+
+	// Remove the directory from the database
+	if err := fsys.mdb.RemoveEmptyDir(childDir.Inode); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -260,7 +534,7 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	defer fsys.mutex.Unlock()
 
 	if fsys.options.Verbose {
-		log.Printf("Create(%s)", op.Name)
+		fsys.log("Create(%s)", op.Name)
 	}
 	if fsys.options.ReadOnly {
 		return syscall.EPERM
@@ -306,25 +580,10 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 		case *dxda.DxError:
 			// A dnanexus error
 			dxErr := err.(*dxda.DxError)
-			log.Printf("Error in creating file (%s:%s/%s) on dnanexus: %s",
+			fsys.log("Error in creating file (%s:%s/%s) on dnanexus: %s",
 				parentDir.ProjId, parentDir.ProjFolder, op.Name,
 				dxErr.Error())
-			switch dxErr.EType {
-			case "InvalidInput":
-				return fuse.EINVAL
-			case "PermissionDenied":
-				return syscall.EPERM
-			case "InvalidType":
-				return fuse.EINVAL
-			case "ResourceNotFound":
-				return fuse.ENOENT
-			case "Unauthorized":
-				return syscall.EPERM
-			default:
-				log.Printf("unexpected dnanexus error type (%s), returning EIO which will unmount the filesystem",
-					dxErr.EType)
-				return fuse.EIO
-			}
+			return fsys.dxErrorToFilesystemError(*dxErr)
 		default:
 			// A "regular" error
 			return err
@@ -377,12 +636,105 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	return nil
 }
 
+func (fsys *Filesys) ForgetInode(ctx context.Context, op *fuseops.ForgetInodeOp) error {
+	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
+
+	if fsys.options.Verbose {
+		fsys.log("ForgetInode (%d)", op.Inode)
+	}
+
+	// make a pass through the open handles, and
+	// release handles that reference this inode.
+//	delete(fsys.fhTable, op.Handle)
+//	fsys.fhFreeList = append(fsys.fhFreeList, op.Handle)
+
+	return nil
+}
+
+// Decrement the link count, and remove the file if it hits zero.
+func (fsys *Filesys) Unlink(ctx context.Context, op *fuseops.UnlinkOp) error {
+	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
+
+	if fsys.options.Verbose {
+		fsys.log("Create(%s)", op.Name)
+	}
+	if fsys.options.ReadOnly {
+		return syscall.EPERM
+	}
+
+	// the parent is supposed to be a directory
+	node, ok, err := fsys.mdb.LookupByInode(ctx, int64(op.Parent))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		// parent directory does not exist
+		return fuse.ENOENT
+	}
+	parentDir := node.(Dir)
+
+	// Check if the file already exists
+	childNode, ok, err := fsys.mdb.LookupInDir(ctx, &parentDir, op.Name)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		// The file does not exist
+		return fuse.ENOENT
+	}
+
+	var fileToRemove File
+	switch childNode.(type) {
+	case File:
+		fileToRemove = childNode.(File)
+	case Dir:
+		// can't unlink a directory
+		return fuse.EINVAL
+	}
+	check(fileToRemove.Nlink > 0)
+
+	if err := fsys.mdb.Unlink(ctx, fileToRemove); err != nil {
+		fsys.log("database error in unlink %s", err.Error())
+		return fuse.EIO
+	}
+
+	// Report to the upload module, that we are cancelling the upload
+	// for this file.
+	fsys.fugs.CancelUpload(fileToRemove.Id)
+
+	// remove the file on the platform
+	httpClient := <- fsys.httpClientPool
+	defer func() {
+		fsys.httpClientPool <- httpClient
+	} ()
+	objectIds := make([]string, 1)
+	objectIds[0] = fileToRemove.Id
+	if err := DxRemoveObjects(ctx, httpClient, &fsys.dxEnv, fileToRemove.ProjId, objectIds); err != nil {
+		switch err.(type) {
+		case *dxda.DxError:
+			// A dnanexus error
+			dxErr := err.(*dxda.DxError)
+			fsys.log("Error in creating file (%s:%s/%s) on dnanexus: %s",
+				parentDir.ProjId, parentDir.ProjFolder, op.Name,
+				dxErr.Error())
+			return fsys.dxErrorToFilesystemError(*dxErr)
+		default:
+			// A "regular" error
+			return err
+		}
+	}
+
+	return nil
+}
+
 func (fsys *Filesys) openRegularFile(ctx context.Context, op *fuseops.OpenFileOp, f File) (*FileHandle, error) {
 	if f.InlineData != "" {
 		// a regular file that has a local copy
 		reader, err := os.Open(f.InlineData)
 		if err != nil {
-			log.Printf("Could not open local file %s, err=%s", f.InlineData, err.Error())
+			fsys.log("Could not open local file %s, err=%s", f.InlineData, err.Error())
 			return nil, err
 		}
 		fh := &FileHandle{
@@ -420,9 +772,6 @@ func (fsys *Filesys) openRegularFile(ctx context.Context, op *fuseops.OpenFileOp
 		fd : nil,
 	}
 
-	// Create an entry in the prefetch table, if the file is eligable
-	fsys.pgs.CreateStreamEntry(fh)
-
 	return fh, nil
 }
 
@@ -433,7 +782,8 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 	// find the file by its inode
 	node, ok, err := fsys.mdb.LookupByInode(ctx, int64(op.Inode))
 	if err != nil {
-		return err
+		fsys.log("database error in OpenFile %s", err.Error())
+		return fuse.EIO
 	}
 	if !ok {
 		// file doesn't exist
@@ -478,6 +828,11 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 		return fuse.ENOSYS
 	}
 
+	if fh.fKind == RO_Remote {
+		// Create an entry in the prefetch table, if the file is eligable
+		fsys.pgs.CreateStreamEntry(fh.f, *fh.url)
+	}
+
 	// add to the open-file table, so we can recognize future accesses to
 	// the same handle.
 	op.Handle = fsys.insertIntoFileHandleTable(fh)
@@ -506,14 +861,14 @@ func (fsys *Filesys) syncFile(ctx context.Context, handle fuseops.HandleID) erro
 
 func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) error {
 	if fsys.options.Verbose {
-		log.Printf("Flush inode %d", op.Inode)
+		fsys.log("Flush inode %d", op.Inode)
 	}
 	return fsys.syncFile(ctx, op.Handle)
 }
 
 func (fsys *Filesys) SyncFile(ctx context.Context, op *fuseops.SyncFileOp) error {
 	if fsys.options.Verbose {
-		log.Printf("Sync inode %d", op.Inode)
+		fsys.log("Sync inode %d", op.Inode)
 	}
 	return fsys.syncFile(ctx, op.Handle)
 }
@@ -528,18 +883,22 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 		return nil
 	}
 
+	// release the file handle itself
+	delete(fsys.fhTable, op.Handle)
+	fsys.fhFreeList = append(fsys.fhFreeList, op.Handle)
+
 	// Clear the state involved with this open file descriptor
 	switch fh.fKind {
 	case RO_Remote:
 		// Read-only file that is accessed remotely
-		fsys.pgs.RemoveStreamEntry(fh)
+		fsys.pgs.RemoveStreamEntry(fh.f)
 		return nil
 
 	case RW_File:
 		// A new file created locally. We need to upload it
 		// to the platform.
 		if fsys.options.Verbose {
-			log.Printf("Close new file(%s)", fh.f.Name)
+			fsys.log("Close new file(%s)", fh.f.Name)
 		}
 
 		// flush and close the local file
@@ -567,7 +926,8 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 
 		// update database entry
 		if err := fsys.mdb.UpdateFile(ctx, fh.f, fileSize, modTime, fileReadOnlyMode); err != nil {
-			return err
+			fsys.log("database error in OpenFile %s", err.Error())
+			return fuse.EIO
 		}
 
 		// initiate a background request to upload the file to the cloud
@@ -583,11 +943,6 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 	default:
 		panic(fmt.Sprintf("Invalid file kind %d", fh.fKind))
 	}
-
-	// release the file handle itself
-	delete(fsys.fhTable, op.Handle)
-	fsys.fhFreeList = append(fsys.fhFreeList, op.Handle)
-	return nil
 }
 
 
@@ -610,9 +965,9 @@ func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp,
 
 	// See if the data has already been prefetched.
 	// This call will wait, if a prefetch IO is in progress.
-	prefetchData := fsys.pgs.CacheLookup(fh, op.Offset, endOfs)
-	if prefetchData != nil {
-		op.BytesRead = copy(op.Dst, prefetchData)
+	ok, len := fsys.pgs.CacheLookup(fh.f, op.Offset, endOfs, op.Dst)
+	if ok {
+		op.BytesRead = len
 		return nil
 	}
 
@@ -628,8 +983,8 @@ func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp,
 	// add an extent in the file that we want to read
 	headers["Range"] = fmt.Sprintf("bytes=%d-%d", op.Offset, endOfs)
 	if fsys.options.Verbose {
-		log.Printf("Read  ofs=%d len=%d endOfs=%d lastByteInFile=%d",
-			op.Offset, reqSize, endOfs, lastByteInFile)
+		fsys.log("network read  (%s %d) ofs=%d len=%d endOfs=%d lastByteInFile=%d",
+			fh.f.Name, fh.f.Inode, op.Offset, reqSize, endOfs, lastByteInFile)
 	}
 
 	// Take an http client from the pool. Return it when done.
@@ -698,7 +1053,7 @@ func (fsys *Filesys) findWritableFileHandle(handle fuseops.HandleID) (*FileHandl
 	}
 	if fh.fKind != RW_File {
 		// This file isn't open for writing
-		return nil, fuse.EINVAL
+		return nil, syscall.EPERM
 	}
 	if fh.fd == nil {
 		panic("file descriptor is empty")
@@ -727,16 +1082,17 @@ func (fsys *Filesys) readEntireDir(ctx context.Context, dir Dir) ([]fuseutil.Dir
 	// normalize the filename. For example, we can get "//" when reading
 	// the root directory (instead of "/").
 	if fsys.options.Verbose {
-		log.Printf("ReadDirAll dir=(%s)\n", dir.FullPath)
+		fsys.log("ReadDirAll dir=(%s)\n", dir.FullPath)
 	}
 
 	dxObjs, subdirs, err := fsys.mdb.ReadDirAll(ctx, &dir)
 	if err != nil {
-		return nil, err
+		fsys.log("database error in read entire dir %s", err.Error())
+		return nil, fuse.EIO
 	}
 
 	if fsys.options.Verbose {
-		log.Printf("%d data objects, %d subdirs", len(dxObjs), len(subdirs))
+		fsys.log("%d data objects, %d subdirs", len(dxObjs), len(subdirs))
 	}
 
 	var dEntries []fuseutil.Dirent
@@ -777,7 +1133,7 @@ func (fsys *Filesys) readEntireDir(ctx context.Context, dir Dir) ([]fuseutil.Dir
 	// directory entries need to be sorted
 	sort.Slice(dEntries, func(i, j int) bool { return dEntries[i].Name < dEntries[j].Name })
 	if fsys.options.Verbose {
-		log.Printf("dentries=%v", dEntries)
+		fsys.log("dentries=%v", dEntries)
 	}
 
 	// fix the offsets. We need to do this -after- sorting, because the sort
@@ -801,7 +1157,8 @@ func (fsys *Filesys) OpenDir(ctx context.Context, op *fuseops.OpenDirOp) error {
 	// the parent is supposed to be a directory
 	node, ok, err := fsys.mdb.LookupByInode(ctx, int64(op.Inode))
 	if err != nil {
-		return err
+		fsys.log("database error in OpenDir %s", err.Error())
+		return fuse.EIO
 	}
 	if !ok {
 		return fuse.ENOENT
@@ -848,7 +1205,7 @@ func (fsys *Filesys) ReadDir(ctx context.Context, op *fuseops.ReadDirOp) (err er
 		op.BytesRead += n
 	}
 	if fsys.options.Verbose {
-		log.Printf("ReadDir  offset=%d  bytesRead=%d nEntriesReported=%d",
+		fsys.log("ReadDir  offset=%d  bytesRead=%d nEntriesReported=%d",
 			index, op.BytesRead, i)
 	}
 	return

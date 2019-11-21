@@ -28,6 +28,7 @@
   },
   "access": {
     "project": "CONTRIBUTE",
-    "allProjects": "VIEW"
+    "allProjects": "VIEW",
+    "network" : [ "*" ]
   }
 }

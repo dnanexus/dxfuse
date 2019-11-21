@@ -511,7 +511,7 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 }
 
 // Create an entry representing one remote file. This has
-// two use cases:
+// several use cases:
 //  1) Create a singleton file from the manifest
 //  2) Create a new file, and upload it later to the platform
 //  3) Discover a file in a directory, which may actually be a link to another file.
@@ -628,6 +628,62 @@ func (mdb *MetadataDb) createEmptyDir(
 		return 0, err
 	}
 	return inode, nil
+}
+
+// Assumption: the directory does not already exist in the database.
+func (mdb *MetadataDb) CreateDir(
+	projId string,
+	projFolder string,
+	ctime int64,
+	mtime int64,
+	mode os.FileMode,
+	dirPath string) (int64, error) {
+	txn, err := mdb.db.Begin()
+	if err != nil {
+		log.Printf(err.Error())
+		return 0, fmt.Errorf("CreateDir: error opening transaction")
+	}
+	dnode, err := mdb.createEmptyDir(txn, projId, projFolder, ctime, mtime, mode, dirPath, true)
+	if err != nil {
+		txn.Rollback()
+		log.Printf(err.Error())
+		return 0, fmt.Errorf("error in create dir, rolling back transaction")
+	}
+	if err := txn.Commit(); err != nil {
+		log.Printf(err.Error())
+		return 0, fmt.Errorf("CreateDir: error in commit")
+	}
+	return dnode, nil
+}
+
+// Remove a directory from the database
+func (mdb *MetadataDb) RemoveEmptyDir(inode int64) error {
+	txn, err := mdb.db.Begin()
+	if err != nil {
+		return err
+	}
+
+	sqlStmt := fmt.Sprintf(`
+                DELETE FROM directories
+                WHERE inode='%d';`,
+		inode)
+	if _, err := txn.Exec(sqlStmt); err != nil {
+		txn.Rollback()
+		log.Printf("RemoveEmptyDir(%d): error in directories table removal", inode)
+		return err
+	}
+
+	sqlStmt = fmt.Sprintf(`
+                DELETE FROM namespace
+                WHERE inode='%d';`,
+		inode)
+	if _, err := txn.Exec(sqlStmt); err != nil {
+		txn.Rollback()
+		log.Printf("RemoveEmptyDir(%d): error in namespace table removal", inode)
+		return err
+	}
+
+	return txn.Commit()
 }
 
 // Update the directory populated flag to TRUE
@@ -1093,6 +1149,71 @@ func (mdb *MetadataDb) CreateFile(
 	}, nil
 }
 
+// reduce link count by one. If it reaches zero, delete the file.
+//
+// TODO: take into account the case of ForgetInode, and files that are open, but unlinked.
+func (mdb *MetadataDb) Unlink(ctx context.Context, file File) error {
+	txn, err := mdb.db.Begin()
+	if err != nil {
+		log.Printf(err.Error())
+		return fmt.Errorf("Unlink error opening transaction")
+	}
+
+	nlink := file.Nlink - 1
+	if nlink > 0 {
+		// reduce one from the link count. It is still positive,
+		// so there is nothing else to do
+		sqlStmt := fmt.Sprintf(`
+  		           UPDATE data_objects
+                           SET nlink = '%d'
+                           WHERE inode = '%d'`,
+			nlink, file.Inode)
+		if _, err := txn.Exec(sqlStmt); err != nil {
+			log.Printf(err.Error())
+			return fmt.Errorf("could not reduce the link count for inode=%d to %d",
+				file.Inode, nlink)
+		}
+	} else {
+		// the link hit zero, we can remove the file
+		sqlStmt := fmt.Sprintf(`
+                           DELETE FROM namespace
+                           WHERE inode='%d';`,
+			file.Inode)
+		if _, err := txn.Exec(sqlStmt); err != nil {
+			log.Printf(err.Error())
+			return fmt.Errorf("could not delete row for inode=%d from the namespace table",
+				file.Inode)
+		}
+
+		sqlStmt = fmt.Sprintf(`
+                           DELETE FROM data_objects
+                           WHERE inode='%d';`,
+			file.Inode)
+		if _, err := txn.Exec(sqlStmt); err != nil {
+			log.Printf(err.Error())
+			return fmt.Errorf("could not delete row for inode=%d from the data_objects table",
+				file.Inode)
+		}
+
+		if file.Kind == RW_File || file.Kind == RO_LocalCopy {
+			// remove the file data so it does not take up space on disk.
+			// This might be undergoing upload at the moment. Removing the local
+			// file will cause the download to fail early, which is what we
+			// want.
+			if err := os.Remove(file.InlineData); err != nil {
+				log.Printf(err.Error())
+			}
+		}
+	}
+
+	if err := txn.Commit(); err != nil {
+		log.Printf(err.Error())
+		return fmt.Errorf("Unlink inode=%d commit failed", file.Inode)
+	}
+
+	return nil
+}
+
 func (mdb *MetadataDb) UpdateFile(
 	ctx context.Context,
 	f File,
@@ -1123,6 +1244,33 @@ func (mdb *MetadataDb) UpdateFile(
 	}
 	return txn.Commit()
 }
+
+
+func (mdb *MetadataDb) UpdateFileMakeRemote(ctx context.Context, fileId string) error {
+	if mdb.options.Verbose {
+		log.Printf("Make file remote fileId=%s", fileId)
+	}
+
+	txn, err := mdb.db.Begin()
+	if err != nil {
+		log.Printf(err.Error())
+		return fmt.Errorf("UpdateFileMakeRemote error opening transaction")
+	}
+
+	sqlStmt := fmt.Sprintf(`
+ 		        UPDATE data_objects
+                        SET Mode = '%d', InlineData=''
+			WHERE id = '%s';`,
+		fileReadOnlyMode, fileId)
+
+	if _, err := txn.Exec(sqlStmt); err != nil {
+		txn.Rollback()
+		log.Printf(err.Error())
+		return fmt.Errorf("UpdateFileMakeRemote error executing transaction")
+	}
+	return txn.Commit()
+}
+
 
 func (mdb *MetadataDb) Shutdown() {
 	if err := mdb.db.Close(); err != nil {

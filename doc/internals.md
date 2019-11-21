@@ -14,6 +14,7 @@ The `data_objects` table maintains information for files, applets, workflows, an
 | size       | bigint  | size of the file in bytes |
 | ctime      | bigint  | creation time |
 | mtime      | bigint  | modification time |
+| mode       | int     | Unix permission bits |
 | nlink      | int     | number of hard links to this file |
 | inline\_data | string | holds the path for a symlink, if it has a local copy, this is the path |
 
@@ -62,6 +63,7 @@ The `directories` table stores information for individual directories.
 | populated  | int |  has the directory been queried? |
 | ctime      | bigint  | creation time |
 | mtime      | bigint  | modification time |
+| mode       | int     | Unix permission bits |
 
 It maps a directory to a stable `inode`, which is the primary key. The
 populated flag is zero the first time the directory is encounterd. It

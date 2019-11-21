@@ -1,6 +1,8 @@
 package dxfuse
 
 import (
+	"fmt"
+	"log"
 	"os"
 	"sync"
 	"time"
@@ -20,7 +22,7 @@ const (
 	MaxDirSize         = 10 * 1000
 	MaxNumFileHandles  = 1000 * 1000
 	NumRetriesDefault  = 3
-	Version            = "v0.12"
+	Version            = "v0.13"
 )
 const (
 	InodeInvalid       = 0
@@ -129,10 +131,10 @@ type Dir struct {
 func (d Dir) GetAttrs() (a fuseops.InodeAttributes) {
 	a.Size = 4096
 	a.Nlink = 1
-	a.Mtime = a.Mtime
-	a.Ctime = a.Ctime
+	a.Mtime = d.Mtime
+	a.Ctime = d.Ctime
 	a.Mode = os.ModeDir | d.Mode
-	a.Crtime = a.Ctime
+	a.Crtime = d.Ctime
 	a.Uid = d.Uid
 	a.Gid = d.Gid
 	return
@@ -255,4 +257,40 @@ func MinInt(x, y int) int {
 // golang structure
 func SecondsToTime(t int64) time.Time {
 	return time.Unix(t, 0)
+}
+
+func Time2string(t time.Time) string {
+	return fmt.Sprintf("%02d:%02d:%02d.%03d", t.Hour(), t.Minute(), t.Second(), t.Nanosecond()/1000000)
+}
+
+// add a timestamp and module name, to a log message
+func LogMsg(moduleName string, a string, args ...interface{}) {
+	msg := fmt.Sprintf(a, args...)
+	now := time.Now()
+	log.Printf("%s %s: %s", Time2string(now), moduleName, msg)
+}
+
+
+//
+// 1024   => 1KB
+// 10240  => 10KB
+// 1100000 => 1MB
+func BytesToString(numBytes int64) string {
+	byteModifier := []string {"B", "KB", "MB", "GB", "TB", "EB", "ZB" }
+
+	digits := make([]int, 0)
+	for numBytes > 0 {
+		d := int(numBytes % 1024)
+		digits = append(digits, d)
+		numBytes = numBytes / 1024
+	}
+
+	// which digit is the most significant?
+	msd := len(digits)
+	if msd >= len(byteModifier) {
+		// This number is so large that we don't have a modifier
+		// for it.
+		return fmt.Sprintf("%dB", numBytes)
+	}
+	return fmt.Sprintf("%d%s", digits[msd], byteModifier[msd])
 }

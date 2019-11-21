@@ -2,7 +2,6 @@ package dxfuse
 
 import (
 	"fmt"
-	"log"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -30,6 +29,11 @@ type PosixDir struct {
 	// additional subdirectories holding files that have multiple versions,
 	// and could not be placed in the original location.
 	fauxSubdirs  map[string]([]DxDescribeDataObject)
+}
+
+// write a log message, and add a header
+func posixLog(a string, args ...interface{}) {
+	LogMsg("posix", a, args...)
 }
 
 func FilenameIsPosixCompliant(filename string) bool {
@@ -92,7 +96,7 @@ func makeCut(dxObjs []DxDescribeDataObject) ([]DxDescribeDataObject, []DxDescrib
 // 2. Change file names to not collide with directories, or with each other.
 func PosixFixDir(options Options, dxFolder *DxFolder) (*PosixDir, error) {
 	if options.VerboseLevel > 1 {
-		log.Printf("PosixFixDir %s #objects=%d #subdirs=%d",
+		posixLog("PosixFixDir %s #objects=%d #subdirs=%d",
 			dxFolder.path,
 			len(dxFolder.dataObjects),
 			len(dxFolder.subdirs))
@@ -108,11 +112,11 @@ func PosixFixDir(options Options, dxFolder *DxFolder) (*PosixDir, error) {
 		lastPart := strings.TrimPrefix(subDirName, dxFolder.path)
 		lastPart = strings.TrimPrefix(lastPart,"/")
 		if strings.Contains(lastPart, "/") {
-			log.Printf("Dropping subdirectory %s, it contains a slash", lastPart)
+			posixLog("Dropping subdirectory %s, it contains a slash", lastPart)
 			continue
 		}
 		if lastPart != filepath.Base(subDirName) {
-			log.Printf("Dropping subdirectory %s, it isn't the same as Base(d)=%s",
+			posixLog("Dropping subdirectory %s, it isn't the same as Base(d)=%s",
 				lastPart, filepath.Base(subDirName))
 			continue
 		}
@@ -120,7 +124,7 @@ func PosixFixDir(options Options, dxFolder *DxFolder) (*PosixDir, error) {
 		subdirs = append(subdirs, filepath.Base(subDirName))
 	}
 	if options.VerboseLevel > 1 {
-		log.Printf("subdirs = %v", subdirs)
+		posixLog("subdirs = %v", subdirs)
 	}
 
 	// convert the map into an array. Normalize any non Posix names.
@@ -154,7 +158,7 @@ func PosixFixDir(options Options, dxFolder *DxFolder) (*PosixDir, error) {
 		fauxSubdirs[fauxDir] = uniqueObjs
 
 		if options.VerboseLevel > 1 {
-			log.Printf(fmt.Sprintf("fauxDir=%s  len(remainingObjs)=%d  len(uniqueObjs)=%d",
+			posixLog(fmt.Sprintf("fauxDir=%s  len(remainingObjs)=%d  len(uniqueObjs)=%d",
 				fauxDir, len(notChosenThisTime), len(uniqueObjs)))
 		}
 

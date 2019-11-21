@@ -90,7 +90,8 @@ def launch_and_wait(project, bench_applet, instance_types):
 
 
 def extract_results(jobs):
-    header = "instance-type, method, time(seconds), filename"
+    header = "instance-type, file size, dx cat (seconds), dxfuse (seconds)"
+    print(header)
     for j in jobs:
         desc = j.describe()
         i_type = desc["systemRequirements"]["*"]["instanceType"]
@@ -100,7 +101,7 @@ def extract_results(jobs):
         measurements = results[1:]
         for line in measurements:
             parts = line.split(",")
-            print("{}, {}, {}, {}".format(i_type, parts[0], parts[1], parts[2]))
+            print("{},\t{},\t{},\t{}".format(i_type, parts[0], parts[2], parts[4]))
 
 def run_benchmarks(dx_proj, instance_types):
     applet = lookup_applet("dxfuse_benchmark", dx_proj, "/applets")
