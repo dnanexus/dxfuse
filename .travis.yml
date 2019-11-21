@@ -38,13 +38,24 @@ install:
 script:
 - dxfuse=$GOPATH/bin/dxfuse-$TRAVIS_OS_NAME
 - "$dxfuse --help"
+
+# make a mountpoint under the user's control
 - mountpoint=$HOME/MNT
+- mkdir -p $mountpoint
+
+# start the filesystem
 - sudo -E $dxfuse $mountpoint dxfuse_test_data &
 - dxfuse_pid=$!
 - sleep 2
+
+# tests go here
 - ls -R $mountpoint
+
+# export the dxfuse binary
 - version=$($dxfuse --version)
 - mkdir -p $mountpoint/dxfuse_test_data/releases/$version
 - cp -f $dxfuse $mountpoint/dxfuse_test_data/releases/$version
+
+# shutdown the filesystem, and ensure the file is uploaded
 - sudo umount $mountpoint
 - wait $dxfuse_pid
