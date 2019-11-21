@@ -1,5 +1,5 @@
 language: go
-sudo: false
+sudo: true
 dist: bionic
 
 go:
@@ -39,7 +39,7 @@ script:
 - dxfuse=$GOPATH/bin/dxfuse-$TRAVIS_OS_NAME
 - "$dxfuse --help"
 - mkdir /tmp/mount
-- sudo $dxfuse /tmp/mount project-FbZ25gj04J9B8FJ3Gb5fVP41 &
+- sudo -E $dxfuse /tmp/mount project-FbZ25gj04J9B8FJ3Gb5fVP41 &
 - dxfuse_pid=$!
 - sleep 2
 - ls -R /tmp/mount
