@@ -4,10 +4,6 @@ sudo: true
 go:
 - 1.13.x
 
-os:
-#- linux
-- osx
-
 branches:
   only:
   - master
@@ -24,6 +20,7 @@ jobs:
   include:
     - os: linux
       dist: bionic
+    - os : osx
 
 before_install:
 # install the fuse filesystem for mac
@@ -56,8 +53,8 @@ script:
 - sudo cat /var/log/dxfuse.log
 
 # tests go here
-- sudo ls -l $mountpoint
-- ls -l $mountpoint
+- sudo ls -l $mountpoint/*
+- ls -R $mountpoint
 
 # export the dxfuse binary
 - version=$($dxfuse --version)
