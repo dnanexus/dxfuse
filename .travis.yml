@@ -6,8 +6,8 @@ go:
 - 1.13.x
 
 os:
-- linux
-#- osx
+#- linux
+- osx
 
 branches:
   only:
