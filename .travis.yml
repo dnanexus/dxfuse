@@ -49,7 +49,7 @@ script:
 - sleep 2
 
 # tests go here
-- ls -R $mountpoint
+- sudo ls -R $mountpoint
 
 # export the dxfuse binary
 - version=$($dxfuse --version)
