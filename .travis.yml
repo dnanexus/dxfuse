@@ -28,6 +28,12 @@ addons:
     - git
 
 install:
+# install the fuse filesystem for mac
+- curl -L -O https://github.com/osxfuse/osxfuse/releases/download/osxfuse-3.10.3/osxfuse-3.10.3.dmg
+- sudo hdiutil attach osxfuse-3.10.3.dmg
+- sudo installer -package /Volumes/FUSE\ for\ macOS/FUSE\ for\ macOS.pkg -target /
+
+# install golang system
 - mkdir -p $GOPATH
 - go get github.com/google/subcommands
 - go get github.com/dnanexus/dxda
