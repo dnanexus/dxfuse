@@ -51,8 +51,8 @@ script:
 
   # copy executable to [dxfuse_test_data] project
   - version=$($dxfuse --version)
-  - mkdir /tmp/mount/dxfuse_test_data/releases/${VERSION}
-  - cp $dxfuse /tmp/mount/dxfuse_test_data/${VERSION}/
+  - mkdir /tmp/mount/dxfuse_test_data/releases/$version
+  - cp $dxfuse /tmp/mount/dxfuse_test_data/releases/$version
 
   - sudo umount /tmp/mount
   - wait $dxfuse_pid
