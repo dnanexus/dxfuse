@@ -38,13 +38,13 @@ install:
 script:
 - dxfuse=$GOPATH/bin/dxfuse-$TRAVIS_OS_NAME
 - "$dxfuse --help"
-- mkdir /tmp/mount
-- sudo -E $dxfuse /tmp/mount project-FbZ25gj04J9B8FJ3Gb5fVP41 &
+- mountpoint=$HOME/MNT
+- sudo -E $dxfuse $mountpoint dxfuse_test_data &
 - dxfuse_pid=$!
 - sleep 2
-- ls -R /tmp/mount
+- ls -R $mountpoint
 - version=$($dxfuse --version)
-- mkdir -p /tmp/mount/dxfuse_test_data/releases/$version
-- cp -f $dxfuse /tmp/mount/dxfuse_test_data/releases/$version
-- sudo umount /tmp/mount
+- mkdir -p $mountpoint/dxfuse_test_data/releases/$version
+- cp -f $dxfuse $mountpoint/dxfuse_test_data/releases/$version
+- sudo umount $mountpoint
 - wait $dxfuse_pid
