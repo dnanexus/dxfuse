@@ -486,8 +486,8 @@ main() {
     dxfuse_pid=$!
     sleep 2
 
-#    echo "comparing symlink content"
-#    compare_symlink_content
+    echo "comparing symlink content"
+    compare_symlink_content
 
     echo "download recursively with dx download"
     dxTrgDir="${baseDir}/dxCopy"
