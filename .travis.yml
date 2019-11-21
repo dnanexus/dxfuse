@@ -7,7 +7,7 @@ go:
 
 os:
 - linux
-- osx
+#- osx
 
 branches:
   only:
