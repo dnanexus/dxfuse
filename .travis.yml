@@ -39,9 +39,10 @@ install:
 
 script:
   # setup dxfuse
-  - $GOPATH/bin/dxfuse --help
+  - dxfuse=$GOPATH/bin/dxfuse-$TRAVIS_OS_NAME
+  - $dxfuse --help
   - mkdir /tmp/mount
-  - sudo $GOPATH/bin/dxfuse /tmp/mount project-FbZ25gj04J9B8FJ3Gb5fVP41 &
+  - sudo $dxfuse /tmp/mount project-FbZ25gj04J9B8FJ3Gb5fVP41 &
   - dxfuse_pid=$!
   - sleep 2
 
@@ -49,9 +50,9 @@ script:
   - tree /tmp/mount
 
   # copy executable to [dxfuse_test_data] project
-  - version=$(dxfuse --version)
+  - version=$($dxfuse --version)
   - mkdir /tmp/mount/dxfuse_test_data/releases/${VERSION}
-  - cp $GOPATH/bin/dxfuse-$TRAVIS_OS_NAME /tmp/mount/dxfuse_test_data/${VERSION}/
+  - cp $dxfuse /tmp/mount/dxfuse_test_data/${VERSION}/
 
   - sudo umount /tmp/mount
   - wait $dxfuse_pid
