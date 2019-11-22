@@ -27,7 +27,9 @@ before_install:
 -  if [ "$TRAVIS_OS_NAME" = "osx" ]; then curl -L -O https://github.com/osxfuse/osxfuse/releases/download/osxfuse-3.10.3/osxfuse-3.10.3.dmg; fi
 -  if [ "$TRAVIS_OS_NAME" = "osx" ]; then sudo hdiutil attach osxfuse-3.10.3.dmg; fi
 -  if [ "$TRAVIS_OS_NAME" = "osx" ]; then sudo installer -package /Volumes/FUSE\ for\ macOS/FUSE\ for\ macOS.pkg -target /; fi
--  if [ "$TRAVIS_OS_NAME" = "osx" ]; then ls -l /Library/Filesystems/osxfusefs.fs /usr/local/lib/libosxfuse*.dylib; fi
+-  if [ "$TRAVIS_OS_NAME" = "osx" ]; then ls -l /Library/Filesystems/ /usr/local/lib/libosxfuse*.dylib /usr/local/include/osxfuse*; fi
+-  if [ "$TRAVIS_OS_NAME" = "osx" ]; then mount_dev=$(mount | grep FUSE | awk '{print $2}') fi
+-  if  [ "$TRAVIS_OS_NAME" = "osx" ]; then sudo hdiutil unmount "$mount_dev"; fi
 
 install:
 # install golang system
