@@ -21,7 +21,7 @@ jobs:
     - os: linux
       dist: bionic
     - os : osx
-      xcode: 11.2
+      osx_image: xcode11.2
 
 before_install:
 # install the fuse filesystem for mac
