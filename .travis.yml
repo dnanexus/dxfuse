@@ -20,8 +20,8 @@ jobs:
   include:
     - os: linux
       dist: bionic
-    - os : osx
-      osx_image: xcode11.2
+#    - os : osx
+#      osx_image: xcode11.2
 
 before_install:
 # install the fuse filesystem for mac
@@ -49,9 +49,8 @@ script:
 - mkdir -p $mountpoint
 
 # start the filesystem
-- sudo -E $dxfuse $mountpoint dxfuse_test_data &
+- sudo -E $dxfuse $mountpoint dxfuse_test_data
 - dxfuse_pid=$!
-- sleep 3
 - sudo cat /var/log/dxfuse.log
 
 # tests go here
