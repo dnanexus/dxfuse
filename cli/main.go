@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jacobsa/fuse"
 	"github.com/jacobsa/fuse/fuseutil"
@@ -24,7 +25,6 @@ type Config struct {
 	mountpoint string
 	dxEnv dxda.DXEnvironment
 	options dxfuse.Options
-	actual bool
 }
 
 var progName = filepath.Base(os.Args[0])
@@ -41,7 +41,6 @@ func usage() {
 }
 
 var (
-	actual = flag.Bool("actual", false, "not for external usage")
 	debugFuseFlag = flag.Bool("debugFuse", false, "Tap into FUSE debugging information")
 	gid = flag.Int("gid", -1, "User group id (gid)")
 	help = flag.Bool("help", false, "display program options")
@@ -149,10 +148,10 @@ func fsDaemon(
 
 	logger.Printf("mounting dxfuse")
 	os.Stderr.WriteString("Ready")
+	os.Stderr.Close()
 	mfs, err := fuse.Mount(mountpoint, server, cfg)
 	if err != nil {
 		logger.Printf(err.Error())
-		os.Stderr.WriteString("Error")
 	}
 
 	// Wait for it to be unmounted. This happens only after
@@ -180,10 +179,6 @@ func waitForReady(readyReader *os.File, c chan string) {
 }
 
 func parseCmdLineArgs() Config {
-	// parse command line options
-	flag.Usage = usage
-	flag.Parse()
-
 	if *version {
 		// print the version and exit
 		fmt.Println(dxfuse.Version)
@@ -231,7 +226,6 @@ result in the filesystem freezing, or being unmounted.`)
 		mountpoint : mountpoint,
 		dxEnv : dxEnv,
 		options : options,
-		actual : *actual,
 	}
 }
 
@@ -279,62 +273,81 @@ func parseManifest(cfg Config) dxfuse.Manifest {
 	}
 }
 
+
+// check if the variable ACTUAL is set to 1.
+// This means that we need to run the filesystem inside this process
+func isActual() bool {
+	environment := os.Environ()
+	for _,kv := range(environment) {
+		if kv == "ACTUAL=1" {
+			return true
+		}
+	}
+	return false
+}
+
+
 func main() {
+	// parse command line options
+	flag.Usage = usage
+	flag.Parse()
 	cfg := parseCmdLineArgs()
 
-	if cfg.actual {
+	if isActual() {
 		fmt.Printf("in fs subprocess")
 		manifest := parseManifest(cfg)
 
 		err := fsDaemon(cfg.mountpoint, cfg.dxEnv, manifest, cfg.options)
 		if err != nil {
-			fmt.Println("Error: " + err.Error())
+			os.Stderr.WriteString("Error")
+			os.Stderr.Close()
 			os.Exit(1)
 		}
 		return
-	} else {
-		// Set up a pipe for the "ready" status.
-		errorReader, errorWriter, err := os.Pipe()
-		if err != nil {
-			fmt.Printf("Pipe: %v", err)
-			os.Exit(1)
-		}
-		defer errorWriter.Close()
-		defer errorReader.Close()
-
-		// Mount in a subprocess, and wait for the filesystem to start.
-		// If there is an error, report it. Otherwise, return after the filesystem
-		// is mounted and useable.
-		//
-		subArgs := append(os.Args[1:], "-actual")
-		progPath, err := exec.LookPath(os.Args[0])
-		if err != nil {
-			fmt.Printf("Error: couldn't find program %s", os.Args[0])
-			os.Exit(1)
-		}
-		mountCmd := exec.Command(progPath, subArgs...)
-		mountCmd.Stderr = errorWriter
-
-		// Start the command.
-		fmt.Println("starting fs daemon")
-		if err := mountCmd.Start(); err != nil {
-			fmt.Printf("failed to start filesystem daemon: %v\n", err)
-			os.Exit(1)
-		}
-
-		// Wait for the tool to say the file system is ready. In parallel, watch for
-		// the tool to fail.
-		fmt.Println("wait for ready")
-		readyChan := make(chan string, 1)
-		go waitForReady(errorReader, readyChan)
-
-		status := <-readyChan
-		switch status {
-		case "error":
-			fmt.Printf("There was an error starting the daemon. Check out the log file %s", dxfuse.LogFile)
-			os.Exit(1)
-		default:
-			fmt.Println("Daemon started successfully")
-		}
 	}
+
+
+	// Set up a pipe for the "ready" status.
+	errorReader, errorWriter, err := os.Pipe()
+	if err != nil {
+		fmt.Printf("Pipe: %v", err)
+		os.Exit(1)
+	}
+	defer errorWriter.Close()
+	defer errorReader.Close()
+
+	// Mount in a subprocess, and wait for the filesystem to start.
+	// If there is an error, report it. Otherwise, return after the filesystem
+	// is mounted and useable.
+	//
+	progPath, err := exec.LookPath(os.Args[0])
+	if err != nil {
+		fmt.Printf("Error: couldn't find program %s", os.Args[0])
+		os.Exit(1)
+	}
+	mountCmd := exec.Command(progPath, os.Args[1:]...)
+	mountCmd.Stderr = errorWriter
+	mountCmd.Env = append(os.Environ(), "ACTUAL=1")
+
+	// Start the command.
+	fmt.Println("starting fs daemon")
+	if err := mountCmd.Start(); err != nil {
+		fmt.Printf("failed to start filesystem daemon: %v\n", err)
+		os.Exit(1)
+	}
+	time.Sleep(2 * time.Second)
+
+	// Wait for the tool to say the file system is ready. In parallel, watch for
+	// the tool to fail.
+	fmt.Println("wait for ready")
+	readyChan := make(chan string, 1)
+	go waitForReady(errorReader, readyChan)
+
+	status := <-readyChan
+	status = strings.ToLower(status)
+	if strings.HasPrefix(status, "error") {
+		fmt.Printf("There was an error starting the daemon. Check out the log file %s", dxfuse.LogFile)
+		os.Exit(1)
+	}
+	fmt.Println("Daemon started successfully")
 }
