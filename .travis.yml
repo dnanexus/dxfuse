@@ -42,7 +42,7 @@ install:
 
 script:
 - dxfuse=$GOPATH/bin/dxfuse-$TRAVIS_OS_NAME
-- "$dxfuse --help"
+- $dxfuse --help
 
 # make a mountpoint under the user's control
 - mountpoint=$HOME/MNT

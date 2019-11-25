@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strconv"
@@ -18,6 +19,13 @@ import (
 	"github.com/dnanexus/dxda"
 	"github.com/dnanexus/dxfuse"
 )
+
+type Config struct {
+	mountpoint string
+	dxEnv dxda.DXEnvironment
+	options dxfuse.Options
+	actual bool
+}
 
 var progName = filepath.Base(os.Args[0])
 
@@ -33,6 +41,7 @@ func usage() {
 }
 
 var (
+	actual = flag.Bool("actual", false, "not for external usage")
 	debugFuseFlag = flag.Bool("debugFuse", false, "Tap into FUSE debugging information")
 	gid = flag.Int("gid", -1, "User group id (gid)")
 	help = flag.Bool("help", false, "display program options")
@@ -98,7 +107,7 @@ func initUidGid(uid int, gid int) (uint32,uint32) {
 // Mount the filesystem:
 //  - setup the debug log to the FUSE kernel log (I think)
 //  - mount as read-only
-func mount(
+func fsDaemon(
 	mountpoint string,
 	dxEnv dxda.DXEnvironment,
 	manifest dxfuse.Manifest,
@@ -115,6 +124,7 @@ func mount(
 	defer logf.Close()
 	logger := log.New(logf, "dxfuse: ", log.Flags())
 
+	logger.Printf("starting fsDaemon")
 	mountOptions := make(map[string]string)
 
 	// Allow users other than root access the filesystem
@@ -126,6 +136,8 @@ func mount(
 		fuse_logger = log.New(logf, "fuse_debug: ", log.Flags())
 	}
 
+	logger.Printf("building config")
+
 	// Fuse mount
 	cfg := &fuse.MountConfig{
 		FSName : "dxfuse",
@@ -135,16 +147,18 @@ func mount(
 		Options : mountOptions,
 	}
 
-	log.Printf("mounting dxfuse")
+	logger.Printf("mounting dxfuse")
+	os.Stderr.WriteString("Ready")
 	mfs, err := fuse.Mount(mountpoint, server, cfg)
 	if err != nil {
-		log.Fatalf("Mount: %v", err)
+		logger.Printf(err.Error())
+		os.Stderr.WriteString("Error")
 	}
 
 	// Wait for it to be unmounted. This happens only after
 	// all requests have been served.
 	if err = mfs.Join(context.Background()); err != nil {
-		log.Fatalf("Join: %v", err)
+		logger.Fatalf("Join: %v", err)
 	}
 
 	// shutdown the filesystem
@@ -153,7 +167,20 @@ func mount(
 	return nil
 }
 
-func main() {
+func waitForReady(readyReader *os.File, c chan string) {
+	status := make([]byte, 20)
+	_, err := readyReader.Read(status)
+	if err != nil {
+		log.Printf("Reading from ready pipe: %v", err)
+		return
+	}
+
+	fmt.Printf("return value=%s", status)
+	c <- string(status)
+}
+
+func parseCmdLineArgs() Config {
+	// parse command line options
 	flag.Usage = usage
 	flag.Parse()
 
@@ -176,7 +203,7 @@ func main() {
 
 	uid,gid := initUidGid(*uid, *gid)
 
-	options := dxfuse.Options {
+	options := dxfuse.Options{
 		ReadOnly: *readOnly,
 		Verbose : *verbose > 0,
 		VerboseLevel : *verbose,
@@ -200,27 +227,38 @@ long time, causing operating system timeouts to expire. This can
 result in the filesystem freezing, or being unmounted.`)
 	}
 
+	return Config{
+		mountpoint : mountpoint,
+		dxEnv : dxEnv,
+		options : options,
+		actual : *actual,
+	}
+}
+
+func parseManifest(cfg Config) dxfuse.Manifest {
+	numArgs := flag.NArg()
+
 	// distinguish between the case of a manifest, and a list of projects.
-	var manifest *dxfuse.Manifest
 	if numArgs == 2 && strings.HasSuffix(flag.Arg(1), ".json") {
 		p := flag.Arg(1)
 		log.Printf("Provided with a manifest, reading from %s", p)
-		manifest, err = dxfuse.ReadManifest(p)
+		manifest, err := dxfuse.ReadManifest(p)
 		if err != nil {
 			fmt.Println(err)
 			os.Exit(1)
 		}
-		if err := manifest.FillInMissingFields(context.TODO(), dxEnv); err != nil {
+		if err := manifest.FillInMissingFields(context.TODO(), cfg.dxEnv); err != nil {
 			fmt.Println(err)
 			os.Exit(1)
 		}
+		return *manifest
 	} else {
 		// process the project inputs, and convert to an array of verified
 		// project IDs
 		var projectIds []string
 		for i := 1; i < numArgs; i++ {
 			projectIdOrName := flag.Arg(i)
-			projId, err := lookupProject(&dxEnv, projectIdOrName)
+			projId, err := lookupProject(&cfg.dxEnv, projectIdOrName)
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
@@ -232,15 +270,71 @@ result in the filesystem freezing, or being unmounted.`)
 			projectIds = append(projectIds, projId)
 		}
 
-		manifest, err = dxfuse.MakeManifestFromProjectIds(context.TODO(), dxEnv, projectIds)
+		manifest, err := dxfuse.MakeManifestFromProjectIds(context.TODO(), cfg.dxEnv, projectIds)
 		if err != nil {
 			fmt.Println(err)
 			os.Exit(1)
 		}
+		return *manifest
 	}
+}
 
-	err = mount(mountpoint, dxEnv, *manifest, options)
-	if err != nil {
-		fmt.Println("Error: " + err.Error())
+func main() {
+	cfg := parseCmdLineArgs()
+
+	if cfg.actual {
+		fmt.Printf("in fs subprocess")
+		manifest := parseManifest(cfg)
+
+		err := fsDaemon(cfg.mountpoint, cfg.dxEnv, manifest, cfg.options)
+		if err != nil {
+			fmt.Println("Error: " + err.Error())
+			os.Exit(1)
+		}
+		return
+	} else {
+		// Set up a pipe for the "ready" status.
+		errorReader, errorWriter, err := os.Pipe()
+		if err != nil {
+			fmt.Printf("Pipe: %v", err)
+			os.Exit(1)
+		}
+		defer errorWriter.Close()
+		defer errorReader.Close()
+
+		// Mount in a subprocess, and wait for the filesystem to start.
+		// If there is an error, report it. Otherwise, return after the filesystem
+		// is mounted and useable.
+		//
+		subArgs := append(os.Args[1:], "-actual")
+		progPath, err := exec.LookPath(os.Args[0])
+		if err != nil {
+			fmt.Printf("Error: couldn't find program %s", os.Args[0])
+			os.Exit(1)
+		}
+		mountCmd := exec.Command(progPath, subArgs...)
+		mountCmd.Stderr = errorWriter
+
+		// Start the command.
+		fmt.Println("starting fs daemon")
+		if err := mountCmd.Start(); err != nil {
+			fmt.Printf("failed to start filesystem daemon: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Wait for the tool to say the file system is ready. In parallel, watch for
+		// the tool to fail.
+		fmt.Println("wait for ready")
+		readyChan := make(chan string, 1)
+		go waitForReady(errorReader, readyChan)
+
+		status := <-readyChan
+		switch status {
+		case "error":
+			fmt.Printf("There was an error starting the daemon. Check out the log file %s", dxfuse.LogFile)
+			os.Exit(1)
+		default:
+			fmt.Println("Daemon started successfully")
+		}
 	}
 }
