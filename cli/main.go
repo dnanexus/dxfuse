@@ -167,14 +167,12 @@ func fsDaemon(
 }
 
 func waitForReady(readyReader *os.File, c chan string) {
-	status := make([]byte, 20)
+	status := make([]byte, 100)
 	_, err := readyReader.Read(status)
 	if err != nil {
 		log.Printf("Reading from ready pipe: %v", err)
 		return
 	}
-
-	fmt.Printf("return value=%s", status)
 	c <- string(status)
 }
 
@@ -229,7 +227,7 @@ result in the filesystem freezing, or being unmounted.`)
 	}
 }
 
-func parseManifest(cfg Config) dxfuse.Manifest {
+func parseManifest(cfg Config) (*dxfuse.Manifest, error) {
 	numArgs := flag.NArg()
 
 	// distinguish between the case of a manifest, and a list of projects.
@@ -238,14 +236,12 @@ func parseManifest(cfg Config) dxfuse.Manifest {
 		log.Printf("Provided with a manifest, reading from %s", p)
 		manifest, err := dxfuse.ReadManifest(p)
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			return nil, err
 		}
 		if err := manifest.FillInMissingFields(context.TODO(), cfg.dxEnv); err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			return nil, err
 		}
-		return *manifest
+		return manifest, nil
 	} else {
 		// process the project inputs, and convert to an array of verified
 		// project IDs
@@ -254,22 +250,19 @@ func parseManifest(cfg Config) dxfuse.Manifest {
 			projectIdOrName := flag.Arg(i)
 			projId, err := lookupProject(&cfg.dxEnv, projectIdOrName)
 			if err != nil {
-				fmt.Println(err)
-				os.Exit(1)
+				return nil, err
 			}
 			if projId == "" {
-				fmt.Printf("Error: no project with name %s\n", projectIdOrName)
-				os.Exit(1)
+				return nil, fmt.Errorf("no project with name %s", projectIdOrName)
 			}
 			projectIds = append(projectIds, projId)
 		}
 
 		manifest, err := dxfuse.MakeManifestFromProjectIds(context.TODO(), cfg.dxEnv, projectIds)
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			return nil, err
 		}
-		return *manifest
+		return manifest, nil
 	}
 }
 
@@ -295,11 +288,15 @@ func main() {
 
 	if isActual() {
 		fmt.Printf("in fs subprocess")
-		manifest := parseManifest(cfg)
-
-		err := fsDaemon(cfg.mountpoint, cfg.dxEnv, manifest, cfg.options)
+		manifest, err := parseManifest(cfg)
 		if err != nil {
-			os.Stderr.WriteString("Error")
+			os.Stderr.WriteString(err.Error())
+			os.Stderr.Close()
+			os.Exit(1)
+		}
+		err = fsDaemon(cfg.mountpoint, cfg.dxEnv, *manifest, cfg.options)
+		if err != nil {
+			os.Stderr.WriteString(err.Error())
 			os.Stderr.Close()
 			os.Exit(1)
 		}
@@ -345,9 +342,12 @@ func main() {
 
 	status := <-readyChan
 	status = strings.ToLower(status)
-	if strings.HasPrefix(status, "error") {
-		fmt.Printf("There was an error starting the daemon. Check out the log file %s", dxfuse.LogFile)
-		os.Exit(1)
+	if strings.HasPrefix(status, "ready") {
+		fmt.Println("Daemon started successfully")
+		return
 	}
-	fmt.Println("Daemon started successfully")
+
+	fmt.Println("There was an error starting the daemon")
+	fmt.Println(status)
+	os.Exit(1)
 }
