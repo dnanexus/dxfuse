@@ -50,11 +50,12 @@ script:
 
 # start the filesystem
 - sudo -E $dxfuse $mountpoint dxfuse_test_data
-- dxfuse_pid=$!
+- dxfuse_pid=$(ps aux | grep dxfuse | grep root  | awk '{ print($2) }')
 - sudo cat /var/log/dxfuse.log
 
 # tests go here
 - sudo ls -l $mountpoint/*
+#- tree $mountpoint
 
 # export the dxfuse binary
 - version=$($dxfuse --version)
