@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -28,29 +27,12 @@ func NewDxfuse(
 	dxEnv dxda.DXEnvironment,
 	manifest Manifest,
 	options Options) (*Filesys, error) {
-	// Create a fresh SQL database
-	dbParentFolder := filepath.Dir(DatabaseFile)
-	if _, err := os.Stat(dbParentFolder); os.IsNotExist(err) {
-		os.Mkdir(dbParentFolder, 0755)
-	}
-	log.Printf("Removing old version of the database (%s)", DatabaseFile)
-	if err := os.RemoveAll(DatabaseFile); err != nil {
-		log.Fatalf("error removing old database %b", err)
-	}
-
-	// Create a directory for new files
-	os.RemoveAll(CreatedFilesDir)
-	if _, err := os.Stat(CreatedFilesDir); os.IsNotExist(err) {
-		os.Mkdir(CreatedFilesDir, 0755)
-	}
 
 	// initialize a pool of http-clients.
 	httpIoPool := make(chan *retryablehttp.Client, HttpClientPoolSize)
 	for i:=0; i < HttpClientPoolSize; i++ {
 		httpIoPool <- dxda.NewHttpClient(true)
 	}
-	nonce := NewNonce()
-
 	fsys := &Filesys{
 		dxEnv : dxEnv,
 		options: options,
@@ -61,9 +43,26 @@ func NewDxfuse(
 		fhFreeList : make([]fuseops.HandleID, 0),
 		dhTable : make(map[fuseops.HandleID]*DirHandle),
 		dhFreeList : make([]fuseops.HandleID, 0),
-		nonce : nonce,
+		nonce : NewNonce(),
 		tmpFileCounter : 0,
 		shutdownCalled : false,
+	}
+
+	// Create a fresh SQL database
+	dbParentFolder := filepath.Dir(DatabaseFile)
+	if _, err := os.Stat(dbParentFolder); os.IsNotExist(err) {
+		os.Mkdir(dbParentFolder, 0755)
+	}
+	fsys.log("Removing old version of the database (%s)", DatabaseFile)
+	if err := os.RemoveAll(DatabaseFile); err != nil {
+		fsys.log("error removing old database %b", err)
+		os.Exit(1)
+	}
+
+	// Create a directory for new files
+	os.RemoveAll(CreatedFilesDir)
+	if _, err := os.Stat(CreatedFilesDir); os.IsNotExist(err) {
+		os.Mkdir(CreatedFilesDir, 0755)
 	}
 
 	// create the metadata database
@@ -92,7 +91,7 @@ func NewDxfuse(
 	for _, d := range manifest.Directories {
 		pDesc, err := DxDescribeProject(ctx, httpClient, &dxEnv, d.ProjId)
 		if err != nil {
-			log.Printf("Could not describe project %s, check permissions", d.ProjId)
+			fsys.log("Could not describe project %s, check permissions", d.ProjId)
 			return nil, err
 		}
 		projId2Desc[pDesc.Id] = *pDesc
