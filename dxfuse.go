@@ -549,7 +549,7 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	defer fsys.mutex.Unlock()
 
 	if fsys.options.Verbose {
-		fsys.log("Create(%s)", op.Name)
+		fsys.log("CreateFile(%s)", op.Name)
 	}
 	if fsys.options.ReadOnly {
 		return syscall.EPERM
@@ -652,6 +652,46 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 }
 
 func (fsys *Filesys) Rename(ctx context.Context, op *fuseops.RenameOp) error {
+	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
+
+	if fsys.options.Verbose {
+		fsys.log("Rename (inode=%d name=%s) -> (inode=%d, name=%s)",
+			op.OldParent, op.OldName,
+			op.NewParent, op.NewName)
+	}
+	if fsys.options.ReadOnly {
+		return syscall.EPERM
+	}
+
+	// the old parent is supposed to be a directory
+	node, ok, err := fsys.mdb.LookupByInode(ctx, int64(op.OldParent))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		// parent directory does not exist
+		return fuse.ENOENT
+	}
+	oldParentDir := node.(Dir)
+
+	// the new parent is supposed to be a directory
+	node, ok, err = fsys.mdb.LookupByInode(ctx, int64(op.NewParent))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		// parent directory does not exist
+		return fuse.ENOENT
+	}
+	newParentDir := node.(Dir)
+
+	if err := fsys.mdb.Rename(ctx, oldParentDir, inode, newParentDir, op.NewName); err != nil {
+		fsys.log("database error in rename %s", err.Error())
+		return fuse.EIO
+	}
+
+
 }
 
 // Decrement the link count, and remove the file if it hits zero.
@@ -660,7 +700,7 @@ func (fsys *Filesys) Unlink(ctx context.Context, op *fuseops.UnlinkOp) error {
 	defer fsys.mutex.Unlock()
 
 	if fsys.options.Verbose {
-		fsys.log("Create(%s)", op.Name)
+		fsys.log("Unlink(%s)", op.Name)
 	}
 	if fsys.options.ReadOnly {
 		return syscall.EPERM
