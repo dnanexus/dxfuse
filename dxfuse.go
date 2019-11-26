@@ -312,6 +312,22 @@ func (fsys *Filesys) SetInodeAttributes(ctx context.Context, op *fuseops.SetInod
 	return nil
 }
 
+func (fsys *Filesys) ForgetInode(ctx context.Context, op *fuseops.ForgetInodeOp) error {
+	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
+
+	if fsys.options.Verbose {
+		fsys.log("ForgetInode (%d)", op.Inode)
+	}
+
+	// make a pass through the open handles, and
+	// release handles that reference this inode.
+//	delete(fsys.fhTable, op.Handle)
+//	fsys.fhFreeList = append(fsys.fhFreeList, op.Handle)
+
+	return nil
+}
+
 func (fsys *Filesys) MkDir(ctx context.Context, op *fuseops.MkDirOp) error {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
@@ -635,20 +651,7 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	return nil
 }
 
-func (fsys *Filesys) ForgetInode(ctx context.Context, op *fuseops.ForgetInodeOp) error {
-	fsys.mutex.Lock()
-	defer fsys.mutex.Unlock()
-
-	if fsys.options.Verbose {
-		fsys.log("ForgetInode (%d)", op.Inode)
-	}
-
-	// make a pass through the open handles, and
-	// release handles that reference this inode.
-//	delete(fsys.fhTable, op.Handle)
-//	fsys.fhFreeList = append(fsys.fhFreeList, op.Handle)
-
-	return nil
+func (fsys *Filesys) Rename(ctx context.Context, op *fuseops.RenameOp) error {
 }
 
 // Decrement the link count, and remove the file if it hits zero.
