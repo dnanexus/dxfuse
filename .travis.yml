@@ -64,4 +64,3 @@ script:
 
 # shutdown the filesystem, and ensure the file is uploaded
 - sudo umount $mountpoint
-- wait $dxfuse_pid
