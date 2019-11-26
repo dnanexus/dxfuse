@@ -36,14 +36,14 @@ is dropped, and a warning is emitted to the log.
 dxfuse approximates a normal POSIX filesystem, but does not always have the same semantics. For example:
 1. Metadata like last access time are not supported
 2. Directories have approximate create/modify times. This is because DNAx does not keep such attributes for directories.
-3. Files are immutable
+3. Files are immutable, which means that they cannot be overwritten.
 4. A newly written file is located locally. When it is closed, it becomes read-only, and is uploaded to the cloud.
 
 There are several limitations currently:
 - Primarily intended for Linux, but can be used on OSX
 - Intended to operate on platform workers
-- Can upload files, but cannot overwrite or remove files.
 - Limits directories to 10,000 elements
+- Updates to the project emanating from other machines are not reflected locally
 
 ## Implementation
 
@@ -99,21 +99,22 @@ go build -o /go/bin/dxfuse /go/src/github.com/dnanexus/cmd/main.go
 
 To mount a dnanexus project `mammals` on local directory `/home/jonas/foo` do:
 ```
-sudo dxfuse /home/jonas/foo mammals &
+sudo dxfuse /home/jonas/foo mammals
 ```
 
 The bootstrap process has some asynchrony, so it could take it a
-second two to start up. To get more information, use the `verbose`
-flag. Debugging output is written to the log, which is placed in
-`/var/log/dxfuse.log`. The maximal verbosity level is 2.
+second two to start up. It spawns a separate process for the filesystem
+server, waits for it to start, and exits. To get more information, use
+the `verbose` flag. Debugging output is written to the log, which is
+placed at `/var/log/dxfuse.log`. The maximal verbosity level is 2.
 
 ```
-sudo dxfuse -verbose 1 MOUNT-POINT PROJECT-NAME &
+sudo dxfuse -verbose 1 MOUNT-POINT PROJECT-NAME
 ```
 
 Project ids can be used instead of project names. To mount several projects, say, `mammals`, `fish`, and `birds`, do:
 ```
-sudo dxfuse /home/jonas/foo mammals fish birds &
+sudo dxfuse /home/jonas/foo mammals fish birds
 ```
 
 This will create the directory hierarchy:

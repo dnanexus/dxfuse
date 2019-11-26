@@ -222,7 +222,6 @@ type DirHandle struct {
 	entries []fuseutil.Dirent
 }
 
-
 // Utility functions
 
 func MaxInt64(x, y int64) int64 {

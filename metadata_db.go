@@ -1271,6 +1271,60 @@ func (mdb *MetadataDb) UpdateFileMakeRemote(ctx context.Context, fileId string) 
 	return txn.Commit()
 }
 
+func (mdb *MetadataDb) RenameFileInDir(ctx context.Context, inode int64, newName string) error {
+	if mdb.options.Verbose {
+		log.Printf("RenameFileInDir inode=%d newName=%s", inode, newName)
+	}
+
+	txn, err := mdb.db.Begin()
+	if err != nil {
+		log.Printf(err.Error())
+		return fmt.Errorf("RenameFileInDir error opening transaction")
+	}
+
+	sqlStmt := fmt.Sprintf(`
+ 		        UPDATE namespace
+                        SET name = '%s'
+			WHERE inode = '%d';`,
+		newName, inode)
+
+	if _, err := txn.Exec(sqlStmt); err != nil {
+		txn.Rollback()
+		log.Printf(err.Error())
+		return fmt.Errorf("RenameFileInDir error executing transaction")
+	}
+	return txn.Commit()
+}
+
+// Rename a file from one directory to another. The filename can be changed as well.
+func (mdb *MetadataDb) RenameFile(
+	ctx context.Context,
+	inode int64,
+	newParentDir Dir,
+	newName string) error {
+	if mdb.options.Verbose {
+		log.Printf("RenameFile -> %s/%s", newParentDir.FullPath, newName)
+	}
+
+	txn, err := mdb.db.Begin()
+	if err != nil {
+		log.Printf(err.Error())
+		return fmt.Errorf("RenameFile error opening transaction")
+	}
+
+	sqlStmt := fmt.Sprintf(`
+ 		        UPDATE namespace
+                        SET parent = '%s', name = '%s'
+			WHERE inode = '%d';`,
+		newParentDir.FullPath, newName, inode)
+
+	if _, err := txn.Exec(sqlStmt); err != nil {
+		txn.Rollback()
+		log.Printf(err.Error())
+		return fmt.Errorf("RenameFile error executing transaction")
+	}
+	return txn.Commit()
+}
 
 func (mdb *MetadataDb) Shutdown() {
 	if err := mdb.db.Close(); err != nil {

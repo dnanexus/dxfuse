@@ -38,7 +38,7 @@ func NewDxfuse(
 		options: options,
 		dbFullPath : DatabaseFile,
 		mutex : sync.Mutex{},
-		httpClientPool : httpIoPool,
+		httpClientPool: httpIoPool,
 		fhTable : make(map[fuseops.HandleID]*FileHandle),
 		fhFreeList : make([]fuseops.HandleID, 0),
 		dhTable : make(map[fuseops.HandleID]*DirHandle),
@@ -89,7 +89,7 @@ func NewDxfuse(
 
 	projId2Desc := make(map[string]DxDescribePrj)
 	for _, d := range manifest.Directories {
-		pDesc, err := DxDescribeProject(ctx, httpClient, &dxEnv, d.ProjId)
+		pDesc, err := DxDescribeProject(ctx, httpClient, &fsys.dxEnv, d.ProjId)
 		if err != nil {
 			fsys.log("Could not describe project %s, check permissions", d.ProjId)
 			return nil, err
@@ -158,6 +158,19 @@ func (fsys *Filesys) dxErrorToFilesystemError(dxErr dxda.DxError) error {
 	default:
 		fsys.log("unexpected dnanexus error type (%s), returning EIO which will unmount the filesystem",
 			dxErr.EType)
+		return fuse.EIO
+	}
+}
+
+func (fsys *Filesys) translateError(err error) error {
+	switch err.(type) {
+	case *dxda.DxError:
+		// A dnanexus error
+		dxErr := err.(*dxda.DxError)
+		return fsys.dxErrorToFilesystemError(*dxErr)
+	default:
+		// A "regular" error
+		fsys.log("A regular error from an API call %s, converting to EIO", err.Error())
 		return fuse.EIO
 	}
 }
@@ -371,20 +384,13 @@ func (fsys *Filesys) MkDir(ctx context.Context, op *fuseops.MkDirOp) error {
 	defer func() {
 		fsys.httpClientPool <- httpClient
 	} ()
+
 	folderFullPath := parentDir.ProjFolder + "/" + op.Name
 	err = DxFolderNew(ctx, httpClient, &fsys.dxEnv, parentDir.ProjId, folderFullPath)
 	if err != nil {
-		switch err.(type) {
-		case *dxda.DxError:
-			// A dnanexus error
-			dxErr := err.(*dxda.DxError)
-			fsys.log("Error in creating directory (%s:%s) on dnanexus: %s",
-				parentDir.ProjId, folderFullPath, dxErr.Error())
-			return fsys.dxErrorToFilesystemError(*dxErr)
-		default:
-			// A "regular" error
-			return err
-		}
+		fsys.log("Error in creating directory (%s:%s) on dnanexus: %s",
+			parentDir.ProjId, folderFullPath, err.Error())
+		return fsys.translateError(err)
 	}
 
 	// Add the directory to the database
@@ -480,20 +486,13 @@ func (fsys *Filesys) RmDir(ctx context.Context, op *fuseops.RmDirOp) error {
 	defer func() {
 		fsys.httpClientPool <- httpClient
 	} ()
+
 	folderFullPath := parentDir.ProjFolder + "/" + op.Name
 	err = DxFolderRemove(ctx, httpClient, &fsys.dxEnv, parentDir.ProjId, folderFullPath)
 	if err != nil {
-		switch err.(type) {
-		case *dxda.DxError:
-			// A dnanexus error
-			dxErr := err.(*dxda.DxError)
-			fsys.log("Error in removing directory (%s:%s) on dnanexus: %s",
-				parentDir.ProjId, folderFullPath, dxErr.Error())
-			return fsys.dxErrorToFilesystemError(*dxErr)
-		default:
-			// A "regular" error
-			return err
-		}
+		fsys.log("Error in removing directory (%s:%s) on dnanexus: %s",
+			parentDir.ProjId, folderFullPath, err.Error())
+		return fsys.translateError(err)
 	}
 
 	// Remove the directory from the database
@@ -586,23 +585,18 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 
 	// create the file object on the platform.
 	httpClient := <- fsys.httpClientPool
+	defer func() {
+		fsys.httpClientPool <- httpClient
+	} ()
+
 	fileId, err := DxFileNew(
 		ctx, httpClient, &fsys.dxEnv, fsys.nonce.String(),
 		parentDir.ProjId, op.Name, parentDir.ProjFolder)
-	fsys.httpClientPool <- httpClient
 	if err != nil {
-		switch err.(type) {
-		case *dxda.DxError:
-			// A dnanexus error
-			dxErr := err.(*dxda.DxError)
-			fsys.log("Error in creating file (%s:%s/%s) on dnanexus: %s",
-				parentDir.ProjId, parentDir.ProjFolder, op.Name,
-				dxErr.Error())
-			return fsys.dxErrorToFilesystemError(*dxErr)
-		default:
-			// A "regular" error
-			return err
-		}
+		fsys.log("Error in creating file (%s:%s/%s) on dnanexus: %s",
+			parentDir.ProjId, parentDir.ProjFolder, op.Name,
+			err.Error())
+		return fsys.translateError(err)
 	}
 
 	file, err := fsys.mdb.CreateFile(ctx, &parentDir, fileId, op.Name, op.Mode, localPath)
@@ -651,6 +645,75 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	return nil
 }
 
+func (fsys *Filesys) renameFile(
+	ctx context.Context,
+	oldParentDir Dir,
+	newParentDir Dir,
+	file File,
+	newName string) error {
+	httpClient := <- fsys.httpClientPool
+	defer func() {
+		fsys.httpClientPool <- httpClient
+	} ()
+
+	if oldParentDir.Inode == newParentDir.Inode {
+		if file.Name == newName {
+			fsys.log("nothing to do, the new file name is the same as the old one")
+			return nil
+		}
+
+		// the source and target directories are the same. We can use
+		// /project-xxxx/rename
+		err := fsys.mdb.RenameFileInDir(ctx, file.Inode, newName)
+		if err != nil {
+			fsys.log("database error in rename %s", err.Error())
+			return fuse.EIO
+		}
+
+		// rename the file on the platform
+		err = DxRename(ctx, httpClient, &fsys.dxEnv, file.ProjId, file.Id, newName)
+		if err != nil {
+			fsys.log("Error in renaming file (%s:%s/%s) on dnanexus: %s",
+				file.ProjId, oldParentDir.ProjFolder, file.Name,
+				err.Error())
+			return fsys.translateError(err)
+		}
+	} else {
+		// /class-xxxx/move     {objects, folders}  -> destination
+
+		// the source and target directories are not the same. We
+		// need to use a more significant transaction.
+		err := fsys.mdb.RenameFile(ctx, file.Inode, newParentDir, newName)
+		if err != nil {
+			fsys.log("database error in rename %s", err.Error())
+			return fuse.EIO
+		}
+
+		// move the file on the platform
+		var objIds []string
+		objIds = append(objIds, file.Id)
+		err = DxMove(ctx, httpClient, &fsys.dxEnv, file.ProjId,
+			objIds, nil, newParentDir.ProjFolder)
+		if err != nil {
+			fsys.log("Error in renaming file (%s:%s/%s) on dnanexus: %s",
+				file.ProjId, oldParentDir.ProjFolder, file.Name,
+				err.Error())
+			return fsys.translateError(err)
+		}
+	}
+
+	return nil
+}
+
+func (fsys *Filesys) renameDir(
+	ctx context.Context,
+	oldParentDir Dir,
+	newParentDir Dir,
+	oldDir Dir,
+	newName string) error {
+	panic("renameDir not implemented yet")
+}
+
 func (fsys *Filesys) Rename(ctx context.Context, op *fuseops.RenameOp) error {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
@@ -686,12 +749,36 @@ func (fsys *Filesys) Rename(ctx context.Context, op *fuseops.RenameOp) error {
 	}
 	newParentDir := node.(Dir)
 
-	if err := fsys.mdb.Rename(ctx, oldParentDir, inode, newParentDir, op.NewName); err != nil {
-		fsys.log("database error in rename %s", err.Error())
-		return fuse.EIO
+	// Find the source file
+	node, ok, err = fsys.mdb.LookupInDir(ctx, &oldParentDir, op.OldName)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		// The source file doesn't exist
+		return fuse.ENOENT
 	}
 
+	// make sure that target doesn't already exist
+	// Note: there are important cases where doing the move is supposed
+	// to remove the target.
+	_, ok, err = fsys.mdb.LookupInDir(ctx, &newParentDir, op.NewName)
+	if err != nil {
+		return err
+	}
+	if ok {
+		// The target already exists
+		return fuse.EEXIST
+	}
 
+	switch node.(type) {
+	case File:
+		return fsys.renameFile(ctx, oldParentDir, newParentDir, node.(File), op.NewName)
+	case Dir:
+		return fsys.renameDir(ctx, oldParentDir, newParentDir, node.(Dir), op.NewName)
+	default:
+		panic(fmt.Sprintf("bad type for node %v", node))
+	}
 }
 
 // Decrement the link count, and remove the file if it hits zero.
@@ -746,26 +833,19 @@ func (fsys *Filesys) Unlink(ctx context.Context, op *fuseops.UnlinkOp) error {
 	// for this file.
 	fsys.fugs.CancelUpload(fileToRemove.Id)
 
-	// remove the file on the platform
 	httpClient := <- fsys.httpClientPool
 	defer func() {
 		fsys.httpClientPool <- httpClient
 	} ()
+
+	// remove the file on the platform
 	objectIds := make([]string, 1)
 	objectIds[0] = fileToRemove.Id
 	if err := DxRemoveObjects(ctx, httpClient, &fsys.dxEnv, fileToRemove.ProjId, objectIds); err != nil {
-		switch err.(type) {
-		case *dxda.DxError:
-			// A dnanexus error
-			dxErr := err.(*dxda.DxError)
-			fsys.log("Error in creating file (%s:%s/%s) on dnanexus: %s",
-				parentDir.ProjId, parentDir.ProjFolder, op.Name,
-				dxErr.Error())
-			return fsys.dxErrorToFilesystemError(*dxErr)
-		default:
-			// A "regular" error
-			return err
-		}
+		fsys.log("Error in creating file (%s:%s/%s) on dnanexus: %s",
+			parentDir.ProjId, parentDir.ProjFolder, op.Name,
+			err.Error())
+		return fsys.translateError(err)
 	}
 
 	return nil

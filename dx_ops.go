@@ -296,3 +296,95 @@ func dxFileUploadPart(
 	_, err = dxda.DxHttpRequest(ctx, httpClient, NumRetriesDefault, "PUT", reply.Url, reply.Headers, data)
 	return err
 }
+
+
+type RequestRename struct {
+	ProjId string  `json:"project"`
+	Name   string  `json:"name"`
+}
+
+type ReplyRename struct {
+	Id string `json:"id"`
+}
+
+//  API method: /class-xxxx/rename
+//
+//  rename a data object
+func DxRename(
+	ctx context.Context,
+	httpClient *retryablehttp.Client,
+	dxEnv *dxda.DXEnvironment,
+	projId string,
+	fileId string,
+	newName string) error {
+
+	var request RequestRename
+	request.ProjId = projId
+	request.Name = newName
+
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return err
+	}
+	repJs, err := dxda.DxAPI(
+		ctx, httpClient, NumRetriesDefault, dxEnv,
+		fmt.Sprintf("/%s/rename", fileId),
+		string(payload))
+	if err != nil {
+		return err
+	}
+
+	var reply ReplyRename
+	if err := json.Unmarshal(repJs, &reply); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+
+type RequestMove struct {
+	Objects    []string `json:"objects"`
+	Folders    []string `json:"folders"`
+	Destination  string `json:"destination"`
+}
+
+type ReplyMove struct {
+	Id string `json:"id"`
+}
+
+//  API method: /class-xxxx/move
+//
+//  move a bunch of data-objects and folders to a destination folder
+func DxMove(
+	ctx context.Context,
+	httpClient *retryablehttp.Client,
+	dxEnv *dxda.DXEnvironment,
+	projId      string,
+	objectIds []string,
+	folders   []string,
+	destination string) error {
+
+	var request RequestMove
+	request.Objects = objectIds
+	request.Folders = folders
+
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return err
+	}
+	repJs, err := dxda.DxAPI(
+		ctx, httpClient, NumRetriesDefault, dxEnv,
+		fmt.Sprintf("/%s/move", projId),
+		string(payload))
+	if err != nil {
+		return err
+	}
+
+	var reply ReplyMove
+	if err := json.Unmarshal(repJs, &reply); err != nil {
+		return err
+	}
+
+	return nil
+}
