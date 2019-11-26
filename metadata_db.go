@@ -1271,45 +1271,23 @@ func (mdb *MetadataDb) UpdateFileMakeRemote(ctx context.Context, fileId string) 
 	return txn.Commit()
 }
 
-func (mdb *MetadataDb) RenameFileInDir(ctx context.Context, inode int64, newName string) error {
-	if mdb.options.Verbose {
-		log.Printf("RenameFileInDir inode=%d newName=%s", inode, newName)
-	}
-
-	txn, err := mdb.db.Begin()
-	if err != nil {
-		log.Printf(err.Error())
-		return fmt.Errorf("RenameFileInDir error opening transaction")
-	}
-
-	sqlStmt := fmt.Sprintf(`
- 		        UPDATE namespace
-                        SET name = '%s'
-			WHERE inode = '%d';`,
-		newName, inode)
-
-	if _, err := txn.Exec(sqlStmt); err != nil {
-		txn.Rollback()
-		log.Printf(err.Error())
-		return fmt.Errorf("RenameFileInDir error executing transaction")
-	}
-	return txn.Commit()
-}
-
-// Rename a file from one directory to another. The filename can be changed as well.
-func (mdb *MetadataDb) RenameFile(
+// Move a file
+// 1) Can move a file from one directory to another,
+//    or leave it in the same directory
+// 2) Can change the filename.
+func (mdb *MetadataDb) MoveFile(
 	ctx context.Context,
 	inode int64,
 	newParentDir Dir,
 	newName string) error {
 	if mdb.options.Verbose {
-		log.Printf("RenameFile -> %s/%s", newParentDir.FullPath, newName)
+		log.Printf("MoveFile -> %s/%s", newParentDir.FullPath, newName)
 	}
 
 	txn, err := mdb.db.Begin()
 	if err != nil {
 		log.Printf(err.Error())
-		return fmt.Errorf("RenameFile error opening transaction")
+		return fmt.Errorf("MoveFile error opening transaction")
 	}
 
 	sqlStmt := fmt.Sprintf(`
@@ -1321,8 +1299,117 @@ func (mdb *MetadataDb) RenameFile(
 	if _, err := txn.Exec(sqlStmt); err != nil {
 		txn.Rollback()
 		log.Printf(err.Error())
-		return fmt.Errorf("RenameFile error executing transaction")
+		return fmt.Errorf("MoveFile error executing transaction")
 	}
+	return txn.Commit()
+}
+
+
+type MoveRecord struct  {
+	parent  string
+	inode   int64
+	objType int
+}
+
+func (mdb *MetadataDb) MoveDir(
+	ctx context.Context,
+	oldParentDir Dir,
+	newParentDir Dir,
+	oldDir Dir,
+	newName string) error {
+
+	// Find the sub-tree rooted at oldDir, and change
+	// all the:
+	// 1) namespace records olddir -> newDir
+	// 2) directory records for proj_folder: olddir -> newDir
+
+	if mdb.options.Verbose {
+		log.Printf("MoveDir -> %s/%s", newParentDir.FullPath, newName)
+	}
+
+	txn, err := mdb.db.Begin()
+	if err != nil {
+		log.Printf(err.Error())
+		return fmt.Errorf("MoveDir error opening transaction")
+	}
+
+	// Find all directories and data objects in the subtree rooted at
+	// the old directory. We use the SQL ability to match the prefix
+	// of a string; we add % at the end.
+	sqlStmt := fmt.Sprintf(`
+ 		        SELECT parent, inode, obj_type
+                        FROM namespace
+			WHERE parent = '%s';`,
+		oldDir.FullPath + "%")
+	rows, err := txn.Query(sqlStmt)
+	if err != nil {
+		return err
+	}
+
+	// extract the records, close the query
+	var records []MoveRecord = make([]MoveRecord, 0)
+	for rows.Next() {
+		var parent string
+		var inode int64
+		var objType int
+		rows.Scan(&parent, &inode, &objType)
+
+		// sanity check: make sure the path actually starts with the old directory
+		if !strings.HasPrefix(parent, oldDir.FullPath) {
+			panic(fmt.Sprintf("Query returned node %s that does not start with prefix %s",
+				parent, oldDir.FullPath))
+		}
+
+		records = append(records, MoveRecord {
+			parent : parent,
+			inode : inode,
+			objType : objType,
+		})
+	}
+	rows.Close()
+
+	// Modify the parent fields in the namespace table.
+	for _, r := range records {
+		suffix := strings.TrimPrefix(r.parent, oldDir.FullPath)
+		newParent := filepath.Clean(newParentDir.FullPath + "/" + newName + "/" + suffix)
+		if mdb.options.Verbose {
+			log.Printf("%s -> %s", r.parent, newParent)
+		}
+		sqlStmt := fmt.Sprintf(`
+ 		        UPDATE namespace
+                        SET parent = '%s'
+			WHERE inode = '%d';`,
+			newParent, r.inode)
+		if _, err := txn.Exec(sqlStmt); err != nil {
+			txn.Rollback()
+			log.Printf(err.Error())
+			return fmt.Errorf("MoveDir error executing transaction")
+		}
+	}
+
+	// Modify the dnanexus project-folder in all the directories
+	for _, r := range records {
+		if r.objType == nsDataObjType {
+			continue
+		}
+		suffix := strings.TrimPrefix(r.parent, oldDir.FullPath)
+		newProjFolder := filepath.Clean(newParentDir.ProjFolder + "/" + newName + "/" + suffix)
+		if mdb.options.Verbose {
+			log.Printf("project-folder  %s -> %s", r.parent, newProjFolder)
+		}
+
+		sqlStmt := fmt.Sprintf(`
+ 		        UPDATE directories
+                        SET proj_folder = '%s'
+			WHERE inode = '%d';`,
+			newProjFolder, r.inode)
+		if _, err := txn.Exec(sqlStmt); err != nil {
+			txn.Rollback()
+			log.Printf(err.Error())
+			return fmt.Errorf("MoveDir error executing transaction")
+		}
+	}
+
 	return txn.Commit()
 }
 

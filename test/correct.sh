@@ -463,9 +463,8 @@ flags=""
 #    if [[ $verbose != "" ]]; then
 flags="-verbose 2"
 #    fi
-sudo -E /go/bin/dxfuse $flags $mountpoint dxfuse_test_data dxfuse_test_read_only &
-dxfuse_pid=$!
-sleep 2
+sudo -E /go/bin/dxfuse $flags $mountpoint dxfuse_test_data dxfuse_test_read_only
+dxfuse_pid=$(ps aux | grep dxfuse | grep root  | awk '{ print($2) }')
 
 #    echo "download recursively with dx download"
 #    dx download --no-progress -o $dxTrgDir -r  dxfuse_test_data:/$dxDirOnProject

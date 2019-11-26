@@ -651,26 +651,20 @@ func (fsys *Filesys) renameFile(
 	newParentDir Dir,
 	file File,
 	newName string) error {
+
+	err := fsys.mdb.MoveFile(ctx, file.Inode, newParentDir, newName)
+	if err != nil {
+		fsys.log("database error in rename %s", err.Error())
+		return fuse.EIO
+	}
+
 	httpClient := <- fsys.httpClientPool
 	defer func() {
 		fsys.httpClientPool <- httpClient
 	} ()
 
 	if oldParentDir.Inode == newParentDir.Inode {
-		if file.Name == newName {
-			fsys.log("nothing to do, the new file name is the same as the old one")
-			return nil
-		}
-
-		// the source and target directories are the same. We can use
-		// /project-xxxx/rename
-		err := fsys.mdb.RenameFileInDir(ctx, file.Inode, newName)
-		if err != nil {
-			fsys.log("database error in rename %s", err.Error())
-			return fuse.EIO
-		}
-
-		// rename the file on the platform
+		// /file-xxxx/rename  API call
 		err = DxRename(ctx, httpClient, &fsys.dxEnv, file.ProjId, file.Id, newName)
 		if err != nil {
 			fsys.log("Error in renaming file (%s:%s/%s) on dnanexus: %s",
@@ -679,15 +673,7 @@ func (fsys *Filesys) renameFile(
 			return fsys.translateError(err)
 		}
 	} else {
-		// /class-xxxx/move     {objects, folders}  -> destination
-
-		// the source and target directories are not the same. We
-		// need to use a more significant transaction.
-		err := fsys.mdb.RenameFile(ctx, file.Inode, newParentDir, newName)
-		if err != nil {
-			fsys.log("database error in rename %s", err.Error())
-			return fuse.EIO
-		}
+		// /project-xxxx/move     {objects, folders}  -> destination
 
 		// move the file on the platform
 		var objIds []string
@@ -695,7 +681,7 @@ func (fsys *Filesys) renameFile(
 		err = DxMove(ctx, httpClient, &fsys.dxEnv, file.ProjId,
 			objIds, nil, newParentDir.ProjFolder)
 		if err != nil {
-			fsys.log("Error in renaming file (%s:%s/%s) on dnanexus: %s",
+			fsys.log("Error in moving file (%s:%s/%s) on dnanexus: %s",
 				file.ProjId, oldParentDir.ProjFolder, file.Name,
 				err.Error())
 			return fsys.translateError(err)
@@ -711,7 +697,34 @@ func (fsys *Filesys) renameDir(
 	newParentDir Dir,
 	oldDir Dir,
 	newName string) error {
-	panic("renameDir not implemented yet")
+	err := fsys.mdb.MoveDir(ctx, oldParentDir, newParentDir, oldDir, newName)
+	if err != nil {
+		fsys.log("database error in directory move %s", err.Error())
+		return fuse.EIO
+	}
+
+	httpClient := <- fsys.httpClientPool
+	defer func() {
+		fsys.httpClientPool <- httpClient
+	} ()
+
+	// move the file on the platform
+	folders := make([]string, 1)
+	folders[0] = oldDir.FullPath
+	destination := filepath.Clean(newParentDir.ProjFolder + "/" + newName)
+	projId := newParentDir.ProjId
+
+	err = DxMove(ctx, httpClient, &fsys.dxEnv,
+		projId,
+		nil, folders,
+		destination)
+	if err != nil {
+		fsys.log("Error in moving file %s:%s -> %s on dnanexus: %s",
+			projId, oldDir.FullPath, destination,
+			err.Error())
+		return fsys.translateError(err)
+	}
+	return nil
 }
 
 func (fsys *Filesys) Rename(ctx context.Context, op *fuseops.RenameOp) error {
@@ -769,6 +782,34 @@ func (fsys *Filesys) Rename(ctx context.Context, op *fuseops.RenameOp) error {
 	if ok {
 		// The target already exists
 		return fuse.EEXIST
+	}
+
+	oldDir := filepath.Clean(oldParentDir.FullPath + "/" + op.OldName)
+	if oldDir == "/" {
+		fsys.log("can not move the root directory")
+		return syscall.EPERM
+	}
+	if oldParentDir.Inode == InodeRoot {
+		// project directories are immediate children of the root.
+		// these cannot be moved
+		fsys.log("Can not move a project directory")
+		return syscall.EPERM
+	}
+	if newParentDir.Inode == InodeRoot {
+		// can't move into the root directory
+		fsys.log("Can not move into the root directory")
+		return syscall.EPERM
+	}
+	if oldParentDir.ProjId != newParentDir.ProjId {
+		// can't move between projects
+		fsys.log("Can not move objects between projects")
+		return syscall.EPERM
+	}
+
+	if oldParentDir.Inode == newParentDir.Inode &&
+		op.OldName == op.NewName {
+		fsys.log("can't move a file onto itself")
+		return syscall.EPERM
 	}
 
 	switch node.(type) {
