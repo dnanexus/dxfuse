@@ -55,7 +55,6 @@ script:
 
 # tests go here
 - sudo ls -l $mountpoint/*
-- ls -R $mountpoint
 
 # export the dxfuse binary
 - version=$($dxfuse --version)

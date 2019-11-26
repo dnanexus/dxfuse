@@ -147,8 +147,8 @@ func fsDaemon(
 	}
 
 	logger.Printf("mounting dxfuse")
-	os.Stderr.WriteString("Ready")
-	os.Stderr.Close()
+	os.Stdout.WriteString("Ready")
+	os.Stdout.Close()
 	mfs, err := fuse.Mount(mountpoint, server, cfg)
 	if err != nil {
 		logger.Printf(err.Error())
@@ -211,13 +211,14 @@ func parseCmdLineArgs() Config {
 	}
 
 	if dxEnv.DxJobId == "" {
-		fmt.Println(`
+		fmt.Fprintf(os.Stderr, `
 Warning: running outside a worker. Dxfuse is currently engineered to
 operate inside a cloud worker. The system depends on a good network
 connection to the DNAnexus servers, and to the backing store, which is
 S3 or Azure. Without such connectivity, some operations may take a
 long time, causing operating system timeouts to expire. This can
-result in the filesystem freezing, or being unmounted.`)
+result in the filesystem freezing, or being unmounted.
+`)
 	}
 
 	return Config{
@@ -287,17 +288,16 @@ func main() {
 	cfg := parseCmdLineArgs()
 
 	if isActual() {
-		fmt.Printf("in fs subprocess")
 		manifest, err := parseManifest(cfg)
 		if err != nil {
-			os.Stderr.WriteString(err.Error())
-			os.Stderr.Close()
+			os.Stdout.WriteString(err.Error())
+			os.Stdout.Close()
 			os.Exit(1)
 		}
 		err = fsDaemon(cfg.mountpoint, cfg.dxEnv, *manifest, cfg.options)
 		if err != nil {
-			os.Stderr.WriteString(err.Error())
-			os.Stderr.Close()
+			os.Stdout.WriteString(err.Error())
+			os.Stdout.Close()
 			os.Exit(1)
 		}
 		return
@@ -323,7 +323,7 @@ func main() {
 		os.Exit(1)
 	}
 	mountCmd := exec.Command(progPath, os.Args[1:]...)
-	mountCmd.Stderr = errorWriter
+	mountCmd.Stdout = errorWriter
 	mountCmd.Env = append(os.Environ(), "ACTUAL=1")
 
 	// Start the command.
