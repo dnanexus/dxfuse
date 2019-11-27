@@ -667,7 +667,7 @@ func (fsys *Filesys) renameFile(
 		// /file-xxxx/rename  API call
 		err = DxRename(ctx, httpClient, &fsys.dxEnv, file.ProjId, file.Id, newName)
 		if err != nil {
-			fsys.log("Error in renaming file (%s:%s/%s) on dnanexus: %s",
+			fsys.log("Error in renaming file (%s:%s%s) on dnanexus: %s",
 				file.ProjId, oldParentDir.ProjFolder, file.Name,
 				err.Error())
 			return fsys.translateError(err)

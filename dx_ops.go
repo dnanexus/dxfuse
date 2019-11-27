@@ -328,7 +328,7 @@ func DxRename(
 	}
 	repJs, err := dxda.DxAPI(
 		ctx, httpClient, NumRetriesDefault, dxEnv,
-		fmt.Sprintf("/%s/rename", fileId),
+		fmt.Sprintf("%s/rename", fileId),
 		string(payload))
 	if err != nil {
 		return err
@@ -355,7 +355,7 @@ type ReplyMove struct {
 
 //  API method: /class-xxxx/move
 //
-//  move a bunch of data-objects and folders to a destination folder
+// Moves the specified data objects and folders to a destination folder in the same container.
 func DxMove(
 	ctx context.Context,
 	httpClient *retryablehttp.Client,
@@ -375,7 +375,7 @@ func DxMove(
 	}
 	repJs, err := dxda.DxAPI(
 		ctx, httpClient, NumRetriesDefault, dxEnv,
-		fmt.Sprintf("/%s/move", projId),
+		fmt.Sprintf("%s/move", projId),
 		string(payload))
 	if err != nil {
 		return err

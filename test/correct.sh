@@ -7,7 +7,6 @@ projName="dxfuse_test_data"
 dxDirOnProject="correctness"
 
 baseDir="$HOME/dxfuse_test"
-dxTrgDir="${baseDir}/dxCopy"
 mountpoint="${baseDir}/MNT"
 
 dxfuseDir="$mountpoint/$projName/$dxDirOnProject"
@@ -151,12 +150,12 @@ function check_grep {
 
 # copy a bunch of files in parallel
 function check_parallel_cat {
-    top_dir="$mountpoint/$projName/reference_data"
-    target_dir="/tmp/write_test_dir"
-    TOTAL_NUM_FILES=3
+    local top_dir="$mountpoint/$projName/reference_data"
+    local target_dir="/tmp/write_test_dir"
+    local TOTAL_NUM_FILES=3
 
     mkdir -p $target_dir
-    all_files=$(find $top_dir -type f)
+    local all_files=$(find $top_dir -type f)
 
     # limit the number of files in the test
     num_files=0
@@ -171,7 +170,7 @@ function check_parallel_cat {
     done
 
     # copy the chosen files in parallel
-    pids=()
+    local pids=()
     for f in $files; do
         echo "copying $f"
         b_name=$(basename $f)
@@ -199,8 +198,8 @@ function check_parallel_cat {
 function check_file_write_content {
     local top_dir=$1
     local target_dir=$2
-    local content="nothing much"
     local write_dir=$top_dir/$target_dir
+    local content="nothing much"
 
     echo "write_dir = $write_dir"
 
@@ -221,7 +220,7 @@ function check_file_write_content {
     dx ls -l $projName:/$target_dir/A.txt
 
     # compare the data
-    content2=$(dx cat $projName:/$target_dir/A.txt)
+    local content2=$(dx cat $projName:/$target_dir/A.txt)
     if [[ "$content" == "$content2" ]]; then
         echo "correct"
     else
@@ -246,7 +245,7 @@ function write_files {
 
     # compare resulting files
     echo "comparing files"
-    files=$(find $top_dir/correctness/large -type f)
+    local files=$(find $top_dir/correctness/large -type f)
     for f in $files; do
         b_name=$(basename $f)
         diff $f $write_dir/$b_name
@@ -258,7 +257,7 @@ function write_files {
 function write_to_read_only_project {
     ls $mountpoint/dxfuse_test_read_only
     (echo "hello" > $mountpoint/dxfuse_test_read_only/A.txt) >& cmd_results.txt || true
-    result=$(cat cmd_results.txt)
+    local result=$(cat cmd_results.txt)
 
     echo "result=$result"
     if [[  $result =~ "Operation not permitted" ]]; then
@@ -283,7 +282,7 @@ function create_dir {
 
     # compare resulting files
     echo "comparing files"
-    files=$(find $top_dir/correctness/small -type f)
+    local files=$(find $top_dir/correctness/small -type f)
     for f in $files; do
         b_name=$(basename $f)
         diff $f $write_dir/$b_name
@@ -314,7 +313,7 @@ function create_remove_dir {
 
     # compare resulting files
     echo "comparing files"
-    files=$(find $top_dir/correctness/small -type f)
+    local files=$(find $top_dir/correctness/small -type f)
     for f in $files; do
         b_name=$(basename $f)
         diff $f $write_dir/$b_name
@@ -443,30 +442,91 @@ function file_remove_non_exist {
 
 }
 
-# Get all the DX environment variables, so that dxfuse can use them
-echo "loading the dx environment"
+function compare_symlink_content {
+    local trg_dir="${baseDir}/dxCopySymlinks"
+    rm -rf $trg_dir
+    mkdir -p $trg_dir
 
-# don't leak the token to stdout
-#source environment >& /dev/null
-rm -f ENV
-dx env --bash > ENV
-source ENV >& /dev/null
+    dx download --no-progress -o $trg_dir -r  $projName:/symlinks
+    diff -r --brief $mountpoint/$projName/symlinks $trg_dir/symlinks > diff.txt || true
+    if [[ -s diff.txt ]]; then
+        echo "Difference in symlink content"
+        cat diff.txt
+        exit 1
+    fi
+}
 
-# clean and make fresh directories
-for d in $dxTrgDir $mountpoint; do
-    mkdir -p $d
-done
+function move_file {
+    local write_dir=$1
+    cd $write_dir
 
-# Start the dxfuse daemon in the background, and wait for it to initilize.
-echo "Mounting dxfuse"
-flags=""
-#    if [[ $verbose != "" ]]; then
-flags="-verbose 2"
-#    fi
-sudo -E /go/bin/dxfuse $flags $mountpoint dxfuse_test_data dxfuse_test_read_only
-dxfuse_pid=$(ps aux | grep dxfuse | grep root  | awk '{ print($2) }')
+    rm -f XX.txt
+    echo "the jaberwoky is on the loose" > XX.txt
+    mv XX.txt ZZ.txt
+    mv ZZ.txt XX.txt
+    rm -f XX.txt
+}
 
+function move_file2 {
+    local write_dir=$1
+    cd $write_dir
+
+    rm -rf A
+    mkdir A
+
+    echo "the jaberwoky is on the loose" > A/XX.txt
+    mv A/XX.txt A/ZZ.txt
+
+    mkdir B
+    mv A/ZZ.txt B/ZZ.txt
+    tree A
+    tree B
+}
+
+main() {
+    # Get all the DX environment variables, so that dxfuse can use them
+    echo "loading the dx environment"
+
+    # don't leak the token to stdout
+    if [[ $DX_JOB_ID == "" ]]; then
+        # local machine
+        rm -f ENV
+        dx env --bash > ENV
+        source ENV >& /dev/null
+        dxfuse="/go/bin/dxfuse"
+    else
+        # Running on a cloud worker
+        source environment >& /dev/null
+        dxfuse="dxfuse"
+    fi
+
+    # clean and make fresh directories
+    mkdir -p $mountpoint
+
+    # bash generate random alphanumeric strings
+#    target_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+#    target_dir2=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+#    target_dir3=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+#    writeable_dirs=($target_dir $target_dir2 $target_dir3)
+#    for d in ${writeable_dirs[@]}; do
+#        dx rm -r $projName:/$d >& /dev/null || true
+#    done
+#    dx mkdir $projName:/$target_dir
+
+    # Start the dxfuse daemon in the background, and wait for it to initilize.
+    echo "Mounting dxfuse"
+    flags=""
+    if [[ $verbose != "" ]]; then
+        flags="-verbose 2"
+    fi
+    sudo -E $dxfuse $flags $mountpoint dxfuse_test_data dxfuse_test_read_only
+
+#    echo "comparing symlink content"
+#    compare_symlink_content
+#
 #    echo "download recursively with dx download"
+#    dxTrgDir="${baseDir}/dxCopy"
+#    mkdir $dxTrgDir
 #    dx download --no-progress -o $dxTrgDir -r  dxfuse_test_data:/$dxDirOnProject
 #
 #    # do not exit immediately if there are differences; we want to see the files
@@ -497,52 +557,51 @@ dxfuse_pid=$(ps aux | grep dxfuse | grep root  | awk '{ print($2) }')
 #    # find
 #    echo "head, tail, wc"
 #    check_cmd_line_utils
+#
+#    echo "parallel downloads"
+#    check_parallel_cat
+#
+#    echo "can write to a small file"
+#    check_file_write_content "$mountpoint/$projName" $target_dir
 
-tree $mountpoint
+#    echo "can write several files to a directory"
+#    write_files "$mountpoint/$projName" $target_dir
 
-echo "parallel downloads"
-check_parallel_cat
+#    echo "can't write to read-only project"
+#    write_to_read_only_project
+#
+#    echo "create directory"
+#    create_dir "$mountpoint/$projName" $target_dir2
+#
+#    echo "create/remove directory"
+#    create_remove_dir "yes" "$mountpoint/$projName" $target_dir3
+#    create_remove_dir "no" "$mountpoint/$projName" $target_dir3
+#
+#    echo "mkdir rmdir"
+#    rmdir_non_empty "$mountpoint/$projName/sunny"
+#    rmdir_not_exist "$mountpoint/$projName"
+#    mkdir_existing  "$mountpoint/$projName/sunny"
+#
+#    echo "file create remove"
+#    file_create_existing "$mountpoint/$projName"
+#    file_remove_non_exist "$mountpoint/$projName"
+#
+    echo "rename tests"
+    move_file "$mountpoint/$projName"
 
-# bash generate random alphanumeric string
-target_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 8 | head -n 1)
-dx rm -r $projName:/$target_dir >& /dev/null || true
+    echo "rename tests II"
+    move_file2 "$mountpoint/$projName"
 
-echo "can write to a small file"
-check_file_write_content "$mountpoint/$projName" $target_dir
+    echo "syncing filesystem"
+    sync
 
-echo "can write several files to a directory"
-write_files "$mountpoint/$projName" $target_dir
+    echo "unmounting dxfuse"
+    cd $HOME
+    sudo umount $mountpoint
 
-echo "can't write to read-only project"
-write_to_read_only_project
+    for d in ${writeable_dirs[@]}; do
+        dx rm -r $projName:/$d >& /dev/null || true
+    done
+}
 
-echo "create directory"
-target_dir2=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 8 | head -n 1)
-dx rm -r $projName:/$target_dir2 >& /dev/null || true
-create_dir "$mountpoint/$projName" $target_dir2
-
-echo "create/remove directory"
-target_dir3=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 8 | head -n 1)
-dx rm -r $projName:/$target_dir3 >& /dev/null || true
-create_remove_dir "yes" "$mountpoint/$projName" $target_dir3
-create_remove_dir "no" "$mountpoint/$projName" $target_dir3
-
-echo "mkdir rmdir"
-rmdir_non_empty "$mountpoint/$projName/sunny"
-rmdir_not_exist "$mountpoint/$projName"
-mkdir_existing  "$mountpoint/$projName/sunny"
-
-echo "file create remove"
-file_create_existing "$mountpoint/$projName"
-file_remove_non_exist "$mountpoint/$projName"
-
-echo "unmounting dxfuse"
-cd $HOME
-sudo umount $mountpoint
-
-# wait until the filesystem is done running
-wait $dxfuse_pid
-
-for d in $target_dir $target_dir2 $target_dir3; do
-    dx rm -r $projName:/$d >& /dev/null || true
-done
+main
