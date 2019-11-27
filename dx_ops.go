@@ -365,9 +365,11 @@ func DxMove(
 	folders   []string,
 	destination string) error {
 
+	LogMsg("dx_ops", "%s source folders=%v  -> %s", projId, folders, destination)
 	var request RequestMove
 	request.Objects = objectIds
 	request.Folders = folders
+	request.Destination = destination
 
 	payload, err := json.Marshal(request)
 	if err != nil {
@@ -382,6 +384,48 @@ func DxMove(
 	}
 
 	var reply ReplyMove
+	if err := json.Unmarshal(repJs, &reply); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+type RequestRenameFolder struct {
+	Folder string `json:"folder"`
+	Name   string `json:"name"`
+}
+
+type ReplyRenameFolder struct {
+	Id string `json:"id"`
+}
+
+func DxRenameFolder(
+	ctx context.Context,
+	httpClient *retryablehttp.Client,
+	dxEnv *dxda.DXEnvironment,
+	projId string,
+	folder string,
+	newName string) error {
+
+	var request RequestRenameFolder
+	request.Folder = folder
+	request.Name = newName
+
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return err
+	}
+
+	repJs, err := dxda.DxAPI(
+		ctx, httpClient, NumRetriesDefault, dxEnv,
+		fmt.Sprintf("%s/renameFolder", projId),
+		string(payload))
+	if err != nil {
+		return err
+	}
+
+	var reply ReplyRenameFolder
 	if err := json.Unmarshal(repJs, &reply); err != nil {
 		return err
 	}

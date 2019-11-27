@@ -472,6 +472,7 @@ function move_file2 {
     cd $write_dir
 
     rm -rf A
+    rm -rf B
     mkdir A
 
     echo "the jaberwoky is on the loose" > A/XX.txt
@@ -479,8 +480,70 @@ function move_file2 {
 
     mkdir B
     mv A/ZZ.txt B/ZZ.txt
+
     tree A
     tree B
+
+    rm -rf A
+    rm -rf B
+}
+
+function rename_dir {
+    local write_dir=$1
+    cd $write_dir
+
+    rm -rf A
+    rm -rf B
+    mkdir A
+    echo "Monroe doctrine" > A/X.txt
+    echo "Ted Rosevelt" > A/Y.txt
+
+    mv A B
+    tree B
+    rm -rf B
+}
+
+function move_dir {
+    local write_dir=$1
+    cd $write_dir
+
+    rm -rf A
+    rm -rf B
+    mkdir A
+    echo "Monroe doctrine" > A/X.txt
+    echo "Ted Rosevelt" > A/Y.txt
+    tree A
+
+    mkdir B
+    mv A B/
+
+    tree B
+    rm -rf B
+}
+
+function move_dir_deep {
+    local write_dir=$1
+    cd $write_dir
+
+    rm -rf A
+    rm -rf D
+
+    mkdir A
+    echo "Monroe doctrine" > A/X.txt
+    echo "Ted Rosevelt" > A/Y.txt
+    mkdir A/fruit
+    echo "melons" > A/fruit/melon.txt
+    echo "grapes" > A/fruit/grapes.txt
+
+    tree A
+
+    mkdir D
+    mkdir D/K
+
+    mv A D/K/
+
+    tree D
+    cat D/K/A/fruit/melon.txt
 }
 
 main() {
@@ -586,11 +649,20 @@ main() {
 #    file_create_existing "$mountpoint/$projName"
 #    file_remove_non_exist "$mountpoint/$projName"
 #
-    echo "rename tests"
-    move_file "$mountpoint/$projName"
+#    echo "move file I"
+#    move_file "$mountpoint/$projName"
+#
+#    echo "move file II"
+#    move_file2 "$mountpoint/$projName"
+#
+#    echo "rename directory"
+#    rename_dir "$mountpoint/$projName"
+#
+#    echo "move directory"
+#    move_dir "$mountpoint/$projName"
 
-    echo "rename tests II"
-    move_file2 "$mountpoint/$projName"
+    echo "move a deep directory"
+    move_dir_deep "$mountpoint/$projName"
 
     echo "syncing filesystem"
     sync

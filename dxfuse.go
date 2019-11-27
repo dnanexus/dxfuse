@@ -699,7 +699,9 @@ func (fsys *Filesys) renameDir(
 	newName string) error {
 	err := fsys.mdb.MoveDir(ctx, oldParentDir, newParentDir, oldDir, newName)
 	if err != nil {
-		fsys.log("database error in directory move %s", err.Error())
+		fsys.log("Data base error in moving directory %s -> %s/%s: %s",
+			oldDir.FullPath, newParentDir.FullPath, newName,
+			err.Error())
 		return fuse.EIO
 	}
 
@@ -707,22 +709,43 @@ func (fsys *Filesys) renameDir(
 	defer func() {
 		fsys.httpClientPool <- httpClient
 	} ()
-
-	// move the file on the platform
-	folders := make([]string, 1)
-	folders[0] = oldDir.FullPath
-	destination := filepath.Clean(newParentDir.ProjFolder + "/" + newName)
 	projId := newParentDir.ProjId
 
-	err = DxMove(ctx, httpClient, &fsys.dxEnv,
-		projId,
-		nil, folders,
-		destination)
-	if err != nil {
-		fsys.log("Error in moving file %s:%s -> %s on dnanexus: %s",
-			projId, oldDir.FullPath, destination,
-			err.Error())
-		return fsys.translateError(err)
+	if oldParentDir.Inode == newParentDir.Inode {
+		// rename a folder, but leave it under the same parent
+		err = DxRenameFolder(
+			ctx, httpClient, &fsys.dxEnv,
+			projId,
+			oldDir.ProjFolder,
+			newName)
+		if err != nil {
+			fsys.log("Error in folder rename %s -> %s on dnanexus", err.Error())
+			return fsys.translateError(err)
+		}
+	} else {
+		// we are moving a directory to another directory. For example:
+		//   mkdir A
+		//   mkdir B
+		//   mv A B/
+		// The name "A" should not change.
+		check(newName == filepath.Base(oldDir.Dname))
+
+		// move a folder to a new parent
+		objIds := make([]string, 0)
+		folders := make([]string, 1)
+		folders[0] = oldDir.ProjFolder
+
+		err = DxMove(
+			ctx, httpClient, &fsys.dxEnv,
+			projId,
+			objIds, folders,
+			newParentDir.ProjFolder)
+		if err != nil {
+			fsys.log("Error in moving directory %s:%s -> %s on dnanexus: %s",
+				projId, oldDir.ProjFolder, newParentDir.ProjFolder,
+				err.Error())
+			return fsys.translateError(err)
+		}
 	}
 	return nil
 }
