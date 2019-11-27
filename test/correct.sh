@@ -500,7 +500,6 @@ function rename_dir {
 
     mv A B
     tree B
-    rm -rf B
 }
 
 function move_dir {
@@ -523,6 +522,7 @@ function move_dir {
 
 function move_dir_deep {
     local write_dir=$1
+    local expNum=$2
     cd $write_dir
 
     rm -rf A
@@ -542,8 +542,20 @@ function move_dir_deep {
 
     mv A D/K/
 
-    tree D
-    cat D/K/A/fruit/melon.txt
+    tree D > /tmp/results_$expNum.txt
+}
+
+function move_dir_errors {
+    local write_dir=$1
+    cd $write_dir
+
+    result=$(mv X Y)
+    if [[ ! $result =~ "No such file or directory" ]]; then
+        echo "Error, incorrect command results"
+        cat /tmp/cmd_results.txt
+        exit 1
+    fi
+
 }
 
 main() {
@@ -654,15 +666,27 @@ main() {
 #
 #    echo "move file II"
 #    move_file2 "$mountpoint/$projName"
-#
-#    echo "rename directory"
-#    rename_dir "$mountpoint/$projName"
-#
+
+    echo "rename directory"
+    rename_dir "$mountpoint/$projName"
+    rename_dir /tmp
+    diff -r /tmp/B $mountpoint/$projName/B
+    rm -rf /tmp/B $mountpoint/$projName/B
+
 #    echo "move directory"
 #    move_dir "$mountpoint/$projName"
 
-    echo "move a deep directory"
-    move_dir_deep "$mountpoint/$projName"
+#    echo "move a deep directory"
+#    move_dir_deep "$mountpoint/$projName" 1
+#    move_dir_deep /tmp 2
+#    cd $HOME
+#
+#    diff /tmp/results_1.txt /tmp/results_2.txt
+#    diff -r $mountpoint/$projName/D /tmp/D
+#    rm -rf $mountpoint/$projName/D
+#    rm -rf /tmp/D
+#
+#    move_dir_errors "$mountpoint/$projName"
 
     echo "syncing filesystem"
     sync

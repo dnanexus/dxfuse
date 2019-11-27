@@ -1309,11 +1309,12 @@ func (mdb *MetadataDb) MoveFile(
 
 
 type MoveRecord struct  {
-	parent  string
-	name    string
-	suffix  string
-	inode   int64
-	nsObjType int
+	oldFullPath   string
+	name          string
+	newParent     string
+	newProjFolder string
+	inode         int64
+	nsObjType     int
 }
 
 // As a running example:
@@ -1363,7 +1364,6 @@ func (mdb *MetadataDb) MoveDir(
                         FROM namespace
 			WHERE parent LIKE '%s';`,
 		oldDir.FullPath + "%")
-	mdb.log("search sql statement: %s", sqlStmt)
 	rows, err := txn.Query(sqlStmt)
 	if err != nil {
 		return err
@@ -1372,46 +1372,63 @@ func (mdb *MetadataDb) MoveDir(
 	// extract the records, close the query
 	var records []MoveRecord = make([]MoveRecord, 0)
 	for rows.Next() {
-		var mr MoveRecord
-		rows.Scan(&mr.parent, &mr.name, &mr.inode, &mr.nsObjType)
+		var parent string
+		var name string
+		var inode int64
+		var nsObjType int
+		rows.Scan(&parent, &name, &inode, &nsObjType)
 
 		// sanity check: make sure the path actually starts with the old directory
-		if !strings.HasPrefix(mr.parent, oldDir.FullPath) {
+		if !strings.HasPrefix(parent, oldDir.FullPath) {
 			panic(fmt.Sprintf("Query returned node %s that does not start with prefix %s",
-				mr.parent, oldDir.FullPath))
+				parent, oldDir.FullPath))
 		}
 
-		// For file /A/fruit/mellon.txt
-		//   parent = /A/fruit
-		//   suffix = /A/fruit
-		mr.suffix = strings.TrimPrefix(mr.parent, oldDir.FullPath)
-		mr.suffix = newName + "/" + mr.suffix
+		// For file /A/fruit/melon.txt
+		//   oldFullPath : /A/fruit/melon.txt
+		//   name : melon.txt
+		//   midPath : /A/fruit
+		//
+		midPath := newName + "/" + strings.TrimPrefix(parent, oldDir.FullPath)
+		mr := MoveRecord{
+			oldFullPath : parent + "/" + name,
+			name : name,
+			newParent : filepath.Clean(newParentDir.FullPath + "/" + midPath),
+			newProjFolder : filepath.Clean(newParentDir.ProjFolder + "/" + midPath + "/" + name),
+			inode : inode,
+			nsObjType : nsObjType,
+		}
 		records = append(records, mr)
 	}
 	rows.Close()
 
-	// add the top level directory (A) to be moved
+	// add the top level directory (A) to be moved. Note, that the top level directory may
+	// change name.
 	records = append(records, MoveRecord{
-		parent : oldDir.Parent,
-		name : oldDir.Dname,
-		suffix : "",
+		oldFullPath : oldDir.FullPath,
+		name : newName,
+		newParent : filepath.Clean(newParentDir.FullPath),
+		newProjFolder : filepath.Clean(filepath.Join(newParentDir.ProjFolder, newName)),
 		inode : oldDir.Inode,
 		nsObjType: nsDirType,
 	})
-	mdb.log("found %d records under directory %s: %v", len(records), oldDir.FullPath, records)
+	if mdb.options.Verbose {
+		mdb.log("found %d records under directory %s: %v", len(records), oldDir.FullPath, records)
+	}
 
 	// Modify the parent fields in the namespace table.
-	mdb.log("modify the parents in the namespace table")
+	if mdb.options.Verbose {
+		mdb.log("modify the parents in the namespace table")
+	}
 	for _, r := range records {
-		newParent := filepath.Clean(newParentDir.FullPath + "/" + r.suffix)
 		if mdb.options.Verbose {
-			mdb.log("%s/%s -> %s/%s", r.parent, r.name, newParent, r.name)
+			mdb.log("%s -> %s/%s", r.oldFullPath, r.newParent, r.name)
 		}
 		sqlStmt := fmt.Sprintf(`
  		        UPDATE namespace
                         SET parent = '%s'
 			WHERE inode = '%d';`,
-			newParent, r.inode)
+			r.newParent, r.inode)
 		if _, err := txn.Exec(sqlStmt); err != nil {
 			txn.Rollback()
 			mdb.log(err.Error())
@@ -1420,22 +1437,25 @@ func (mdb *MetadataDb) MoveDir(
 	}
 
 	// Modify the dnanexus project-folder in all the directories
-	mdb.log("modify directories table, set proj_folder fields")
+	if mdb.options.Verbose {
+		mdb.log("modify directories table, set proj_folder fields")
+	}
 	for _, r := range records {
 		if r.nsObjType == nsDataObjType {
 			continue
 		}
-		srcDir := filepath.Clean(r.parent + "/" + r.name)
-		newProjFolder := filepath.Clean(newParentDir.ProjFolder + "/" + r.suffix)
+		//  /dxfuse_test_data/A/fruit ->  proj-xxxx:/D/K/A/fruit
+		//  /dxfuse_test_data/A       ->  proj-xxxx:/D/K/A
+		//
 		if mdb.options.Verbose {
-			mdb.log("move subdir (%s) project-folder %s", srcDir, newProjFolder)
+			mdb.log("move subdir (%s) project-folder %s", r.oldFullPath, r.newProjFolder)
 		}
 
 		sqlStmt := fmt.Sprintf(`
  		        UPDATE directories
                         SET proj_folder = '%s'
 			WHERE inode = '%d';`,
-			newProjFolder, r.inode)
+			r.newProjFolder, r.inode)
 		if _, err := txn.Exec(sqlStmt); err != nil {
 			txn.Rollback()
 			mdb.log(err.Error())
@@ -1443,7 +1463,8 @@ func (mdb *MetadataDb) MoveDir(
 		}
 	}
 
-	err = txn.Commit()
+	return txn.Commit()
+/*
 	if err != nil {
 		return err
 	}
@@ -1468,7 +1489,7 @@ func (mdb *MetadataDb) MoveDir(
 		mdb.log("sanity check on target dir: files=%v  subdirs=%v", files, subdirs)
 	}
 
-	return nil
+	return nil*/
 }
 
 func (mdb *MetadataDb) Shutdown() {
