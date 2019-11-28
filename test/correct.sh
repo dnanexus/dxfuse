@@ -549,13 +549,39 @@ function move_dir_errors {
     local write_dir=$1
     cd $write_dir
 
-    result=$(mv X Y)
+    set +e
+    (mv X Y) >& /tmp/cmd_results.txt
+    rc=$?
+    set -e
+
+    if [[ $rc == 0 ]]; then
+        echo "Error, could move a non-existent directory"
+        exit 1
+    fi
+    result=$(cat /tmp/cmd_results.txt)
     if [[ ! $result =~ "No such file or directory" ]]; then
         echo "Error, incorrect command results"
         cat /tmp/cmd_results.txt
         exit 1
     fi
 
+    # Y is a file, can't move a directory into a file
+    touch Y
+    set +e
+    (mv X Y) >& /tmp/cmd_results.txt
+    rc=$?
+    set -e
+
+    if [[ $rc == 0 ]]; then
+        echo "Error, could move a directory into a file"
+        exit 1
+    fi
+    result=$(cat /tmp/cmd_results.txt)
+    if [[ ! $result =~ "No such file or directory" ]]; then
+        echo "Error, incorrect command results"
+        cat /tmp/cmd_results.txt
+        exit 1
+    fi
 }
 
 main() {
@@ -666,16 +692,16 @@ main() {
 #
 #    echo "move file II"
 #    move_file2 "$mountpoint/$projName"
-
-    echo "rename directory"
-    rename_dir "$mountpoint/$projName"
-    rename_dir /tmp
-    diff -r /tmp/B $mountpoint/$projName/B
-    rm -rf /tmp/B $mountpoint/$projName/B
-
+#
+#    echo "rename directory"
+#    rename_dir "$mountpoint/$projName"
+#    rename_dir /tmp
+#    diff -r /tmp/B $mountpoint/$projName/B
+#    rm -rf /tmp/B $mountpoint/$projName/B
+#
 #    echo "move directory"
 #    move_dir "$mountpoint/$projName"
-
+#
 #    echo "move a deep directory"
 #    move_dir_deep "$mountpoint/$projName" 1
 #    move_dir_deep /tmp 2
@@ -685,8 +711,9 @@ main() {
 #    diff -r $mountpoint/$projName/D /tmp/D
 #    rm -rf $mountpoint/$projName/D
 #    rm -rf /tmp/D
-#
-#    move_dir_errors "$mountpoint/$projName"
+
+    echo "checking illegal directory moves"
+    move_dir_errors "$mountpoint/$projName"
 
     echo "syncing filesystem"
     sync
@@ -695,9 +722,9 @@ main() {
     cd $HOME
     sudo umount $mountpoint
 
-    for d in ${writeable_dirs[@]}; do
-        dx rm -r $projName:/$d >& /dev/null || true
-    done
+#    for d in ${writeable_dirs[@]}; do
+#        dx rm -r $projName:/$d >& /dev/null || true
+#    done
 }
 
 main

@@ -1317,6 +1317,43 @@ type MoveRecord struct  {
 	nsObjType     int
 }
 
+func (mdb *MetadataDb) execModifyRecord(txn *sql.Tx, r MoveRecord) error {
+	// Modify the parent fields in the namespace table.
+	if mdb.options.Verbose {
+		mdb.log("%s -> %s/%s", r.oldFullPath, r.newParent, r.name)
+	}
+	sqlStmt := fmt.Sprintf(`
+ 		        UPDATE namespace
+                        SET parent = '%s', name = '%s'
+			WHERE inode = '%d';`,
+		r.newParent, r.name, r.inode)
+	if _, err := txn.Exec(sqlStmt); err != nil {
+		mdb.log(err.Error())
+		return fmt.Errorf("MoveDir error executing transaction")
+	}
+
+	if r.nsObjType == nsDataObjType {
+		return nil
+	}
+	//  /dxfuse_test_data/A/fruit ->  proj-xxxx:/D/K/A/fruit
+	//  /dxfuse_test_data/A       ->  proj-xxxx:/D/K/A
+	//
+	if mdb.options.Verbose {
+		mdb.log("move subdir (%s) project-folder %s", r.oldFullPath, r.newProjFolder)
+	}
+
+	sqlStmt = fmt.Sprintf(`
+ 		        UPDATE directories
+                        SET proj_folder = '%s'
+			WHERE inode = '%d';`,
+		r.newProjFolder, r.inode)
+	if _, err := txn.Exec(sqlStmt); err != nil {
+		mdb.log(err.Error())
+		return fmt.Errorf("MoveDir error executing transaction")
+	}
+	return nil
+}
+
 // As a running example:
 //
 // say we have a directory structure:
@@ -1390,11 +1427,15 @@ func (mdb *MetadataDb) MoveDir(
 		//   midPath : /A/fruit
 		//
 		midPath := newName + "/" + strings.TrimPrefix(parent, oldDir.FullPath)
+		var newProjFolder string
+		if nsObjType == nsDirType {
+			newProjFolder  = filepath.Clean(newParentDir.ProjFolder + "/" + midPath + "/" + name)
+		}
 		mr := MoveRecord{
 			oldFullPath : parent + "/" + name,
 			name : name,
 			newParent : filepath.Clean(newParentDir.FullPath + "/" + midPath),
-			newProjFolder : filepath.Clean(newParentDir.ProjFolder + "/" + midPath + "/" + name),
+			newProjFolder : newProjFolder,
 			inode : inode,
 			nsObjType : nsObjType,
 		}
@@ -1416,80 +1457,17 @@ func (mdb *MetadataDb) MoveDir(
 		mdb.log("found %d records under directory %s: %v", len(records), oldDir.FullPath, records)
 	}
 
-	// Modify the parent fields in the namespace table.
-	if mdb.options.Verbose {
-		mdb.log("modify the parents in the namespace table")
-	}
 	for _, r := range records {
-		if mdb.options.Verbose {
-			mdb.log("%s -> %s/%s", r.oldFullPath, r.newParent, r.name)
-		}
-		sqlStmt := fmt.Sprintf(`
- 		        UPDATE namespace
-                        SET parent = '%s'
-			WHERE inode = '%d';`,
-			r.newParent, r.inode)
-		if _, err := txn.Exec(sqlStmt); err != nil {
+		if err := mdb.execModifyRecord(txn, r); err != nil {
 			txn.Rollback()
-			mdb.log(err.Error())
-			return fmt.Errorf("MoveDir error executing transaction")
-		}
-	}
-
-	// Modify the dnanexus project-folder in all the directories
-	if mdb.options.Verbose {
-		mdb.log("modify directories table, set proj_folder fields")
-	}
-	for _, r := range records {
-		if r.nsObjType == nsDataObjType {
-			continue
-		}
-		//  /dxfuse_test_data/A/fruit ->  proj-xxxx:/D/K/A/fruit
-		//  /dxfuse_test_data/A       ->  proj-xxxx:/D/K/A
-		//
-		if mdb.options.Verbose {
-			mdb.log("move subdir (%s) project-folder %s", r.oldFullPath, r.newProjFolder)
-		}
-
-		sqlStmt := fmt.Sprintf(`
- 		        UPDATE directories
-                        SET proj_folder = '%s'
-			WHERE inode = '%d';`,
-			r.newProjFolder, r.inode)
-		if _, err := txn.Exec(sqlStmt); err != nil {
-			txn.Rollback()
-			mdb.log(err.Error())
-			return fmt.Errorf("MoveDir error executing transaction")
-		}
-	}
-
-	return txn.Commit()
-/*
-	if err != nil {
-		return err
-	}
-
-	{
-		mdb.log("sanity check for directory %s inode=%d", oldDir.FullPath, oldDir.Inode)
-		node, ok, err := mdb.LookupByInode(ctx, oldDir.Inode)
-		if err != nil {
-			mdb.log(err.Error())
-			panic("database error in LookupInode")
-		}
-		if !ok {
-			panic(fmt.Sprintf("could not find directory inode=%d", oldDir.Inode))
-		}
-		trgDir := node.(Dir)
-
-		mdb.log("sanity check on target dir %v", trgDir)
-		files, subdirs, err := mdb.ReadDirAll(ctx, &trgDir)
-		if err != nil {
 			return err
 		}
-		mdb.log("sanity check on target dir: files=%v  subdirs=%v", files, subdirs)
 	}
 
-	return nil*/
+	if mdb.options.Verbose {
+		mdb.log("commiting transaction")
+	}
+	return txn.Commit()
 }
 
 func (mdb *MetadataDb) Shutdown() {
