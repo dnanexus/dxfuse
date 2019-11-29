@@ -545,7 +545,7 @@ function move_dir_deep {
     tree D > /tmp/results_$expNum.txt
 }
 
-function move_dir_errors {
+function move_non_existent_dir {
     local write_dir=$1
     cd $write_dir
 
@@ -564,24 +564,39 @@ function move_dir_errors {
         cat /tmp/cmd_results.txt
         exit 1
     fi
+}
 
-    # Y is a file, can't move a directory into a file
-    touch Y
+# can't move a directory into a file
+function move_dir_to_file {
+    local write_dir=$1
+    cd $write_dir
+
+    mkdir X
+    echo "zz" > Y.txt
+
+    echo "A) try move"
     set +e
-    (mv X Y) >& /tmp/cmd_results.txt
+    (mv X Y.txt) >& /tmp/cmd_results.txt
     rc=$?
     set -e
 
+    echo "B)"
     if [[ $rc == 0 ]]; then
         echo "Error, could move a directory into a file"
         exit 1
     fi
     result=$(cat /tmp/cmd_results.txt)
+    echo "C)"
+    echo $result
     if [[ ! $result =~ "No such file or directory" ]]; then
         echo "Error, incorrect command results"
         cat /tmp/cmd_results.txt
         exit 1
     fi
+
+    echo "clean up "
+    rm -rf X
+    rm -f Y.txt
 }
 
 main() {
@@ -713,7 +728,8 @@ main() {
 #    rm -rf /tmp/D
 
     echo "checking illegal directory moves"
-    move_dir_errors "$mountpoint/$projName"
+    move_non_existent_dir "$mountpoint/$projName"
+    move_dir_to_file "$mountpoint/$projName"
 
     echo "syncing filesystem"
     sync

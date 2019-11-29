@@ -346,7 +346,7 @@ func (fsys *Filesys) MkDir(ctx context.Context, op *fuseops.MkDirOp) error {
 	defer fsys.mutex.Unlock()
 
 	if fsys.options.Verbose {
-		fsys.log("Create(%s)", op.Name)
+		fsys.log("CreateDir(%s)", op.Name)
 	}
 	if fsys.options.ReadOnly {
 		return syscall.EPERM
@@ -435,7 +435,7 @@ func (fsys *Filesys) RmDir(ctx context.Context, op *fuseops.RmDirOp) error {
 	defer fsys.mutex.Unlock()
 
 	if fsys.options.Verbose {
-		fsys.log("Create(%s)", op.Name)
+		fsys.log("Remove Dir(%s)", op.Name)
 	}
 	if fsys.options.ReadOnly {
 		return syscall.EPERM
@@ -795,16 +795,27 @@ func (fsys *Filesys) Rename(ctx context.Context, op *fuseops.RenameOp) error {
 		return fuse.ENOENT
 	}
 
-	// make sure that target doesn't already exist
-	// Note: there are important cases where doing the move is supposed
-	// to remove the target.
-	_, ok, err = fsys.mdb.LookupInDir(ctx, &newParentDir, op.NewName)
+	// check if that target exists.
+	trgNode, ok, err := fsys.mdb.LookupInDir(ctx, &newParentDir, op.NewName)
 	if err != nil {
 		return err
 	}
 	if ok {
-		// The target already exists
-		return fuse.EEXIST
+		switch trgNode.(type) {
+		case File:
+			fsys.log("can not move a directory onto a file")
+			return fuse.ENOTDIR
+		case Dir:
+			// The target directory must be empty.
+			trgDir := trgNode.(Dir)
+			files, subDirs, err := fsys.mdb.ReadDirAll(ctx, &trgDir)
+			if err != nil {
+				return err
+			}
+			if len(files) > 0 || len(subDirs) > 0 {
+				return fuse.ENOTEMPTY
+			}
+		}
 	}
 
 	oldDir := filepath.Clean(oldParentDir.FullPath + "/" + op.OldName)
