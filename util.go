@@ -123,9 +123,12 @@ type Dir struct {
 	Gid         uint32
 
 	// extra information, used internally
-	ProjId     string
-	ProjFolder string
+	ProjId      string
+	ProjFolder  string
 	Populated   bool
+
+	// is this a faux dir?
+	faux        bool
 }
 
 func (d Dir) GetAttrs() (a fuseops.InodeAttributes) {

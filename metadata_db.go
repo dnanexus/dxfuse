@@ -388,6 +388,14 @@ func (mdb *MetadataDb) lookupDirByInode(parent string, dname string, inode int64
 			numRows, inode))
 	}
 
+	// is this a faux directory? These don't exist on the platform,
+	// but are used for files with multiple versions.
+	if d.ProjFolder == "" {
+		d.faux = true
+	} else {
+		d.faux = false
+	}
+
 	return d, true, nil
 }
 

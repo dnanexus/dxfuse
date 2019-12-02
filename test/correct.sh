@@ -574,21 +574,18 @@ function move_dir_to_file {
     mkdir X
     echo "zz" > Y.txt
 
-    echo "A) try move"
     set +e
-    (mv X Y.txt) >& /tmp/cmd_results.txt
+    (mv -f X Y.txt) >& /tmp/cmd_results.txt
     rc=$?
     set -e
 
-    echo "B)"
     if [[ $rc == 0 ]]; then
         echo "Error, could move a directory into a file"
         exit 1
     fi
     result=$(cat /tmp/cmd_results.txt)
-    echo "C)"
     echo $result
-    if [[ ! $result =~ "No such file or directory" ]]; then
+    if [[ ! $result =~ "cannot overwrite non-directory" ]]; then
         echo "Error, incorrect command results"
         cat /tmp/cmd_results.txt
         exit 1
@@ -597,6 +594,49 @@ function move_dir_to_file {
     echo "clean up "
     rm -rf X
     rm -f Y.txt
+}
+
+function faux_dirs_move {
+    local root_dir=$1
+    cd $root_dir
+
+    tree $root_dir
+
+    # cannot move faux directories
+    set +e
+    mv $root_dir/1 $root_dir/2
+    rc=$?
+    if [[ $rc == 0 ]]; then
+        echo "Error, could not a faux directory"
+    fi
+
+    # cannot move files into/from a faux directory
+    mv -f $root_dir/NewYork.txt $root_dir/1
+    rc=$?
+    if [[ $rc == 0 ]]; then
+        echo "Error, could move a file into a faux directory"
+    fi
+
+    mv -f $root_dir/1/NewYork.txt $root_dir
+    rc=$?
+    if [[ $rc == 0 ]]; then
+        echo "Error, could move a file out of a faux directory"
+    fi
+    set -e
+}
+
+function faux_dirs_remove {
+    local root_dir=$1
+    cd $root_dir
+    echo "removing faux dir"
+
+    set +e
+    rm -f $root_dir/1/NewYork.txt
+    rc=$?
+    if [[ $rc == 0 ]]; then
+        echo "Error, could remove a file from a faux directory"
+    fi
+    set -e
 }
 
 main() {
@@ -679,10 +719,8 @@ main() {
 #
 #    echo "can write to a small file"
 #    check_file_write_content "$mountpoint/$projName" $target_dir
-
 #    echo "can write several files to a directory"
 #    write_files "$mountpoint/$projName" $target_dir
-
 #    echo "can't write to read-only project"
 #    write_to_read_only_project
 #
@@ -726,10 +764,16 @@ main() {
 #    diff -r $mountpoint/$projName/D /tmp/D
 #    rm -rf $mountpoint/$projName/D
 #    rm -rf /tmp/D
+#
+#    echo "checking illegal directory moves"
+#    move_non_existent_dir "$mountpoint/$projName"
+#    move_dir_to_file "$mountpoint/$projName"
 
-    echo "checking illegal directory moves"
-    move_non_existent_dir "$mountpoint/$projName"
-    move_dir_to_file "$mountpoint/$projName"
+#    echo "faux dirs cannot be moved"
+#    faux_dirs_move $mountpoint/$projName/faux_dirs
+
+    echo "faux dirs cannot be erased"
+    faux_dirs_remove $mountpoint/$projName/faux_dirs
 
     echo "syncing filesystem"
     sync

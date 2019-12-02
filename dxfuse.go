@@ -480,6 +480,10 @@ func (fsys *Filesys) RmDir(ctx context.Context, op *fuseops.RmDirOp) error {
 	if len(dentries) > 0 {
 		return fuse.ENOTEMPTY
 	}
+	if childDir.faux {
+		fsys.log("A faux dir cannot be removed")
+		return syscall.EPERM
+	}
 
 	// The directory exists and is empty, we can remove it.
 	httpClient := <- fsys.httpClientPool
@@ -699,7 +703,7 @@ func (fsys *Filesys) renameDir(
 	newName string) error {
 	err := fsys.mdb.MoveDir(ctx, oldParentDir, newParentDir, oldDir, newName)
 	if err != nil {
-		fsys.log("Data base error in moving directory %s -> %s/%s: %s",
+		fsys.log("Database error in moving directory %s -> %s/%s: %s",
 			oldDir.FullPath, newParentDir.FullPath, newName,
 			err.Error())
 		return fuse.EIO
@@ -764,7 +768,7 @@ func (fsys *Filesys) Rename(ctx context.Context, op *fuseops.RenameOp) error {
 	}
 
 	// the old parent is supposed to be a directory
-	node, ok, err := fsys.mdb.LookupByInode(ctx, int64(op.OldParent))
+	oldParentNode, ok, err := fsys.mdb.LookupByInode(ctx, int64(op.OldParent))
 	if err != nil {
 		return err
 	}
@@ -772,10 +776,14 @@ func (fsys *Filesys) Rename(ctx context.Context, op *fuseops.RenameOp) error {
 		// parent directory does not exist
 		return fuse.ENOENT
 	}
-	oldParentDir := node.(Dir)
+	oldParentDir := oldParentNode.(Dir)
+	if oldParentDir.faux {
+		fsys.log("can not move files from a faux dir")
+		return syscall.EPERM
+	}
 
 	// the new parent is supposed to be a directory
-	node, ok, err = fsys.mdb.LookupByInode(ctx, int64(op.NewParent))
+	newParentNode, ok, err := fsys.mdb.LookupByInode(ctx, int64(op.NewParent))
 	if err != nil {
 		return err
 	}
@@ -783,10 +791,14 @@ func (fsys *Filesys) Rename(ctx context.Context, op *fuseops.RenameOp) error {
 		// parent directory does not exist
 		return fuse.ENOENT
 	}
-	newParentDir := node.(Dir)
+	newParentDir := newParentNode.(Dir)
+	if newParentDir.faux {
+		fsys.log("can not move files into a faux dir")
+		return syscall.EPERM
+	}
 
 	// Find the source file
-	node, ok, err = fsys.mdb.LookupInDir(ctx, &oldParentDir, op.OldName)
+	srcNode, ok, err := fsys.mdb.LookupInDir(ctx, &oldParentDir, op.OldName)
 	if err != nil {
 		return err
 	}
@@ -795,27 +807,17 @@ func (fsys *Filesys) Rename(ctx context.Context, op *fuseops.RenameOp) error {
 		return fuse.ENOENT
 	}
 
-	// check if that target exists.
-	trgNode, ok, err := fsys.mdb.LookupInDir(ctx, &newParentDir, op.NewName)
+	// check if the target exists.
+	_, ok, err = fsys.mdb.LookupInDir(ctx, &newParentDir, op.NewName)
 	if err != nil {
 		return err
 	}
 	if ok {
-		switch trgNode.(type) {
-		case File:
-			fsys.log("can not move a directory onto a file")
-			return fuse.ENOTDIR
-		case Dir:
-			// The target directory must be empty.
-			trgDir := trgNode.(Dir)
-			files, subDirs, err := fsys.mdb.ReadDirAll(ctx, &trgDir)
-			if err != nil {
-				return err
-			}
-			if len(files) > 0 || len(subDirs) > 0 {
-				return fuse.ENOTEMPTY
-			}
-		}
+		fsys.log(`
+Target already exists. We do not support atomically remove in conjunction with
+a rename. You will need to issue a separate remove operation prior to rename.
+`)
+		return syscall.EPERM
 	}
 
 	oldDir := filepath.Clean(oldParentDir.FullPath + "/" + op.OldName)
@@ -846,13 +848,18 @@ func (fsys *Filesys) Rename(ctx context.Context, op *fuseops.RenameOp) error {
 		return syscall.EPERM
 	}
 
-	switch node.(type) {
+	switch srcNode.(type) {
 	case File:
-		return fsys.renameFile(ctx, oldParentDir, newParentDir, node.(File), op.NewName)
+		return fsys.renameFile(ctx, oldParentDir, newParentDir, srcNode.(File), op.NewName)
 	case Dir:
-		return fsys.renameDir(ctx, oldParentDir, newParentDir, node.(Dir), op.NewName)
+		srcDir := srcNode.(Dir)
+		if srcDir.faux {
+			fsys.log("can not move a faux directory")
+			return syscall.EPERM
+		}
+		return fsys.renameDir(ctx, oldParentDir, newParentDir, srcDir, op.NewName)
 	default:
-		panic(fmt.Sprintf("bad type for node %v", node))
+		panic(fmt.Sprintf("bad type for srcNode %v", srcNode))
 	}
 }
 
@@ -879,7 +886,7 @@ func (fsys *Filesys) Unlink(ctx context.Context, op *fuseops.UnlinkOp) error {
 	}
 	parentDir := node.(Dir)
 
-	// Check if the file already exists
+	// Make sure the file exists
 	childNode, ok, err := fsys.mdb.LookupInDir(ctx, &parentDir, op.Name)
 	if err != nil {
 		return err
@@ -917,7 +924,7 @@ func (fsys *Filesys) Unlink(ctx context.Context, op *fuseops.UnlinkOp) error {
 	objectIds := make([]string, 1)
 	objectIds[0] = fileToRemove.Id
 	if err := DxRemoveObjects(ctx, httpClient, &fsys.dxEnv, fileToRemove.ProjId, objectIds); err != nil {
-		fsys.log("Error in creating file (%s:%s/%s) on dnanexus: %s",
+		fsys.log("Error in removing file (%s:%s/%s) on dnanexus: %s",
 			parentDir.ProjId, parentDir.ProjFolder, op.Name,
 			err.Error())
 		return fsys.translateError(err)

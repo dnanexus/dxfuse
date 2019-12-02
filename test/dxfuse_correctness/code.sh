@@ -456,12 +456,162 @@ function compare_symlink_content {
     fi
 }
 
+function move_file {
+    local write_dir=$1
+    cd $write_dir
+
+    rm -f XX.txt
+    echo "the jaberwoky is on the loose" > XX.txt
+    mv XX.txt ZZ.txt
+    mv ZZ.txt XX.txt
+    rm -f XX.txt
+}
+
+function move_file2 {
+    local write_dir=$1
+    cd $write_dir
+
+    rm -rf A
+    rm -rf B
+    mkdir A
+
+    echo "the jaberwoky is on the loose" > A/XX.txt
+    mv A/XX.txt A/ZZ.txt
+
+    mkdir B
+    mv A/ZZ.txt B/ZZ.txt
+
+    tree A
+    tree B
+
+    rm -rf A
+    rm -rf B
+}
+
+function rename_dir {
+    local write_dir=$1
+    cd $write_dir
+
+    rm -rf A
+    rm -rf B
+    mkdir A
+    echo "Monroe doctrine" > A/X.txt
+    echo "Ted Rosevelt" > A/Y.txt
+
+    mv A B
+    tree B
+}
+
+function move_dir {
+    local write_dir=$1
+    cd $write_dir
+
+    rm -rf A
+    rm -rf B
+    mkdir A
+    echo "Monroe doctrine" > A/X.txt
+    echo "Ted Rosevelt" > A/Y.txt
+    tree A
+
+    mkdir B
+    mv A B/
+
+    tree B
+    rm -rf B
+}
+
+function move_dir_deep {
+    local write_dir=$1
+    local expNum=$2
+    cd $write_dir
+
+    rm -rf A
+    rm -rf D
+
+    mkdir A
+    echo "Monroe doctrine" > A/X.txt
+    echo "Ted Rosevelt" > A/Y.txt
+    mkdir A/fruit
+    echo "melons" > A/fruit/melon.txt
+    echo "grapes" > A/fruit/grapes.txt
+
+    tree A
+
+    mkdir D
+    mkdir D/K
+
+    mv A D/K/
+
+    tree D > /tmp/results_$expNum.txt
+}
+
+function move_non_existent_dir {
+    local write_dir=$1
+    cd $write_dir
+
+    set +e
+    (mv X Y) >& /tmp/cmd_results.txt
+    rc=$?
+    set -e
+
+    if [[ $rc == 0 ]]; then
+        echo "Error, could move a non-existent directory"
+        exit 1
+    fi
+    result=$(cat /tmp/cmd_results.txt)
+    if [[ ! $result =~ "No such file or directory" ]]; then
+        echo "Error, incorrect command results"
+        cat /tmp/cmd_results.txt
+        exit 1
+    fi
+}
+
+# can't move a directory into a file
+function move_dir_to_file {
+    local write_dir=$1
+    cd $write_dir
+
+    mkdir X
+    echo "zz" > Y.txt
+
+    set +e
+    (mv -f X Y.txt) >& /tmp/cmd_results.txt
+    rc=$?
+    set -e
+
+    if [[ $rc == 0 ]]; then
+        echo "Error, could move a directory into a file"
+        exit 1
+    fi
+    result=$(cat /tmp/cmd_results.txt)
+    echo $result
+    if [[ ! $result =~ "cannot overwrite non-directory" ]]; then
+        echo "Error, incorrect command results"
+        cat /tmp/cmd_results.txt
+        exit 1
+    fi
+
+    echo "clean up "
+    rm -rf X
+    rm -f Y.txt
+}
+
 main() {
     # Get all the DX environment variables, so that dxfuse can use them
     echo "loading the dx environment"
 
     # don't leak the token to stdout
-    source environment >& /dev/null
+    if [[ $DX_JOB_ID == "" ]]; then
+        # local machine
+        rm -f ENV
+        dx env --bash > ENV
+        source ENV >& /dev/null
+        dxfuse="/go/bin/dxfuse"
+    else
+        # Running on a cloud worker
+        source environment >& /dev/null
+        dxfuse="dxfuse"
+    fi
 
     # clean and make fresh directories
     mkdir -p $mountpoint
@@ -482,9 +632,7 @@ main() {
     if [[ $verbose != "" ]]; then
         flags="-verbose 2"
     fi
-    sudo -E dxfuse $flags $mountpoint dxfuse_test_data dxfuse_test_read_only &
-    dxfuse_pid=$!
-    sleep 2
+    sudo -E $dxfuse $flags $mountpoint dxfuse_test_data dxfuse_test_read_only
 
     echo "comparing symlink content"
     compare_symlink_content
@@ -528,10 +676,8 @@ main() {
 
     echo "can write to a small file"
     check_file_write_content "$mountpoint/$projName" $target_dir
-
     echo "can write several files to a directory"
     write_files "$mountpoint/$projName" $target_dir
-
     echo "can't write to read-only project"
     write_to_read_only_project
 
@@ -551,12 +697,41 @@ main() {
     file_create_existing "$mountpoint/$projName"
     file_remove_non_exist "$mountpoint/$projName"
 
+    echo "move file I"
+    move_file "$mountpoint/$projName"
+
+    echo "move file II"
+    move_file2 "$mountpoint/$projName"
+
+    echo "rename directory"
+    rename_dir "$mountpoint/$projName"
+    rename_dir /tmp
+    diff -r /tmp/B $mountpoint/$projName/B
+    rm -rf /tmp/B $mountpoint/$projName/B
+
+    echo "move directory"
+    move_dir "$mountpoint/$projName"
+
+    echo "move a deep directory"
+    move_dir_deep "$mountpoint/$projName" 1
+    move_dir_deep /tmp 2
+    cd $HOME
+
+    diff /tmp/results_1.txt /tmp/results_2.txt
+    diff -r $mountpoint/$projName/D /tmp/D
+    rm -rf $mountpoint/$projName/D
+    rm -rf /tmp/D
+
+    echo "checking illegal directory moves"
+    move_non_existent_dir "$mountpoint/$projName"
+    move_dir_to_file "$mountpoint/$projName"
+
+    echo "syncing filesystem"
+    sync
+
     echo "unmounting dxfuse"
     cd $HOME
     sudo umount $mountpoint
-
-    # wait until the filesystem is done running
-    wait $dxfuse_pid
 
     for d in ${writeable_dirs[@]}; do
         dx rm -r $projName:/$d >& /dev/null || true

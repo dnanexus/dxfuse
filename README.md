@@ -44,6 +44,8 @@ There are several limitations currently:
 - Intended to operate on platform workers
 - Limits directories to 10,000 elements
 - Updates to the project emanating from other machines are not reflected locally
+- Rename does not allow removing the target file or directory. This is because this cannot be
+  done automatically by dnanexus.
 
 ## Implementation
 
