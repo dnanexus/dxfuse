@@ -317,6 +317,9 @@ func (mdb *MetadataDb) lookupDataObjectByInode(oname string, inode int64) (File,
 	var f File
 	f.Name = oname
 	f.Inode = inode
+	f.Uid = mdb.options.Uid
+	f.Gid = mdb.options.Gid
+
 	numRows := 0
 	for rows.Next() {
 		var ctime int64
@@ -1177,12 +1180,12 @@ func (mdb *MetadataDb) CreateFile(
 // 1) the parent directory exists and is populated
 // 2) the target file
 // 3) the source i-node exists
-func (mdb *MetadataDb) CreateLink(ctx context.Context, srcFile File, dstParent Dir, name string) error {
+func (mdb *MetadataDb) CreateLink(ctx context.Context, srcFile File, dstParent Dir, name string) (File, error) {
 	// insert into the database
 	txn, err := mdb.db.Begin()
 	if err != nil {
 		mdb.log(err.Error())
-		return fmt.Errorf("CreateFile error opening transaction")
+		return File{}, fmt.Errorf("CreateFile error opening transaction")
 	}
 	nowSeconds := time.Now().Unix()
 	_, err = mdb.createDataObject(
@@ -1201,13 +1204,27 @@ func (mdb *MetadataDb) CreateLink(ctx context.Context, srcFile File, dstParent D
 	if err != nil {
 		txn.Rollback()
 		mdb.log(err.Error())
-		return fmt.Errorf("CreateLink error creating data object")
+		return File{}, fmt.Errorf("CreateLink error creating data object")
 	}
 	if err := txn.Commit(); err != nil {
 		mdb.log(err.Error())
-		return fmt.Errorf("CreateLink commit failed")
+		return File{}, fmt.Errorf("CreateLink commit failed")
 	}
-	return nil
+
+	// 3. return a File structure
+	return File{
+		Kind: FK_Regular,
+		Id : srcFile.Id,
+		ProjId : dstParent.ProjId,
+		Name : name,
+		Size : srcFile.Size,
+		Inode : srcFile.Inode,
+		Ctime : SecondsToTime(nowSeconds),
+		Mtime : SecondsToTime(nowSeconds),
+		Mode : srcFile.Mode,
+		Nlink : srcFile.Nlink + 1,
+		InlineData : "",
+	}, nil
 }
 
 // reduce link count by one. If it reaches zero, delete the file.

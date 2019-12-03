@@ -683,33 +683,13 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	return nil
 }
 
-/*
-type CreateLinkOp struct {
-	// The ID of parent directory inode within which to create the child hard
-	// link.
-	Parent InodeID
-
-	// The name of the new inode.
-	Name string
-
-	// The ID of the target inode.
-	Target InodeID
-
-	// Set by the file system: information about the inode that was created.
-	//
-	// The lookup count for the inode is implicitly incremented. See notes on
-	// ForgetInodeOp for more information.
-	Entry ChildInodeEntry
-}
-*/
-
 func (fsys *Filesys) CreateLink(ctx context.Context, op *fuseops.CreateLinkOp) error {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
 
 	if fsys.options.Verbose {
-		fsys.log("CreateLink (parent-inode=%d name=%s) -> (inode=%d)",
-			op.Parent, op.Name, op.Target)
+		fsys.log("CreateLink (inode=%d) -> (parent-inode=%d name=%s)",
+			op.Target, op.Parent, op.Name)
 	}
 	if fsys.options.ReadOnly {
 		return syscall.EPERM
@@ -755,8 +735,13 @@ func (fsys *Filesys) CreateLink(ctx context.Context, op *fuseops.CreateLinkOp) e
 	}
 
 	if targetFile.Name != op.Name {
-		fsys.log("cloning is only allowed if that destination and source names are the same")
+		fsys.log("cloning is only allowed if the destination and source names are the same")
 		return fuse.EINVAL
+	}
+
+	if fsys.options.Verbose {
+		fsys.log("CreateLink %s -> %s",
+			parentDir.FullPath, op.Name, targetFile.Name)
 	}
 
 	// create a link on the platform. This is done with the clone call.
@@ -780,11 +765,20 @@ func (fsys *Filesys) CreateLink(ctx context.Context, op *fuseops.CreateLinkOp) e
 		return syscall.EPERM
 	}
 
-	err = fsys.mdb.CreateLink(ctx, targetFile, parentDir, op.Name)
+	destFile, err := fsys.mdb.CreateLink(ctx, targetFile, parentDir, op.Name)
 	if err != nil {
 		fsys.log("database error in create-link %s", err.Error())
 		return fuse.EIO
 	}
+
+	// fill in child information
+	op.Entry.Child = destFile.GetInode()
+	op.Entry.Attributes = destFile.GetAttrs()
+
+	// We don't spontaneously mutate, so the kernel can cache as long as it wants
+	// (since it also handles invalidation).
+	op.Entry.AttributesExpiration = fsys.calcExpirationTime(op.Entry.Attributes)
+	op.Entry.EntryExpiration = op.Entry.AttributesExpiration
 
 	return nil
 }

@@ -110,7 +110,8 @@ X.txt
 
 A symbolic link is represented as a regular file, with the link stored in the `inner\_data` field.
 
-A hard link is an entry in the namespace that
+A hard link is an entry in the namespace that points to an existing data object. This means that a
+single i-node can have multiple namespace entries, so it cannot serve as a primary key.
 
 
 ## Sequential Prefetch

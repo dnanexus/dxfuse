@@ -616,19 +616,31 @@ function faux_dirs_move {
     if [[ $rc == 0 ]]; then
         echo "Error, could move a file into a faux directory"
     fi
-
+    set -e
 }
-
-# test case: can move a file out of a faux directory
 
 function faux_dirs_remove {
     local root_dir=$1
     cd $root_dir
-    echo "removing faux dir"
 
-    rm -f $root_dir/1/NewYork.txt
-    rm -f $root_dir/1/Chicago.txt
-    rmdir $root_dir/1
+    # can move a file out of a faux directory
+    mkdir $root_dir/T
+    mv $root_dir/1/NewYork.txt $root_dir/T
+    rm -rf $root_dir/T
+
+    echo "removing faux dir 1"
+    rm -rf $root_dir/1
+}
+
+
+
+function hard_links {
+    local root_dir=$1
+    cd $root_dir
+
+    ln $mountpoint/dxfuse_test_read_only/doc/approaches.md .
+    stat approaches.md
+    rm -f approaches.md
 }
 
 main() {
@@ -661,10 +673,10 @@ main() {
 #    done
 #    dx mkdir $projName:/$target_dir
 
-    echo "deep dish pizza and sky trains" > /tmp/ZZZ
-    dx upload /tmp/ZZZ --destination dxfuse_test_data:/faux_dirs/Chicago.txt
-    dx upload /tmp/ZZZ --destination dxfuse_test_data:/faux_dirs/NewYork.txt
-    rm -f /tmp/ZZZ
+#    echo "deep dish pizza and sky trains" > /tmp/ZZZ
+#    dx upload /tmp/ZZZ --destination dxfuse_test_data:/faux_dirs/Chicago.txt
+#    dx upload /tmp/ZZZ --destination dxfuse_test_data:/faux_dirs/NewYork.txt
+#    rm -f /tmp/ZZZ
 
     # Start the dxfuse daemon in the background, and wait for it to initilize.
     echo "Mounting dxfuse"
@@ -672,7 +684,10 @@ main() {
     if [[ $verbose != "" ]]; then
         flags="-verbose 2"
     fi
-    sudo -E $dxfuse $flags $mountpoint dxfuse_test_data dxfuse_test_read_only
+    if [[ $debugFuse != "" ]]; then
+        flags="$flags -debugFuse"
+    fi
+    sudo -E $dxfuse -uid $(id -u) -gid $(id -g) $flags $mountpoint dxfuse_test_data dxfuse_test_read_only
 
 #    echo "comparing symlink content"
 #    compare_symlink_content
@@ -768,14 +783,14 @@ main() {
 #    move_non_existent_dir "$mountpoint/$projName"
 #    move_dir_to_file "$mountpoint/$projName"
 
-    echo "faux dirs cannot be moved"
-    faux_dirs_move $mountpoint/$projName/faux_dirs
-
-    echo "faux dirs cannot be erased"
-    faux_dirs_remove $mountpoint/$projName/faux_dirs
-
+#    echo "faux dirs cannot be moved"
+#    faux_dirs_move $mountpoint/$projName/faux_dirs
+#
+#    echo "faux dir operations"
+#    faux_dirs_remove $mountpoint/$projName/faux_dirs
+#
     echo "hard links"
-    hard_links $mountpoint/$projName/faux_dirs
+    hard_links $mountpoint/$projName
 
     echo "syncing filesystem"
     sync
