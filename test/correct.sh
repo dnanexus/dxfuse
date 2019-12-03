@@ -604,39 +604,31 @@ function faux_dirs_move {
 
     # cannot move faux directories
     set +e
-    mv $root_dir/1 $root_dir/2
+    (mv $root_dir/1 $root_dir/2 ) >& /dev/null
     rc=$?
     if [[ $rc == 0 ]]; then
         echo "Error, could not a faux directory"
     fi
 
-    # cannot move files into/from a faux directory
-    mv -f $root_dir/NewYork.txt $root_dir/1
+    # cannot move files into a faux directory
+    (mv -f $root_dir/NewYork.txt $root_dir/1) >& /dev/null
     rc=$?
     if [[ $rc == 0 ]]; then
         echo "Error, could move a file into a faux directory"
     fi
 
-    mv -f $root_dir/1/NewYork.txt $root_dir
-    rc=$?
-    if [[ $rc == 0 ]]; then
-        echo "Error, could move a file out of a faux directory"
-    fi
-    set -e
 }
+
+# test case: can move a file out of a faux directory
 
 function faux_dirs_remove {
     local root_dir=$1
     cd $root_dir
     echo "removing faux dir"
 
-    set +e
     rm -f $root_dir/1/NewYork.txt
-    rc=$?
-    if [[ $rc == 0 ]]; then
-        echo "Error, could remove a file from a faux directory"
-    fi
-    set -e
+    rm -f $root_dir/1/Chicago.txt
+    rmdir $root_dir/1
 }
 
 main() {
@@ -668,6 +660,11 @@ main() {
 #        dx rm -r $projName:/$d >& /dev/null || true
 #    done
 #    dx mkdir $projName:/$target_dir
+
+    echo "deep dish pizza and sky trains" > /tmp/ZZZ
+    dx upload /tmp/ZZZ --destination dxfuse_test_data:/faux_dirs/Chicago.txt
+    dx upload /tmp/ZZZ --destination dxfuse_test_data:/faux_dirs/NewYork.txt
+    rm -f /tmp/ZZZ
 
     # Start the dxfuse daemon in the background, and wait for it to initilize.
     echo "Mounting dxfuse"
@@ -719,8 +716,10 @@ main() {
 #
 #    echo "can write to a small file"
 #    check_file_write_content "$mountpoint/$projName" $target_dir
+
 #    echo "can write several files to a directory"
 #    write_files "$mountpoint/$projName" $target_dir
+
 #    echo "can't write to read-only project"
 #    write_to_read_only_project
 #
@@ -769,8 +768,8 @@ main() {
 #    move_non_existent_dir "$mountpoint/$projName"
 #    move_dir_to_file "$mountpoint/$projName"
 
-#    echo "faux dirs cannot be moved"
-#    faux_dirs_move $mountpoint/$projName/faux_dirs
+    echo "faux dirs cannot be moved"
+    faux_dirs_move $mountpoint/$projName/faux_dirs
 
     echo "faux dirs cannot be erased"
     faux_dirs_remove $mountpoint/$projName/faux_dirs

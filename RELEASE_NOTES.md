@@ -1,7 +1,7 @@
 # Release Notes
 
 ## v0.14
-- Initializing the filesystem with a subprocess. The dxfuse program spawns a subprocess that runs
+Initializing the filesystem with a subprocess. The dxfuse program spawns a subprocess that runs
 the actual filesystem. The main program waits for the subprocess to start and then returns the status.
 If an initialization error occurs, it is reported synchronously. This obviates the need for shell scripts like:
 
@@ -15,7 +15,7 @@ You can just write:
 $ /go/bin/dxfuse
 ```
 
-- Rename works. There is one important limitation, which is, that you cannot rename onto an existing file.
+Rename works. There is one important limitation, which is, that you cannot rename onto an existing file.
 This is because dnanexus does not guaranty that remove + rename is atomic. For example, if you have
 directory `A` with files `foo` and `bar`, then this works:
 ```

@@ -912,7 +912,7 @@ func (mdb *MetadataDb) directoryReadFromDNAx(
 		fauxDirInode, err := mdb.createEmptyDir(
 			txn, projId, "",
 			ctimeApprox, mtimeApprox,
-			dirReadOnlyMode,    // faux directories are read only
+			dirReadWriteMode,
 			fauxDirPath, true)
 		if err != nil {
 			txn.Rollback()

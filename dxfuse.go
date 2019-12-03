@@ -325,6 +325,38 @@ func (fsys *Filesys) SetInodeAttributes(ctx context.Context, op *fuseops.SetInod
 	return nil
 }
 
+// make a pass through the open handles, and
+// release handles that reference this inode.
+func (fsys *Filesys) removeFileHandlesWithInode(inode int64) {
+	handles := make([]fuseops.HandleID, 0)
+	for hid, fh := range fsys.fhTable {
+		if fh.f.Inode == inode {
+			handles = append(handles, hid)
+		}
+	}
+
+	for _, hid := range handles {
+		delete(fsys.fhTable, hid)
+		fsys.fhFreeList = append(fsys.fhFreeList, hid)
+	}
+}
+
+func (fsys *Filesys) removeDirHandlesWithInode(inode int64) {
+	handles := make([]fuseops.HandleID, 0)
+	for did, dh := range fsys.dhTable {
+		if dh.d.Inode == inode {
+			handles = append(handles, did)
+		}
+	}
+
+	for _, did := range handles {
+		delete(fsys.dhTable, did)
+		fsys.dhFreeList = append(fsys.dhFreeList, did)
+	}
+}
+
+// This may be the wrong way to do it. We may need to actually delete the inode at this point,
+// instead of inside RmDir/Unlink.
 func (fsys *Filesys) ForgetInode(ctx context.Context, op *fuseops.ForgetInodeOp) error {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
@@ -333,10 +365,8 @@ func (fsys *Filesys) ForgetInode(ctx context.Context, op *fuseops.ForgetInodeOp)
 		fsys.log("ForgetInode (%d)", op.Inode)
 	}
 
-	// make a pass through the open handles, and
-	// release handles that reference this inode.
-//	delete(fsys.fhTable, op.Handle)
-//	fsys.fhFreeList = append(fsys.fhFreeList, op.Handle)
+	fsys.removeFileHandlesWithInode(int64(op.Inode))
+	fsys.removeDirHandlesWithInode(int64(op.Inode))
 
 	return nil
 }
@@ -480,23 +510,23 @@ func (fsys *Filesys) RmDir(ctx context.Context, op *fuseops.RmDirOp) error {
 	if len(dentries) > 0 {
 		return fuse.ENOTEMPTY
 	}
-	if childDir.faux {
-		fsys.log("A faux dir cannot be removed")
-		return syscall.EPERM
-	}
+	if !childDir.faux {
+		// The directory exists and is empty, we can remove it.
+		httpClient := <- fsys.httpClientPool
+		defer func() {
+			fsys.httpClientPool <- httpClient
+		} ()
 
-	// The directory exists and is empty, we can remove it.
-	httpClient := <- fsys.httpClientPool
-	defer func() {
-		fsys.httpClientPool <- httpClient
-	} ()
-
-	folderFullPath := parentDir.ProjFolder + "/" + op.Name
-	err = DxFolderRemove(ctx, httpClient, &fsys.dxEnv, parentDir.ProjId, folderFullPath)
-	if err != nil {
-		fsys.log("Error in removing directory (%s:%s) on dnanexus: %s",
-			parentDir.ProjId, folderFullPath, err.Error())
-		return fsys.translateError(err)
+		folderFullPath := parentDir.ProjFolder + "/" + op.Name
+		err = DxFolderRemove(ctx, httpClient, &fsys.dxEnv, parentDir.ProjId, folderFullPath)
+		if err != nil {
+			fsys.log("Error in removing directory (%s:%s) on dnanexus: %s",
+				parentDir.ProjId, folderFullPath, err.Error())
+			return fsys.translateError(err)
+		}
+	} else {
+		// A faux directory doesn't have a matching project folder.
+		// It exists only on the local machine.
 	}
 
 	// Remove the directory from the database
@@ -568,6 +598,10 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 		return fuse.ENOENT
 	}
 	parentDir := node.(Dir)
+	if parentDir.faux {
+		// cannot write new files into faux directories
+		return syscall.EPERM
+	}
 
 	// Check if the file already exists
 	_, ok, err = fsys.mdb.LookupInDir(ctx, &parentDir, op.Name)
@@ -777,10 +811,6 @@ func (fsys *Filesys) Rename(ctx context.Context, op *fuseops.RenameOp) error {
 		return fuse.ENOENT
 	}
 	oldParentDir := oldParentNode.(Dir)
-	if oldParentDir.faux {
-		fsys.log("can not move files from a faux dir")
-		return syscall.EPERM
-	}
 
 	// the new parent is supposed to be a directory
 	newParentNode, ok, err := fsys.mdb.LookupByInode(ctx, int64(op.NewParent))
@@ -1046,35 +1076,63 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 }
 
 
-func (fsys *Filesys) syncFile(ctx context.Context, handle fuseops.HandleID) error {
+func (fsys *Filesys) getWritableFD(ctx context.Context, handle fuseops.HandleID) (*os.File, error) {
+	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
+
+	if fsys.options.ReadOnly {
+		return nil, syscall.EPERM
+	}
+
 	fh, ok := fsys.fhTable[handle]
 	if !ok {
 		// File handle doesn't exist
-		return fuse.EINVAL
+		return nil, fuse.EINVAL
 	}
 
 	if fh.fKind != RW_File {
 		// This isn't a writeable file, there is no dirty data to flush
-		return nil
+		return nil, nil
 	}
 	if fh.fd == nil {
-		return nil
+		return nil, nil
 	}
-	return fh.fd.Sync()
+	return fh.fd, nil
 }
+
 
 func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) error {
 	if fsys.options.Verbose {
 		fsys.log("Flush inode %d", op.Inode)
 	}
-	return fsys.syncFile(ctx, op.Handle)
+
+	fd, err := fsys.getWritableFD(ctx, op.Handle)
+	if err != nil {
+		return err
+	}
+	if fd == nil {
+		return nil
+	}
+
+	// we aren't holding the filesystem lock at this point
+	return fd.Sync()
 }
 
 func (fsys *Filesys) SyncFile(ctx context.Context, op *fuseops.SyncFileOp) error {
 	if fsys.options.Verbose {
 		fsys.log("Sync inode %d", op.Inode)
 	}
-	return fsys.syncFile(ctx, op.Handle)
+
+	fd, err := fsys.getWritableFD(ctx, op.Handle)
+	if err != nil {
+		return err
+	}
+	if fd == nil {
+		return nil
+	}
+
+	// we aren't holding the filesystem lock at this point
+	return fd.Sync()
 }
 
 func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseFileHandleOp) error {

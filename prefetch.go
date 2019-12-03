@@ -23,7 +23,7 @@ const (
 	slowIoThresh = 60 // when does a slow IO become worth reporting
 
 	prefetchMinIoSize = (256 * KiB)   // threshold for deciding the file is sequentially accessed
-	prefetchMaxIoSize = (16 * MiB)    // maximal size of prefetch IO
+	prefetchMaxIoSize = (1 * MiB)    // maximal size of prefetch IO
 	prefetchIoFactor = 4
 
 	numSlotsInChunk = 64
@@ -35,7 +35,7 @@ const (
 	// maximum number of prefetch threads, regardless of machine size
 	maxNumPrefetchThreads = 32
 
-	minFileSize = 2 * MiB     // do not track files smaller than this size
+	minFileSize = 1 * MiB     // do not track files smaller than this size
 
 	// An prefetch request time limit
 	readRequestTimeout = 90 * time.Second
