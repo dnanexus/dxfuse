@@ -82,7 +82,7 @@ violates POSIX, and cannot be presented in a FUSE filesystem. It is
 possible to resolve this, by mangling the original filenames, for
 example, by adding `_1`, `_2` suffixes. However, this can cause name
 collisions, and will certainly make it harder to understand which file
-was the original. The compromise implemented here, to use fictional
+was the original. The compromise implemented here is to use fictional
 subdirectories (`1`, `2`, `3`, ...) and place non unique data objects in
 them, keeping the original names intact. For example, a directory can have the files:
 
@@ -109,6 +109,9 @@ X.txt
 ```
 
 A symbolic link is represented as a regular file, with the link stored in the `inner\_data` field.
+
+A hard link is an entry in the namespace that
+
 
 ## Sequential Prefetch
 

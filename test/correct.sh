@@ -774,6 +774,9 @@ main() {
     echo "faux dirs cannot be erased"
     faux_dirs_remove $mountpoint/$projName/faux_dirs
 
+    echo "hard links"
+    hard_links $mountpoint/$projName/faux_dirs
+
     echo "syncing filesystem"
     sync
 

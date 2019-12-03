@@ -432,3 +432,65 @@ func DxRenameFolder(
 
 	return nil
 }
+
+
+type RequestClone struct {
+	Objects []string `json:"objects"`
+	Folders []string `json:"folders"`
+	Project string   `json:"project"`
+	Destination string `json:"destination"`
+	Parents bool     `json:"parents"`
+}
+
+type ReplyClone struct {
+	Id string `json:"id"`
+	Project string `json:"project"`
+	Exists []string `json:"exists"`
+}
+
+func DxClone(
+	ctx context.Context,
+	httpClient *retryablehttp.Client,
+	dxEnv *dxda.DXEnvironment,
+	srcProjId string,
+	srcId string,
+	destProjId string,
+	destProjFolder string) (bool, error) {
+
+	var request RequestClone
+	objs := make([]string, 1)
+	objs[0] = srcId
+	request.Objects = objs
+	request.Folders = make([]string, 0)
+	request.Project = destProjId
+	request.Destination = destProjFolder
+	request.Parents = false
+
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return false, err
+	}
+
+	repJs, err := dxda.DxAPI(
+		ctx, httpClient, NumRetriesDefault, dxEnv,
+		fmt.Sprintf("%s/clone", srcProjId),
+		string(payload))
+	if err != nil {
+		return false, err
+	}
+
+	var reply ReplyClone
+	if err := json.Unmarshal(repJs, &reply); err != nil {
+		return false, err
+	}
+
+	for _,id := range reply.Exists {
+		if id == srcId {
+			// was not copied, because there is an existing
+			// copy in the destination project.
+			return false, nil
+		}
+	}
+
+	return true, nil
+}

@@ -683,18 +683,118 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	return nil
 }
 
+/*
+type CreateLinkOp struct {
+	// The ID of parent directory inode within which to create the child hard
+	// link.
+	Parent InodeID
+
+	// The name of the new inode.
+	Name string
+
+	// The ID of the target inode.
+	Target InodeID
+
+	// Set by the file system: information about the inode that was created.
+	//
+	// The lookup count for the inode is implicitly incremented. See notes on
+	// ForgetInodeOp for more information.
+	Entry ChildInodeEntry
+}
+*/
+
+func (fsys *Filesys) CreateLink(ctx context.Context, op *fuseops.CreateLinkOp) error {
+	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
+
+	if fsys.options.Verbose {
+		fsys.log("CreateLink (parent-inode=%d name=%s) -> (inode=%d)",
+			op.Parent, op.Name, op.Target)
+	}
+	if fsys.options.ReadOnly {
+		return syscall.EPERM
+	}
+
+	// parent is supposed to be a directory
+	parentNode, ok, err := fsys.mdb.LookupByInode(ctx, int64(op.Parent))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		// parent directory does not exist
+		return fuse.ENOENT
+	}
+	parentDir := parentNode.(Dir)
+
+	// Make sure the destination doesn't already exist
+	_, ok, err = fsys.mdb.LookupInDir(ctx, &parentDir, op.Name)
+	if err != nil {
+		return err
+	}
+	if ok {
+		// The link file already exists
+		return fuse.EEXIST
+	}
+
+	// make sure that target node exists
+	targetNode, ok, err := fsys.mdb.LookupByInode(ctx, int64(op.Target))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fuse.ENOENT
+	}
+
+	var targetFile File
+	switch targetNode.(type) {
+	case Dir:
+		// can't make a hard link to a directory
+		return syscall.EPERM
+	case File:
+		targetFile = targetNode.(File)
+	}
+
+	if targetFile.Name != op.Name {
+		fsys.log("cloning is only allowed if that destination and source names are the same")
+		return fuse.EINVAL
+	}
+
+	// create a link on the platform. This is done with the clone call.
+	httpClient := <- fsys.httpClientPool
+	defer func() {
+		fsys.httpClientPool <- httpClient
+	} ()
+
+	ok, err = DxClone(
+		ctx, httpClient, &fsys.dxEnv,
+		targetFile.ProjId,    // source project
+		targetFile.Id,        // source id
+		parentDir.ProjId,     // destination project id
+		parentDir.ProjFolder)  // destination folder
+	if err != nil {
+		return err
+	}
+	if !ok {
+		fsys.log("(%s) object not cloned because it already exists in the target project (%s)",
+			targetFile.Id, parentDir.ProjId)
+		return syscall.EPERM
+	}
+
+	err = fsys.mdb.CreateLink(ctx, targetFile, parentDir, op.Name)
+	if err != nil {
+		fsys.log("database error in create-link %s", err.Error())
+		return fuse.EIO
+	}
+
+	return nil
+}
+
 func (fsys *Filesys) renameFile(
 	ctx context.Context,
 	oldParentDir Dir,
 	newParentDir Dir,
 	file File,
 	newName string) error {
-
-	err := fsys.mdb.MoveFile(ctx, file.Inode, newParentDir, newName)
-	if err != nil {
-		fsys.log("database error in rename %s", err.Error())
-		return fuse.EIO
-	}
 
 	httpClient := <- fsys.httpClientPool
 	defer func() {
@@ -703,7 +803,7 @@ func (fsys *Filesys) renameFile(
 
 	if oldParentDir.Inode == newParentDir.Inode {
 		// /file-xxxx/rename  API call
-		err = DxRename(ctx, httpClient, &fsys.dxEnv, file.ProjId, file.Id, newName)
+		err := DxRename(ctx, httpClient, &fsys.dxEnv, file.ProjId, file.Id, newName)
 		if err != nil {
 			fsys.log("Error in renaming file (%s:%s%s) on dnanexus: %s",
 				file.ProjId, oldParentDir.ProjFolder, file.Name,
@@ -716,7 +816,7 @@ func (fsys *Filesys) renameFile(
 		// move the file on the platform
 		var objIds []string
 		objIds = append(objIds, file.Id)
-		err = DxMove(ctx, httpClient, &fsys.dxEnv, file.ProjId,
+		err := DxMove(ctx, httpClient, &fsys.dxEnv, file.ProjId,
 			objIds, nil, newParentDir.ProjFolder)
 		if err != nil {
 			fsys.log("Error in moving file (%s:%s/%s) on dnanexus: %s",
@@ -724,6 +824,13 @@ func (fsys *Filesys) renameFile(
 				err.Error())
 			return fsys.translateError(err)
 		}
+	}
+
+
+	err := fsys.mdb.MoveFile(ctx, file.Inode, newParentDir, newName)
+	if err != nil {
+		fsys.log("database error in rename")
+		return fuse.EIO
 	}
 
 	return nil
@@ -735,14 +842,6 @@ func (fsys *Filesys) renameDir(
 	newParentDir Dir,
 	oldDir Dir,
 	newName string) error {
-	err := fsys.mdb.MoveDir(ctx, oldParentDir, newParentDir, oldDir, newName)
-	if err != nil {
-		fsys.log("Database error in moving directory %s -> %s/%s: %s",
-			oldDir.FullPath, newParentDir.FullPath, newName,
-			err.Error())
-		return fuse.EIO
-	}
-
 	httpClient := <- fsys.httpClientPool
 	defer func() {
 		fsys.httpClientPool <- httpClient
@@ -751,7 +850,7 @@ func (fsys *Filesys) renameDir(
 
 	if oldParentDir.Inode == newParentDir.Inode {
 		// rename a folder, but leave it under the same parent
-		err = DxRenameFolder(
+		err := DxRenameFolder(
 			ctx, httpClient, &fsys.dxEnv,
 			projId,
 			oldDir.ProjFolder,
@@ -773,7 +872,7 @@ func (fsys *Filesys) renameDir(
 		folders := make([]string, 1)
 		folders[0] = oldDir.ProjFolder
 
-		err = DxMove(
+		err := DxMove(
 			ctx, httpClient, &fsys.dxEnv,
 			projId,
 			objIds, folders,
@@ -785,6 +884,14 @@ func (fsys *Filesys) renameDir(
 			return fsys.translateError(err)
 		}
 	}
+
+	err := fsys.mdb.MoveDir(ctx, oldParentDir, newParentDir, oldDir, newName)
+	if err != nil {
+		fsys.log("Database error in moving directory %s -> %s/%s",
+			oldDir.FullPath, newParentDir.FullPath, newName)
+		return fuse.EIO
+	}
+
 	return nil
 }
 
@@ -936,11 +1043,6 @@ func (fsys *Filesys) Unlink(ctx context.Context, op *fuseops.UnlinkOp) error {
 	}
 	check(fileToRemove.Nlink > 0)
 
-	if err := fsys.mdb.Unlink(ctx, fileToRemove); err != nil {
-		fsys.log("database error in unlink %s", err.Error())
-		return fuse.EIO
-	}
-
 	// Report to the upload module, that we are cancelling the upload
 	// for this file.
 	fsys.fugs.CancelUpload(fileToRemove.Id)
@@ -958,6 +1060,11 @@ func (fsys *Filesys) Unlink(ctx context.Context, op *fuseops.UnlinkOp) error {
 			parentDir.ProjId, parentDir.ProjFolder, op.Name,
 			err.Error())
 		return fsys.translateError(err)
+	}
+
+	if err := fsys.mdb.Unlink(ctx, fileToRemove); err != nil {
+		fsys.log("database error in unlink %s", err.Error())
+		return fuse.EIO
 	}
 
 	return nil

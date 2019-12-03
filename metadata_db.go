@@ -165,7 +165,7 @@ func (mdb *MetadataDb) init2(txn *sql.Tx) error {
 	}
 
 	// we need to be able to get from the files/tables, back to the namespace
-	// with an inode ID.
+	// with an inode ID. Due to hardlinks, a single inode can have multiple namespace entries.
 	sqlStmt = `
 	CREATE INDEX inode_rev_index
 	ON namespace (inode);
@@ -425,10 +425,12 @@ func (mdb *MetadataDb) LookupByInode(ctx context.Context, inode int64) (Node, bo
 	switch numRows {
 	case 0:
 		return nil, false, nil
-	case 1:
-		// correct, there is exactly one such file
 	default:
-		panic(fmt.Sprintf("Found %d data-objects with inode %d", numRows, inode))
+		// There may be several entries in the namespace for a single inode because
+		// of hardlinks.
+		if numRows > 1 && mdb.options.Verbose {
+			mdb.log("Found %d data-objects with inode %d", numRows, inode)
+		}
 	}
 
 	switch obj_type {
@@ -527,8 +529,13 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 //  1) Create a singleton file from the manifest
 //  2) Create a new file, and upload it later to the platform
 //  3) Discover a file in a directory, which may actually be a link to another file.
+const (
+	CREATE_DATA_OBJECT_MUST_BE_NEW = 1
+	CREATE_DATA_OBJECT_ALREADY_EXISTS = 2
+	CREATE_DATA_OBJECT_NEUTRAL = 3
+)
 func (mdb *MetadataDb) createDataObject(
-	mustBeNewObject bool,
+	flag int,
 	txn *sql.Tx,
 	kind int,
 	projId string,
@@ -551,6 +558,11 @@ func (mdb *MetadataDb) createDataObject(
 	}
 
 	if !ok {
+		if flag == CREATE_DATA_OBJECT_ALREADY_EXISTS {
+			panic(fmt.Sprintf("Object %s:%s should already exists, but does not",
+				projId, objId))
+		}
+
 		// File doesn't exist, we need to choose a new inode number.
 		// NOte: it is on stable storage, and will not change.
 		inode = mdb.allocInodeNum()
@@ -566,11 +578,12 @@ func (mdb *MetadataDb) createDataObject(
 			return 0, err
 		}
 	} else {
-		// File already exists, we need to increase the link count
-		if mustBeNewObject {
-			panic(fmt.Sprintf("Object %s:%s must not be already in the database. We are trying to create it again", projId, objId))
+		if flag == CREATE_DATA_OBJECT_MUST_BE_NEW {
+			panic(fmt.Sprintf("Object %s:%s must not be already in the database",
+				projId, objId))
 		}
 
+		// File already exists, we need to increase the link count
 		sqlStmt := fmt.Sprintf(`
  		        UPDATE data_objects
                         SET nlink = '%d'
@@ -781,7 +794,7 @@ func (mdb *MetadataDb) populateDir(
 		inlineData := inlineDataOfFile(kind, o)
 
 		_, err := mdb.createDataObject(
-			false,
+			CREATE_DATA_OBJECT_NEUTRAL,
 			txn,
 			kind,
 			o.ProjId,
@@ -1062,7 +1075,7 @@ func (mdb *MetadataDb) PopulateRoot(ctx context.Context, manifest Manifest) erro
 	// create individual files
 	for _, fl := range manifest.Files {
 		_, err := mdb.createDataObject(
-			false,
+			CREATE_DATA_OBJECT_NEUTRAL,
 			txn, FK_Regular, fl.ProjId, fl.FileId,
 			fl.Size,
 			fl.CtimeSeconds, fl.MtimeSeconds,
@@ -1122,7 +1135,7 @@ func (mdb *MetadataDb) CreateFile(
 	}
 	nowSeconds := time.Now().Unix()
 	inode, err := mdb.createDataObject(
-		true,
+		CREATE_DATA_OBJECT_MUST_BE_NEW,
 		txn,
 		FK_Regular,
 		dir.ProjId,
@@ -1158,6 +1171,43 @@ func (mdb *MetadataDb) CreateFile(
 		Nlink : 1,
 		InlineData : localPath,
 	}, nil
+}
+
+// We know that
+// 1) the parent directory exists and is populated
+// 2) the target file
+// 3) the source i-node exists
+func (mdb *MetadataDb) CreateLink(ctx context.Context, srcFile File, dstParent Dir, name string) error {
+	// insert into the database
+	txn, err := mdb.db.Begin()
+	if err != nil {
+		mdb.log(err.Error())
+		return fmt.Errorf("CreateFile error opening transaction")
+	}
+	nowSeconds := time.Now().Unix()
+	_, err = mdb.createDataObject(
+		CREATE_DATA_OBJECT_ALREADY_EXISTS,
+		txn,
+		FK_Regular,
+		dstParent.ProjId,
+		srcFile.Id,
+		srcFile.Size,
+		nowSeconds,
+		nowSeconds,
+		srcFile.Mode,
+		dstParent.FullPath,
+		name,
+		"")
+	if err != nil {
+		txn.Rollback()
+		mdb.log(err.Error())
+		return fmt.Errorf("CreateLink error creating data object")
+	}
+	if err := txn.Commit(); err != nil {
+		mdb.log(err.Error())
+		return fmt.Errorf("CreateLink commit failed")
+	}
+	return nil
 }
 
 // reduce link count by one. If it reaches zero, delete the file.
