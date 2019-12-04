@@ -1,6 +1,7 @@
 package dxfuse
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"os"
@@ -223,6 +224,19 @@ type FileHandle struct {
 type DirHandle struct {
 	d Dir
 	entries []fuseutil.Dirent
+}
+
+// A handle used when operating on a filesystem
+// operation. We normally need a transaction and an http client.
+type OpHandle struct {
+	httpClient *retryablehttp.Client
+	txn        *sql.Tx
+	err         error
+}
+
+func (oph *OpHandle) RecordError(err error) error {
+	oph.err = error
+	return err
 }
 
 // Utility functions

@@ -79,7 +79,7 @@ func NewDxfuse(
 		return nil, err
 	}
 
-	fsys.pgs = NewPrefetchGlobalState(options.VerboseLevel)
+	fsys.pgs = NewPrefetchGlobalState(options.VerboseLevel, dxEnv)
 
 	// describe all the projects, we need their upload parameters
 	httpClient := <- fsys.httpClientPool
@@ -111,6 +111,27 @@ func NewDxfuse(
 // write a log message, and add a header
 func (fsys *Filesys) log(a string, args ...interface{}) {
 	LogMsg("dxfuse", a, args...)
+}
+
+func (fsys *Filesys) OpOpen() (*OpHandle, error) {
+	httpClient := <- fsys.httpClientPool
+	txn, err := fsys.mdb.BeginTxn()
+	return &OpHandle{
+		httpClient : httpClient,
+		txn : txn,
+		err : nil,
+	}, err
+}
+
+func (fsys *Filesys) OpClose(oph *OpHandle) error {
+	fsys.httpClientPool <- foh.httpClient
+
+	if err == nil {
+		oph.err = oph.txn.Commit()
+	} else {
+		oph.txn.Rollback()
+	}
+	return oph.err
 }
 
 func (fsys *Filesys) Shutdown() {
@@ -235,8 +256,14 @@ func (fsys *Filesys) GetInodeAttributes(ctx context.Context, op *fuseops.GetInod
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
 
+	oph, err := fsys.OpOpen()
+	if err {
+		return fuse.EIO
+	}
+	defer fsys.OpClose(oph)
+
 	// Grab the inode.
-	node, ok, err := fsys.mdb.LookupByInode(ctx, int64(op.Inode))
+	node, ok, err := fsys.mdb.LookupByInode(ctx, oph, int64(op.Inode))
 	if err != nil {
 		fsys.log("database error in GetInodeAttributes: %s", err.Error())
 		return fuse.EIO

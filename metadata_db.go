@@ -24,10 +24,6 @@ type MetadataDb struct {
 	db               *sql.DB
 	dbFullPath        string
 
-	// a pool of http clients, for short requests, such as file creation,
-	// or file describe.
-	httpClientPool    chan(*retryablehttp.Client)
-
 	// configuration information for accessing dnanexus servers
 	dxEnv             dxda.DXEnvironment
 
@@ -41,7 +37,6 @@ type MetadataDb struct {
 func NewMetadataDb(
 	dbFullPath string,
 	dxEnv dxda.DXEnvironment,
-	httpClientPool chan(*retryablehttp.Client),
 	options Options) (*MetadataDb, error) {
 	// create a connection to the database, that will be kept open
 	db, err := sql.Open("sqlite3", dbFullPath + "?mode=rwc")
@@ -52,7 +47,6 @@ func NewMetadataDb(
 	return &MetadataDb{
 		db : db,
 		dbFullPath : dbFullPath,
-		httpClientPool : httpClientPool,
 		dxEnv : dxEnv,
 		baseDir2ProjectId: make(map[string]string),
 		inodeCnt : InodeRoot + 1,
@@ -63,6 +57,11 @@ func NewMetadataDb(
 // write a log message, and add a header
 func (mdb *MetadataDb) log(a string, args ...interface{}) {
 	LogMsg("metadata_db", a, args...)
+}
+
+// open a transaction
+func (mdb *MetadataDb) BeginTxn() (*sql.Tx, error) {
+	return mdb.db.Begin()
 }
 
 // Construct a local sql database that holds metadata for
@@ -918,6 +917,7 @@ func (mdb *MetadataDb) populateDir(
 // 2. The global lock is held
 func (mdb *MetadataDb) directoryReadFromDNAx(
 	ctx context.Context,
+	oph *OpHandle,
 	dinode int64,
 	projId string,
 	projFolder string,
@@ -930,9 +930,7 @@ func (mdb *MetadataDb) directoryReadFromDNAx(
 	}
 
 	// describe all (closed) files
-	httpClient := <- mdb.httpClientPool
-	dxDir, err := DxDescribeFolder(ctx, httpClient, &mdb.dxEnv, projId, projFolder, true)
-	mdb.httpClientPool <- httpClient
+	dxDir, err := DxDescribeFolder(ctx, oph.httpClient, &mdb.dxEnv, projId, projFolder, true)
 	if err != nil {
 		fmt.Printf(err.Error())
 		fmt.Printf("reading directory frmo DNAx error")

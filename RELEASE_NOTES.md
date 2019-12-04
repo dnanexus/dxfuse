@@ -50,7 +50,10 @@ A
 ```
 
 The directory `1` is not real, it does not have a backend folder on the platform. Therefore, it cannot be moved or
-modified.
+modified. It may be erased, if all of its files are removed.
+
+Hard links are supported. There are backend limitations to their use. You can make a link to a file
+in project `A` from a file in project `B`. However, you will get an error if you link to a file in the same project.
 
 ## v0.13 21-Nov-2019
 - Additional operations supported: create directory, remove directory, file unlink

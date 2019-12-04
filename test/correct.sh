@@ -4,12 +4,19 @@
 ## constants
 
 projName="dxfuse_test_data"
-dxDirOnProject="correctness"
+
+if [[ $DX_JOB_ID == "" ]]; then
+    # small test for a remote laptop
+    dxDirOnProject="correctness_mini"
+else
+    # larger test for a cloud worker
+    dxDirOnProject="correctness"
+fi
 
 baseDir="$HOME/dxfuse_test"
 mountpoint="${baseDir}/MNT"
 
-dxfuseDir="$mountpoint/$projName/$dxDirOnProject"
+dxfuseDir=$mountpoint/$projName/$dxDirOnProject
 dxpyDir="${baseDir}/dxCopy/$dxDirOnProject"
 
 ######################################################################
@@ -49,7 +56,7 @@ function check_cmd_line_utils {
     d=$(pwd)
 
     cd $dxfuseDir
-    files=$(find dxWDL_source_code -type f)
+    files=$(find . -type f)
     cd $d
 
     for f in $files; do
@@ -98,8 +105,8 @@ function check_cmd_line_utils {
 }
 
 function check_find {
-    find $dxfuseDir -type f -name "*.conf" > 1.txt
-    find $dxpyDir -type f -name "*.conf" > 2.txt
+    find $dxfuseDir -type f -name "*.wdl" > 1.txt
+    find $dxpyDir -type f -name "*.wdl" > 2.txt
 
     # each line starts with the directory name. those are different, so we normliaze them
     sed -i "s/MNT/dxCopy/g" 1.txt
@@ -123,8 +130,8 @@ function check_find {
 }
 
 function check_grep {
-    grep --directories=skip -R "stream" $dxfuseDir/dxWDL_source_code/src > 1.txt
-    grep --directories=skip -R "stream" $dxpyDir/dxWDL_source_code/src > 2.txt
+    grep -R --include="*.wdl" "task" $dxfuseDir > 1.txt
+    grep -R --include="*.wdl" "task" $dxpyDir > 2.txt
 
     # each line starts with the directory name. those are different, so we normliaze them
 
@@ -233,19 +240,18 @@ function check_file_write_content {
 # copy files inside the mounted filesystem
 #
 function write_files {
-    local top_dir=$1
+    local src_dir=$1
     local target_dir=$2
-    local write_dir=$top_dir/$target_dir
 
     echo "write_dir = $write_dir"
     ls -l $write_dir
 
     echo "copying large files"
-    cp $top_dir/correctness/large/*  $write_dir/
+    cp $src_dir/*  $write_dir/
 
     # compare resulting files
     echo "comparing files"
-    local files=$(find $top_dir/correctness/large -type f)
+    local files=$(find $src_dir -type f)
     for f in $files; do
         b_name=$(basename $f)
         diff $f $write_dir/$b_name
@@ -273,16 +279,15 @@ function create_dir {
     local top_dir=$1
     local write_dir=$2
 
-    cd $top_dir
     mkdir $write_dir
 
     # copy files to new directory
     echo "copying small files"
-    cp $top_dir/correctness/small/*  $write_dir
+    cp $top_dir/*  $write_dir
 
     # compare resulting files
     echo "comparing files"
-    local files=$(find $top_dir/correctness/small -type f)
+    local files=$(find $top_dir -type f)
     for f in $files; do
         b_name=$(basename $f)
         diff $f $write_dir/$b_name
@@ -293,27 +298,26 @@ function create_dir {
     mkdir $write_dir/F
     echo "catch 22" > $write_dir/E/Z.txt
 
-    tree $top_dir/$write_dir
+    tree $write_dir
 }
 
 # create directory on mounted FS
 function create_remove_dir {
     local flag=$1
-    local top_dir=$2
+    local src_dir=$2
     local write_dir=$3
 
-    cd $top_dir
     mkdir $write_dir
     rmdir $write_dir
     mkdir $write_dir
 
     # copy files
     echo "copying small files"
-    cp $top_dir/correctness/small/*  $write_dir/
+    cp $src_dir/*  $write_dir/
 
     # compare resulting files
     echo "comparing files"
-    local files=$(find $top_dir/correctness/small -type f)
+    local files=$(find $src_dir -type f)
     for f in $files; do
         b_name=$(basename $f)
         diff $f $write_dir/$b_name
@@ -330,12 +334,9 @@ function create_remove_dir {
         echo "letting the files complete uploading"
         sleep 10
     fi
-    dx ls -l $projName:
 
     echo "removing directory recursively"
     rm -rf $write_dir
-
-    dx ls $projName:
 }
 
 # removing a non-empty directory fails
@@ -643,6 +644,7 @@ function hard_links {
     rm -f approaches.md
 }
 
+
 function populate_faux_dir {
     local faux_dir=$1
 
@@ -684,13 +686,16 @@ main() {
     target_dir3=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
     faux_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
     faux_dir="faux_$faux_dir"
-    writeable_dirs=($target_dir $target_dir2 $target_dir3 $faux_dir)
+    expr_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+    expr_dir="expriment_$expr_dir"
+    writeable_dirs=($target_dir $target_dir2 $target_dir3 $faux_dir $expr_dir)
     for d in ${writeable_dirs[@]}; do
         dx rm -r $projName:/$d >& /dev/null || true
     done
-    dx mkdir $projName:/$target_dir
 
+    dx mkdir $projName:/$target_dir
     populate_faux_dir $faux_dir
+    dx mkdir $projName:/$expr_dir
 
     # Start the dxfuse daemon in the background, and wait for it to initilize.
     echo "Mounting dxfuse"
@@ -698,104 +703,103 @@ main() {
     if [[ $verbose != "" ]]; then
         flags="-verbose 2"
     fi
-    if [[ $debugFuse != "" ]]; then
-        flags="$flags -debugFuse"
-    fi
-    sudo -E $dxfuse -uid $(id -u) -gid $(id -g) $flags $mountpoint dxfuse_test_data dxfuse_test_read_only
+    sudo -E $dxfuse $flags $mountpoint dxfuse_test_data dxfuse_test_read_only
 
 #    echo "comparing symlink content"
 #    compare_symlink_content
-#
-#    echo "download recursively with dx download"
-#    dxTrgDir="${baseDir}/dxCopy"
-#    mkdir $dxTrgDir
-#    dx download --no-progress -o $dxTrgDir -r  dxfuse_test_data:/$dxDirOnProject
-#
-#    # do not exit immediately if there are differences; we want to see the files
-#    # that aren't the same
+
+    echo "download recursively with dx download"
+    dxTrgDir="${baseDir}/dxCopy"
+    if [[ ! -d $dxTrgDir ]]; then
+        mkdir $dxTrgDir
+        dx download --no-progress -o $dxTrgDir -r  dxfuse_test_data:/$dxDirOnProject
+    fi
+
+    # do not exit immediately if there are differences; we want to see the files
+    # that aren't the same
 #    diff -r --brief $dxpyDir $dxfuseDir > diff.txt || true
 #    if [[ -s diff.txt ]]; then
 #        echo "Difference in basic file structure"
 #        cat diff.txt
 #        exit 1
 #    fi
-#
-#    # find
+
+   # find
 #    echo "find"
 #    check_find
-#
-#    # grep
+
+    # grep
 #    echo "grep"
 #    check_grep
-#
-#    # tree
+
+    # tree
 #    echo "tree"
 #    check_tree
-#
-#    # ls
+
+    # ls
 #    echo "ls -R"
 #    check_ls
-#
-#    # find
+
+    # find
 #    echo "head, tail, wc"
 #    check_cmd_line_utils
-#
+
 #    echo "parallel downloads"
 #    check_parallel_cat
-#
-#    echo "can write to a small file"
-#    check_file_write_content "$mountpoint/$projName" $target_dir
 
-#    echo "can write several files to a directory"
-#    write_files "$mountpoint/$projName" $target_dir
+    echo "can write to a small file"
+    check_file_write_content "$mountpoint/$projName" $target_dir
 
-#    echo "can't write to read-only project"
-#    write_to_read_only_project
-#
-#    echo "create directory"
-#    create_dir "$mountpoint/$projName" $target_dir2
-#
-#    echo "create/remove directory"
-#    create_remove_dir "yes" "$mountpoint/$projName" $target_dir3
-#    create_remove_dir "no" "$mountpoint/$projName" $target_dir3
-#
-#    echo "mkdir rmdir"
-#    rmdir_non_empty "$mountpoint/$projName/sunny"
-#    rmdir_not_exist "$mountpoint/$projName"
-#    mkdir_existing  "$mountpoint/$projName/sunny"
-#
-#    echo "file create remove"
-#    file_create_existing "$mountpoint/$projName"
-#    file_remove_non_exist "$mountpoint/$projName"
-#
-#    echo "move file I"
-#    move_file "$mountpoint/$projName"
-#
-#    echo "move file II"
-#    move_file2 "$mountpoint/$projName"
-#
-#    echo "rename directory"
-#    rename_dir "$mountpoint/$projName"
-#    rename_dir /tmp
-#    diff -r /tmp/B $mountpoint/$projName/B
-#    rm -rf /tmp/B $mountpoint/$projName/B
-#
-#    echo "move directory"
-#    move_dir "$mountpoint/$projName"
-#
-#    echo "move a deep directory"
-#    move_dir_deep "$mountpoint/$projName" 1
-#    move_dir_deep /tmp 2
-#    cd $HOME
-#
-#    diff /tmp/results_1.txt /tmp/results_2.txt
-#    diff -r $mountpoint/$projName/D /tmp/D
-#    rm -rf $mountpoint/$projName/D
-#    rm -rf /tmp/D
-#
-#    echo "checking illegal directory moves"
-#    move_non_existent_dir "$mountpoint/$projName"
-#    move_dir_to_file "$mountpoint/$projName"
+    echo "can write several files to a directory"
+    write_files $mountpoint/$projName/$dxDirOnProject/large $mountpoint/$projName/$target_dir
+
+    echo "can't write to read-only project"
+    write_to_read_only_project
+
+    echo "create directory"
+    create_dir $mountpoint/$projName/$dxDirOnProject/small  $mountpoint/$projName/$target_dir2
+
+    echo "create/remove directory"
+    create_remove_dir "yes" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$target_dir3
+    create_remove_dir "no" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$target_dir3
+
+    echo "mkdir rmdir"
+    rmdir_non_empty $mountpoint/$projName/$target_dir2/sunny
+    rmdir_not_exist $mountpoint/$projName/$target_dir2
+    mkdir_existing  $mountpoint/$projName/$target_dir2
+
+    echo "file create remove"
+    file_create_existing "$mountpoint/$projName"
+    file_remove_non_exist "$mountpoint/$projName"
+
+    echo "move file I"
+    move_file $mountpoint/$projName/$expr_dir
+
+    echo "move file II"
+    move_file2 $mountpoint/$projName/$expr_dir
+
+    echo "rename directory"
+    rename_dir $mountpoint/$projName/$expr_dir
+    rename_dir /tmp
+    diff -r /tmp/B $mountpoint/$projName/$expr_dir/B
+    rm -rf /tmp/B $mountpoint/$projName/$expr_dir/B
+
+    echo "move directory"
+    move_dir $mountpoint/$projName/$expr_dir
+
+    echo "move a deep directory"
+    move_dir_deep $mountpoint/$projName/$expr_dir 1
+    move_dir_deep /tmp 2
+    cd $HOME
+
+    diff /tmp/results_1.txt /tmp/results_2.txt
+    diff -r $mountpoint/$projName/$expr_dir/D /tmp/D
+    rm -rf $mountpoint/$projName/$expr_dir/D
+    rm -rf /tmp/D
+
+    echo "checking illegal directory moves"
+    move_non_existent_dir "$mountpoint/$projName"
+    move_dir_to_file "$mountpoint/$projName"
 
     echo "faux dirs cannot be moved"
     faux_dirs_move $mountpoint/$projName/$faux_dir
@@ -804,7 +808,7 @@ main() {
     faux_dirs_remove $mountpoint/$projName/$faux_dir
 
     echo "hard links"
-    hard_links $mountpoint/$projName
+    hard_links $mountpoint/$projName/$faux_dir
 
     echo "syncing filesystem"
     sync
