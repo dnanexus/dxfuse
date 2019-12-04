@@ -596,6 +596,69 @@ function move_dir_to_file {
     rm -f Y.txt
 }
 
+function faux_dirs_move {
+    local root_dir=$1
+    cd $root_dir
+
+    tree $root_dir
+
+    # cannot move faux directories
+    set +e
+    (mv $root_dir/1 $root_dir/2 ) >& /dev/null
+    rc=$?
+    if [[ $rc == 0 ]]; then
+        echo "Error, could not a faux directory"
+    fi
+
+    # cannot move files into a faux directory
+    (mv -f $root_dir/NewYork.txt $root_dir/1) >& /dev/null
+    rc=$?
+    if [[ $rc == 0 ]]; then
+        echo "Error, could move a file into a faux directory"
+    fi
+    set -e
+}
+
+function faux_dirs_remove {
+    local root_dir=$1
+    cd $root_dir
+
+    # can move a file out of a faux directory
+    mkdir $root_dir/T
+    mv $root_dir/1/NewYork.txt $root_dir/T
+    rm -rf $root_dir/T
+
+    echo "removing faux dir 1"
+    rm -rf $root_dir/1
+}
+
+
+
+function hard_links {
+    local root_dir=$1
+    cd $root_dir
+
+    ln $mountpoint/dxfuse_test_read_only/doc/approaches.md .
+    stat approaches.md
+    rm -f approaches.md
+}
+
+
+function populate_faux_dir {
+    local faux_dir=$1
+
+    echo "deep dish pizza and sky trains" > /tmp/XXX
+    echo "nice play chunk" > /tmp/YYY
+    echo "no more chewing on shoes!" > /tmp/ZZZ
+    echo "you just won a trip to the Caribbean" > /tmp/VVV
+
+    dx upload /tmp/XXX -p --destination $projName:/$faux_dir/Chicago.txt >& /dev/null
+    dx upload /tmp/YYY -p --destination $projName:/$faux_dir/Chicago.txt >& /dev/null
+    dx upload /tmp/ZZZ -p --destination $projName:/$faux_dir/NewYork.txt >& /dev/null
+    dx upload /tmp/VVV -p --destination $projName:/$faux_dir/NewYork.txt >& /dev/null
+    rm -f /tmp/XXX /tmp/YYY /tmp/ZZZ /tmp/VVV
+}
+
 main() {
     # Get all the DX environment variables, so that dxfuse can use them
     echo "loading the dx environment"
@@ -620,11 +683,15 @@ main() {
     target_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
     target_dir2=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
     target_dir3=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
-    writeable_dirs=($target_dir $target_dir2 $target_dir3)
+    faux_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+    faux_dir="faux_$faux_dir"
+    writeable_dirs=($target_dir $target_dir2 $target_dir3 $faux_dir)
     for d in ${writeable_dirs[@]}; do
         dx rm -r $projName:/$d >& /dev/null || true
     done
     dx mkdir $projName:/$target_dir
+
+    populate_faux_dir $faux_dir
 
     # Start the dxfuse daemon in the background, and wait for it to initilize.
     echo "Mounting dxfuse"
@@ -651,7 +718,7 @@ main() {
         exit 1
     fi
 
-    # find
+   # find
     echo "find"
     check_find
 
@@ -725,6 +792,15 @@ main() {
     echo "checking illegal directory moves"
     move_non_existent_dir "$mountpoint/$projName"
     move_dir_to_file "$mountpoint/$projName"
+
+    echo "faux dirs cannot be moved"
+    faux_dirs_move $mountpoint/$projName/$faux_dir
+
+    echo "faux dir operations"
+    faux_dirs_remove $mountpoint/$projName/$faux_dir
+
+    echo "hard links"
+    hard_links $mountpoint/$projName
 
     echo "syncing filesystem"
     sync

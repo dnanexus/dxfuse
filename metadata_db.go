@@ -301,10 +301,14 @@ func (mdb *MetadataDb) lookupDataObjectById(txn *sql.Tx, fId string) (int64, int
 }
 
 // search for a file with a particular inode
-func (mdb *MetadataDb) lookupDataObjectByInode(oname string, inode int64) (File, bool, error) {
+//
+// This is important for a file with multiple hard links. The
+// parent directory determines which project the file belongs to.
+// This is why we set the project-id instead of reading it from the file
+func (mdb *MetadataDb) lookupDataObjectByInode(projId string, oname string, inode int64) (File, bool, error) {
 	// point lookup in the files table
 	sqlStmt := fmt.Sprintf(`
- 		        SELECT kind,id,proj_id,size,ctime,mtime,mode,nlink,inline_data
+ 		        SELECT kind,id,size,ctime,mtime,mode,nlink,inline_data
                         FROM data_objects
 			WHERE inode = '%d';`,
 		inode)
@@ -317,6 +321,7 @@ func (mdb *MetadataDb) lookupDataObjectByInode(oname string, inode int64) (File,
 	var f File
 	f.Name = oname
 	f.Inode = inode
+	f.ProjId = projId
 	f.Uid = mdb.options.Uid
 	f.Gid = mdb.options.Gid
 
@@ -324,7 +329,7 @@ func (mdb *MetadataDb) lookupDataObjectByInode(oname string, inode int64) (File,
 	for rows.Next() {
 		var ctime int64
 		var mtime int64
-		rows.Scan(&f.Kind,&f.Id, &f.ProjId, &f.Size, &ctime, &mtime, &f.Mode, &f.Nlink, &f.InlineData)
+		rows.Scan(&f.Kind,&f.Id, &f.Size, &ctime, &mtime, &f.Mode, &f.Nlink, &f.InlineData)
 		f.Ctime = SecondsToTime(ctime)
 		f.Mtime = SecondsToTime(mtime)
 		numRows++
@@ -402,8 +407,21 @@ func (mdb *MetadataDb) lookupDirByInode(parent string, dname string, inode int64
 	return d, true, nil
 }
 
-// search for a file with a particular inode
-func (mdb *MetadataDb) LookupByInode(ctx context.Context, inode int64) (Node, bool, error) {
+
+// Find the project-id to which a directory belongs
+func (mdb *MetadataDb) directory2projectId(dirFullPath string) string {
+	for baseDirName, projId := range mdb.baseDir2ProjectId {
+		if strings.HasPrefix(dirFullPath, baseDirName) {
+			return projId
+		}
+	}
+	panic(fmt.Sprintf("directory2projectId did not file a project for path %s", dirFullPath))
+}
+
+// search for a file with a particular inode.
+//
+// Note: a file with multiple hard links will appear several times.
+func (mdb *MetadataDb) LookupByInodeAll(ctx context.Context, inode int64) ([]Node, error) {
 	// point lookup in the namespace table
 	sqlStmt := fmt.Sprintf(`
  		        SELECT parent,name,obj_type
@@ -413,39 +431,86 @@ func (mdb *MetadataDb) LookupByInode(ctx context.Context, inode int64) (Node, bo
 	rows, err := mdb.db.Query(sqlStmt)
 	if err != nil {
 		mdb.log(err.Error())
-		return nil, false, fmt.Errorf("LookupByInode: error in query")
+		return nil, fmt.Errorf("LookupByInodeAll: error in query")
 	}
-	var parent string
-	var name string
-	var obj_type int
-	numRows := 0
+	var parents []string
+	var names []string
+	var obj_types []int
 	for rows.Next() {
-		rows.Scan(&parent, &name, &obj_type)
-		numRows++
+		var p string
+		var n string
+		var o int
+		rows.Scan(&p, &n, &o)
+
+		parents = append(parents, p)
+		names = append(names, n)
+		obj_types = append(obj_types, o)
 	}
 	rows.Close()
 
-	switch numRows {
-	case 0:
-		return nil, false, nil
-	default:
-		// There may be several entries in the namespace for a single inode because
-		// of hardlinks. They all lead to the same file.
-		if numRows > 1 && mdb.options.Verbose {
-			mdb.log("Found %d data-objects with inode %d", numRows, inode)
-		}
+	if len(parents) == 0 {
+		return nil, nil
 	}
 
-	switch obj_type {
-	case nsDirType:
-		return mdb.lookupDirByInode(parent, name, inode)
-	case nsDataObjType:
-		return mdb.lookupDataObjectByInode(name, inode)
+	var nodes []Node
+	for i, obj_type := range(obj_types) {
+		var node Node
+		var ok bool
+		var err error
+
+		switch obj_type {
+		case nsDirType:
+			node, ok, err = mdb.lookupDirByInode(parents[i], names[i], inode)
+		case nsDataObjType:
+			// This is important for a file with multiple hard links. The
+			// parent directory determines which project the file belongs to.
+			projId := mdb.directory2projectId(parents[i])
+			node, ok, err = mdb.lookupDataObjectByInode(projId, names[i], inode)
+		default:
+			panic(fmt.Sprintf("Invalid type %d in namespace table", obj_type))
+		}
+
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			nodes = append(nodes, node)
+		}
+	}
+	return nodes, nil
+}
+
+func (mdb *MetadataDb) LookupDirByInode(ctx context.Context, inode int64) (Dir, bool, error) {
+	nodes,err := mdb.LookupByInodeAll(ctx, inode)
+	if err != nil {
+		return Dir{}, false, err
+	}
+
+	switch len(nodes) {
+	case 0:
+		return Dir{}, false, nil
+	case 1:
+		dir := nodes[0].(Dir)
+		return dir, true, nil
 	default:
-		panic(fmt.Sprintf("Invalid type %d in namespace table", obj_type))
+		panic(fmt.Sprintf("found multiple directories for inode=%d", inode))
 	}
 }
 
+// Return one of the hits for an inode. A file that has multiple hard links will appear
+// multiple times, and we return only the first hit.
+func (mdb *MetadataDb) LookupByInode(ctx context.Context, inode int64) (Node, bool, error) {
+	nodes, err := mdb.LookupByInodeAll(ctx, inode)
+	if err != nil {
+		var n Node
+		return n, false, err
+	}
+	if len(nodes) == 0 {
+		var n Node
+		return n, false, nil
+	}
+	return nodes[0], true, nil
+}
 
 // The directory is in the database, read it in its entirety.
 func (mdb *MetadataDb) directoryReadAllEntries(
@@ -1024,11 +1089,7 @@ func (mdb *MetadataDb) LookupInDir(ctx context.Context, dir *Dir, dirOrFileName 
 	case nsDirType:
 		return mdb.lookupDirByInode(dir.FullPath, dirOrFileName, inode)
 	case nsDataObjType:
-		file, ok, err := mdb.lookupDataObjectByInode(dirOrFileName, inode)
-		// The file can be linked from several projects. We want
-		// the link from -this- project.
-		file.ProjId = dir.ProjId
-		return file, ok, err
+		return mdb.lookupDataObjectByInode(dir.ProjId, dirOrFileName, inode)
 	default:
 		panic(fmt.Sprintf("Invalid object type %d", objType))
 	}
@@ -1187,7 +1248,6 @@ func (mdb *MetadataDb) CreateLink(ctx context.Context, srcFile File, dstParent D
 		mdb.log(err.Error())
 		return File{}, fmt.Errorf("CreateFile error opening transaction")
 	}
-	nowSeconds := time.Now().Unix()
 	_, err = mdb.createDataObject(
 		CDO_ALREADY_EXISTS,
 		txn,
@@ -1195,8 +1255,8 @@ func (mdb *MetadataDb) CreateLink(ctx context.Context, srcFile File, dstParent D
 		dstParent.ProjId,
 		srcFile.Id,
 		srcFile.Size,
-		nowSeconds,
-		nowSeconds,
+		int64(srcFile.Ctime.Second()),
+		int64(srcFile.Mtime.Second()),
 		srcFile.Mode,
 		dstParent.FullPath,
 		name,
@@ -1219,8 +1279,8 @@ func (mdb *MetadataDb) CreateLink(ctx context.Context, srcFile File, dstParent D
 		Name : name,
 		Size : srcFile.Size,
 		Inode : srcFile.Inode,
-		Ctime : SecondsToTime(nowSeconds),
-		Mtime : SecondsToTime(nowSeconds),
+		Ctime : srcFile.Ctime,
+		Mtime : srcFile.Mtime,
 		Mode : srcFile.Mode,
 		Nlink : srcFile.Nlink + 1,
 		InlineData : "",

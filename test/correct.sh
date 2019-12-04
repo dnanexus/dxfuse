@@ -643,6 +643,21 @@ function hard_links {
     rm -f approaches.md
 }
 
+function populate_faux_dir {
+    local faux_dir=$1
+
+    echo "deep dish pizza and sky trains" > /tmp/XXX
+    echo "nice play chunk" > /tmp/YYY
+    echo "no more chewing on shoes!" > /tmp/ZZZ
+    echo "you just won a trip to the Caribbean" > /tmp/VVV
+
+    dx upload /tmp/XXX -p --destination $projName:/$faux_dir/Chicago.txt >& /dev/null
+    dx upload /tmp/YYY -p --destination $projName:/$faux_dir/Chicago.txt >& /dev/null
+    dx upload /tmp/ZZZ -p --destination $projName:/$faux_dir/NewYork.txt >& /dev/null
+    dx upload /tmp/VVV -p --destination $projName:/$faux_dir/NewYork.txt >& /dev/null
+    rm -f /tmp/XXX /tmp/YYY /tmp/ZZZ /tmp/VVV
+}
+
 main() {
     # Get all the DX environment variables, so that dxfuse can use them
     echo "loading the dx environment"
@@ -664,19 +679,18 @@ main() {
     mkdir -p $mountpoint
 
     # bash generate random alphanumeric strings
-#    target_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
-#    target_dir2=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
-#    target_dir3=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
-#    writeable_dirs=($target_dir $target_dir2 $target_dir3)
-#    for d in ${writeable_dirs[@]}; do
-#        dx rm -r $projName:/$d >& /dev/null || true
-#    done
-#    dx mkdir $projName:/$target_dir
+    target_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+    target_dir2=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+    target_dir3=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+    faux_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+    faux_dir="faux_$faux_dir"
+    writeable_dirs=($target_dir $target_dir2 $target_dir3 $faux_dir)
+    for d in ${writeable_dirs[@]}; do
+        dx rm -r $projName:/$d >& /dev/null || true
+    done
+    dx mkdir $projName:/$target_dir
 
-#    echo "deep dish pizza and sky trains" > /tmp/ZZZ
-#    dx upload /tmp/ZZZ --destination dxfuse_test_data:/faux_dirs/Chicago.txt
-#    dx upload /tmp/ZZZ --destination dxfuse_test_data:/faux_dirs/NewYork.txt
-#    rm -f /tmp/ZZZ
+    populate_faux_dir $faux_dir
 
     # Start the dxfuse daemon in the background, and wait for it to initilize.
     echo "Mounting dxfuse"
@@ -783,12 +797,12 @@ main() {
 #    move_non_existent_dir "$mountpoint/$projName"
 #    move_dir_to_file "$mountpoint/$projName"
 
-#    echo "faux dirs cannot be moved"
-#    faux_dirs_move $mountpoint/$projName/faux_dirs
-#
-#    echo "faux dir operations"
-#    faux_dirs_remove $mountpoint/$projName/faux_dirs
-#
+    echo "faux dirs cannot be moved"
+    faux_dirs_move $mountpoint/$projName/$faux_dir
+
+    echo "faux dir operations"
+    faux_dirs_remove $mountpoint/$projName/$faux_dir
+
     echo "hard links"
     hard_links $mountpoint/$projName
 
@@ -799,9 +813,9 @@ main() {
     cd $HOME
     sudo umount $mountpoint
 
-#    for d in ${writeable_dirs[@]}; do
-#        dx rm -r $projName:/$d >& /dev/null || true
-#    done
+    for d in ${writeable_dirs[@]}; do
+        dx rm -r $projName:/$d >& /dev/null || true
+    done
 }
 
 main

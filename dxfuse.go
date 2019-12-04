@@ -199,7 +199,7 @@ func (fsys *Filesys) LookUpInode(ctx context.Context, op *fuseops.LookUpInodeOp)
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
 
-	node, ok, err := fsys.mdb.LookupByInode(ctx, int64(op.Parent))
+	parentDir, ok, err := fsys.mdb.LookupDirByInode(ctx, int64(op.Parent))
 	if err != nil {
 		fsys.log("database error in LookupInode: %s", err.Error())
 		return fuse.EIO
@@ -208,9 +208,8 @@ func (fsys *Filesys) LookUpInode(ctx context.Context, op *fuseops.LookUpInodeOp)
 		// parent directory does not exist
 		return fuse.ENOENT
 	}
-	parentDir := node.(Dir)
 
-	node, ok, err = fsys.mdb.LookupInDir(ctx, &parentDir, op.Name)
+	node, ok, err := fsys.mdb.LookupInDir(ctx, &parentDir, op.Name)
 	if err != nil {
 		fsys.log("database error in LookUpInode: %s", err.Error())
 		return fuse.EIO
@@ -383,7 +382,7 @@ func (fsys *Filesys) MkDir(ctx context.Context, op *fuseops.MkDirOp) error {
 	}
 
 	// the parent is supposed to be a directory
-	node, ok, err := fsys.mdb.LookupByInode(ctx, int64(op.Parent))
+	parentDir, ok, err := fsys.mdb.LookupDirByInode(ctx, int64(op.Parent))
 	if err != nil {
 		fsys.log("database error in MkDir: %s", err.Error())
 		return fuse.EIO
@@ -392,7 +391,6 @@ func (fsys *Filesys) MkDir(ctx context.Context, op *fuseops.MkDirOp) error {
 		// parent directory does not exist
 		return fuse.ENOENT
 	}
-	parentDir := node.(Dir)
 
 	// Check if the directory exists
 	_, ok, err = fsys.mdb.LookupInDir(ctx, &parentDir, op.Name)
@@ -472,7 +470,7 @@ func (fsys *Filesys) RmDir(ctx context.Context, op *fuseops.RmDirOp) error {
 	}
 
 	// the parent is supposed to be a directory
-	node, ok, err := fsys.mdb.LookupByInode(ctx, int64(op.Parent))
+	parentDir, ok, err := fsys.mdb.LookupDirByInode(ctx, int64(op.Parent))
 	if err != nil {
 		fsys.log("database error in RmDir: %s", err.Error())
 		return fuse.EIO
@@ -481,7 +479,6 @@ func (fsys *Filesys) RmDir(ctx context.Context, op *fuseops.RmDirOp) error {
 		// parent directory does not exist
 		return fuse.ENOENT
 	}
-	parentDir := node.(Dir)
 
 	// Check if the directory exists
 	childNode, ok, err := fsys.mdb.LookupInDir(ctx, &parentDir, op.Name)
@@ -589,7 +586,7 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	}
 
 	// the parent is supposed to be a directory
-	node, ok, err := fsys.mdb.LookupByInode(ctx, int64(op.Parent))
+	parentDir, ok, err := fsys.mdb.LookupDirByInode(ctx, int64(op.Parent))
 	if err != nil {
 		return err
 	}
@@ -597,7 +594,6 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 		// parent directory does not exist
 		return fuse.ENOENT
 	}
-	parentDir := node.(Dir)
 	if parentDir.faux {
 		// cannot write new files into faux directories
 		return syscall.EPERM
@@ -696,7 +692,7 @@ func (fsys *Filesys) CreateLink(ctx context.Context, op *fuseops.CreateLinkOp) e
 	}
 
 	// parent is supposed to be a directory
-	parentNode, ok, err := fsys.mdb.LookupByInode(ctx, int64(op.Parent))
+	parentDir, ok, err := fsys.mdb.LookupDirByInode(ctx, int64(op.Parent))
 	if err != nil {
 		return err
 	}
@@ -704,7 +700,6 @@ func (fsys *Filesys) CreateLink(ctx context.Context, op *fuseops.CreateLinkOp) e
 		// parent directory does not exist
 		return fuse.ENOENT
 	}
-	parentDir := parentNode.(Dir)
 
 	// Make sure the destination doesn't already exist
 	_, ok, err = fsys.mdb.LookupInDir(ctx, &parentDir, op.Name)
@@ -903,7 +898,7 @@ func (fsys *Filesys) Rename(ctx context.Context, op *fuseops.RenameOp) error {
 	}
 
 	// the old parent is supposed to be a directory
-	oldParentNode, ok, err := fsys.mdb.LookupByInode(ctx, int64(op.OldParent))
+	oldParentDir, ok, err := fsys.mdb.LookupDirByInode(ctx, int64(op.OldParent))
 	if err != nil {
 		return err
 	}
@@ -911,10 +906,9 @@ func (fsys *Filesys) Rename(ctx context.Context, op *fuseops.RenameOp) error {
 		// parent directory does not exist
 		return fuse.ENOENT
 	}
-	oldParentDir := oldParentNode.(Dir)
 
 	// the new parent is supposed to be a directory
-	newParentNode, ok, err := fsys.mdb.LookupByInode(ctx, int64(op.NewParent))
+	newParentDir, ok, err := fsys.mdb.LookupDirByInode(ctx, int64(op.NewParent))
 	if err != nil {
 		return err
 	}
@@ -922,7 +916,6 @@ func (fsys *Filesys) Rename(ctx context.Context, op *fuseops.RenameOp) error {
 		// parent directory does not exist
 		return fuse.ENOENT
 	}
-	newParentDir := newParentNode.(Dir)
 	if newParentDir.faux {
 		fsys.log("can not move files into a faux dir")
 		return syscall.EPERM
@@ -1007,7 +1000,7 @@ func (fsys *Filesys) Unlink(ctx context.Context, op *fuseops.UnlinkOp) error {
 	}
 
 	// the parent is supposed to be a directory
-	node, ok, err := fsys.mdb.LookupByInode(ctx, int64(op.Parent))
+	parentDir, ok, err := fsys.mdb.LookupDirByInode(ctx, int64(op.Parent))
 	if err != nil {
 		return err
 	}
@@ -1015,7 +1008,6 @@ func (fsys *Filesys) Unlink(ctx context.Context, op *fuseops.UnlinkOp) error {
 		// parent directory does not exist
 		return fuse.ENOENT
 	}
-	parentDir := node.(Dir)
 
 	// Make sure the file exists
 	childNode, ok, err := fsys.mdb.LookupInDir(ctx, &parentDir, op.Name)
@@ -1518,7 +1510,7 @@ func (fsys *Filesys) OpenDir(ctx context.Context, op *fuseops.OpenDirOp) error {
 	defer fsys.mutex.Unlock()
 
 	// the parent is supposed to be a directory
-	node, ok, err := fsys.mdb.LookupByInode(ctx, int64(op.Inode))
+	dir, ok, err := fsys.mdb.LookupDirByInode(ctx, int64(op.Inode))
 	if err != nil {
 		fsys.log("database error in OpenDir %s", err.Error())
 		return fuse.EIO
@@ -1526,7 +1518,6 @@ func (fsys *Filesys) OpenDir(ctx context.Context, op *fuseops.OpenDirOp) error {
 	if !ok {
 		return fuse.ENOENT
 	}
-	dir := node.(Dir)
 
 	// Read the entire directory into memory, and sort
 	// the entries properly.
