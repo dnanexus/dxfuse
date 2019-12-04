@@ -430,7 +430,7 @@ func (mdb *MetadataDb) LookupByInode(ctx context.Context, inode int64) (Node, bo
 		return nil, false, nil
 	default:
 		// There may be several entries in the namespace for a single inode because
-		// of hardlinks.
+		// of hardlinks. They all lead to the same file.
 		if numRows > 1 && mdb.options.Verbose {
 			mdb.log("Found %d data-objects with inode %d", numRows, inode)
 		}
@@ -533,9 +533,9 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 //  2) Create a new file, and upload it later to the platform
 //  3) Discover a file in a directory, which may actually be a link to another file.
 const (
-	CREATE_DATA_OBJECT_MUST_BE_NEW = 1
-	CREATE_DATA_OBJECT_ALREADY_EXISTS = 2
-	CREATE_DATA_OBJECT_NEUTRAL = 3
+	CDO_MUST_BE_NEW = 1
+	CDO_ALREADY_EXISTS = 2
+	CDO_NEUTRAL = 3
 )
 func (mdb *MetadataDb) createDataObject(
 	flag int,
@@ -561,7 +561,7 @@ func (mdb *MetadataDb) createDataObject(
 	}
 
 	if !ok {
-		if flag == CREATE_DATA_OBJECT_ALREADY_EXISTS {
+		if flag == CDO_ALREADY_EXISTS {
 			panic(fmt.Sprintf("Object %s:%s should already exists, but does not",
 				projId, objId))
 		}
@@ -581,7 +581,7 @@ func (mdb *MetadataDb) createDataObject(
 			return 0, err
 		}
 	} else {
-		if flag == CREATE_DATA_OBJECT_MUST_BE_NEW {
+		if flag == CDO_MUST_BE_NEW {
 			panic(fmt.Sprintf("Object %s:%s must not be already in the database",
 				projId, objId))
 		}
@@ -797,7 +797,7 @@ func (mdb *MetadataDb) populateDir(
 		inlineData := inlineDataOfFile(kind, o)
 
 		_, err := mdb.createDataObject(
-			CREATE_DATA_OBJECT_NEUTRAL,
+			CDO_NEUTRAL,
 			txn,
 			kind,
 			o.ProjId,
@@ -1025,9 +1025,9 @@ func (mdb *MetadataDb) LookupInDir(ctx context.Context, dir *Dir, dirOrFileName 
 		return mdb.lookupDirByInode(dir.FullPath, dirOrFileName, inode)
 	case nsDataObjType:
 		file, ok, err := mdb.lookupDataObjectByInode(dirOrFileName, inode)
-		if ok && err == nil {
-			mdb.log("lookupDataObjectByInode: %v, size=%d", file, file.Size)
-		}
+		// The file can be linked from several projects. We want
+		// the link from -this- project.
+		file.ProjId = dir.ProjId
 		return file, ok, err
 	default:
 		panic(fmt.Sprintf("Invalid object type %d", objType))
@@ -1078,7 +1078,7 @@ func (mdb *MetadataDb) PopulateRoot(ctx context.Context, manifest Manifest) erro
 	// create individual files
 	for _, fl := range manifest.Files {
 		_, err := mdb.createDataObject(
-			CREATE_DATA_OBJECT_NEUTRAL,
+			CDO_NEUTRAL,
 			txn, FK_Regular, fl.ProjId, fl.FileId,
 			fl.Size,
 			fl.CtimeSeconds, fl.MtimeSeconds,
@@ -1138,7 +1138,7 @@ func (mdb *MetadataDb) CreateFile(
 	}
 	nowSeconds := time.Now().Unix()
 	inode, err := mdb.createDataObject(
-		CREATE_DATA_OBJECT_MUST_BE_NEW,
+		CDO_MUST_BE_NEW,
 		txn,
 		FK_Regular,
 		dir.ProjId,
@@ -1189,7 +1189,7 @@ func (mdb *MetadataDb) CreateLink(ctx context.Context, srcFile File, dstParent D
 	}
 	nowSeconds := time.Now().Unix()
 	_, err = mdb.createDataObject(
-		CREATE_DATA_OBJECT_ALREADY_EXISTS,
+		CDO_ALREADY_EXISTS,
 		txn,
 		FK_Regular,
 		dstParent.ProjId,

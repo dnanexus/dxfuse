@@ -729,7 +729,7 @@ func (fsys *Filesys) CreateLink(ctx context.Context, op *fuseops.CreateLinkOp) e
 	switch targetNode.(type) {
 	case Dir:
 		// can't make a hard link to a directory
-		return syscall.EPERM
+		return fuse.EINVAL
 	case File:
 		targetFile = targetNode.(File)
 	}
@@ -762,7 +762,7 @@ func (fsys *Filesys) CreateLink(ctx context.Context, op *fuseops.CreateLinkOp) e
 	if !ok {
 		fsys.log("(%s) object not cloned because it already exists in the target project (%s)",
 			targetFile.Id, parentDir.ProjId)
-		return syscall.EPERM
+		return fuse.EINVAL
 	}
 
 	destFile, err := fsys.mdb.CreateLink(ctx, targetFile, parentDir, op.Name)
@@ -1049,7 +1049,7 @@ func (fsys *Filesys) Unlink(ctx context.Context, op *fuseops.UnlinkOp) error {
 	// remove the file on the platform
 	objectIds := make([]string, 1)
 	objectIds[0] = fileToRemove.Id
-	if err := DxRemoveObjects(ctx, httpClient, &fsys.dxEnv, fileToRemove.ProjId, objectIds); err != nil {
+	if err := DxRemoveObjects(ctx, httpClient, &fsys.dxEnv, parentDir.ProjId, objectIds); err != nil {
 		fsys.log("Error in removing file (%s:%s/%s) on dnanexus: %s",
 			parentDir.ProjId, parentDir.ProjFolder, op.Name,
 			err.Error())
