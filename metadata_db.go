@@ -265,17 +265,17 @@ func (mdb *MetadataDb) allocInodeNum() int64 {
 
 // search for a file by Id. If the file exists, return its inode and link-count. Otherwise,
 // return 0, 0.
-func (mdb *MetadataDb) lookupDataObjectById(txn *sql.Tx, fId string) (int64, int, bool, error) {
+func (mdb *MetadataDb) lookupDataObjectById(oph *OpHandle, fId string) (int64, int, bool, error) {
 	// point lookup in the files table
 	sqlStmt := fmt.Sprintf(`
  		        SELECT inode,nlink
                         FROM data_objects
 			WHERE id = '%s';`,
 		fId)
-	rows, err := txn.Query(sqlStmt)
+	rows, err := oph.txn.Query(sqlStmt)
 	if err != nil {
-		mdb.log(err.Error())
-		return InodeInvalid, 0, false, fmt.Errorf("lookupDataObjectById fId=%s", fId)
+		mdb.log("lookupDataObjectById fId=%s err=%s", fId, err.Error())
+		return InodeInvalid, 0, false, oph.RecordError(err)
 	}
 
 	var nlink int
@@ -304,17 +304,17 @@ func (mdb *MetadataDb) lookupDataObjectById(txn *sql.Tx, fId string) (int64, int
 // This is important for a file with multiple hard links. The
 // parent directory determines which project the file belongs to.
 // This is why we set the project-id instead of reading it from the file
-func (mdb *MetadataDb) lookupDataObjectByInode(projId string, oname string, inode int64) (File, bool, error) {
+func (mdb *MetadataDb) lookupDataObjectByInode(oph *OpHandle, projId string, oname string, inode int64) (File, bool, error) {
 	// point lookup in the files table
 	sqlStmt := fmt.Sprintf(`
  		        SELECT kind,id,size,ctime,mtime,mode,nlink,inline_data
                         FROM data_objects
 			WHERE inode = '%d';`,
 		inode)
-	rows, err := mdb.db.Query(sqlStmt)
+	rows, err := oph.txn.Query(sqlStmt)
 	if err != nil {
-		mdb.log(err.Error())
-		return File{}, false, fmt.Errorf("lookupDataObjectByInode %s inode=%d", oname, inode)
+		mdb.log("lookupDataObjectByInode %s inode=%d err=%s", oname, inode, err.Error())
+		return File{}, false, oph.RecordError(err)
 	}
 
 	var f File
@@ -347,7 +347,7 @@ func (mdb *MetadataDb) lookupDataObjectByInode(projId string, oname string, inod
 	}
 }
 
-func (mdb *MetadataDb) lookupDirByInode(parent string, dname string, inode int64) (Dir, bool, error) {
+func (mdb *MetadataDb) lookupDirByInode(oph *OpHandle, parent string, dname string, inode int64) (Dir, bool, error) {
 	var d Dir
 	d.Parent = parent
 	d.Dname = dname
@@ -362,10 +362,10 @@ func (mdb *MetadataDb) lookupDirByInode(parent string, dname string, inode int64
                         FROM directories
 			WHERE inode = '%d';`,
 		inode)
-	rows, err := mdb.db.Query(sqlStmt)
+	rows, err := oph.txn.Query(sqlStmt)
 	if err != nil {
-		mdb.log(err.Error())
-		return Dir{}, false, fmt.Errorf("lookupDirByInode inode=%d", inode)
+		mdb.log("lookupDirByInode inode=%d err=%s", inode, err.Error())
+		return Dir{}, false, oph.RecordError(err)
 	}
 
 	numRows := 0
@@ -420,17 +420,17 @@ func (mdb *MetadataDb) directory2projectId(dirFullPath string) string {
 // search for a file with a particular inode.
 //
 // Note: a file with multiple hard links will appear several times.
-func (mdb *MetadataDb) LookupByInodeAll(ctx context.Context, inode int64) ([]Node, error) {
+func (mdb *MetadataDb) LookupByInodeAll(ctx context.Context, oph *OpHandle, inode int64) ([]Node, error) {
 	// point lookup in the namespace table
 	sqlStmt := fmt.Sprintf(`
  		        SELECT parent,name,obj_type
                         FROM namespace
 			WHERE inode = '%d';`,
 		inode)
-	rows, err := mdb.db.Query(sqlStmt)
+	rows, err := oph.txn.Query(sqlStmt)
 	if err != nil {
-		mdb.log(err.Error())
-		return nil, fmt.Errorf("LookupByInodeAll: error in query")
+		mdb.log("LookupByInodeAll: error in query  err=%s", err.Error())
+		return nil, oph.RecordError(err)
 	}
 	var parents []string
 	var names []string
@@ -459,12 +459,12 @@ func (mdb *MetadataDb) LookupByInodeAll(ctx context.Context, inode int64) ([]Nod
 
 		switch obj_type {
 		case nsDirType:
-			node, ok, err = mdb.lookupDirByInode(parents[i], names[i], inode)
+			node, ok, err = mdb.lookupDirByInode(oph, parents[i], names[i], inode)
 		case nsDataObjType:
 			// This is important for a file with multiple hard links. The
 			// parent directory determines which project the file belongs to.
 			projId := mdb.directory2projectId(parents[i])
-			node, ok, err = mdb.lookupDataObjectByInode(projId, names[i], inode)
+			node, ok, err = mdb.lookupDataObjectByInode(oph, projId, names[i], inode)
 		default:
 			panic(fmt.Sprintf("Invalid type %d in namespace table", obj_type))
 		}
@@ -479,8 +479,8 @@ func (mdb *MetadataDb) LookupByInodeAll(ctx context.Context, inode int64) ([]Nod
 	return nodes, nil
 }
 
-func (mdb *MetadataDb) LookupDirByInode(ctx context.Context, inode int64) (Dir, bool, error) {
-	nodes,err := mdb.LookupByInodeAll(ctx, inode)
+func (mdb *MetadataDb) LookupDirByInode(ctx context.Context, oph *OpHandle, inode int64) (Dir, bool, error) {
+	nodes,err := mdb.LookupByInodeAll(ctx, oph, inode)
 	if err != nil {
 		return Dir{}, false, err
 	}
@@ -498,21 +498,20 @@ func (mdb *MetadataDb) LookupDirByInode(ctx context.Context, inode int64) (Dir, 
 
 // Return one of the hits for an inode. A file that has multiple hard links will appear
 // multiple times, and we return only the first hit.
-func (mdb *MetadataDb) LookupByInode(ctx context.Context, inode int64) (Node, bool, error) {
-	nodes, err := mdb.LookupByInodeAll(ctx, inode)
+func (mdb *MetadataDb) LookupByInode(ctx context.Context, oph *OpHandle, inode int64) (Node, bool, error) {
+	nodes, err := mdb.LookupByInodeAll(ctx, oph, inode)
 	if err != nil {
-		var n Node
-		return n, false, err
+		return File{}, false, oph.RecordError(err)
 	}
 	if len(nodes) == 0 {
-		var n Node
-		return n, false, nil
+		return File{}, false, nil
 	}
 	return nodes[0], true, nil
 }
 
 // The directory is in the database, read it in its entirety.
 func (mdb *MetadataDb) directoryReadAllEntries(
+	oph *OpHandle,
 	dirFullName string) (map[string]File, map[string]Dir, error) {
 	if mdb.options.Verbose {
 		mdb.log("directoryReadAllEntries %s", dirFullName)
@@ -526,11 +525,10 @@ func (mdb *MetadataDb) directoryReadAllEntries(
                         ON directories.inode = namespace.inode
 			WHERE namespace.parent = '%s' AND namespace.obj_type = '%d';
 			`, dirFullName, nsDirType)
-	rows, err := mdb.db.Query(sqlStmt)
+	rows, err := oph.txn.Query(sqlStmt)
 	if err != nil {
-		mdb.log(err.Error())
-		mdb.log("Error in directories query")
-		return nil, nil, err
+		mdb.log("Error in directories query, err=%s", err.Error())
+		return nil, nil, oph.RecordError(err)
 	}
 
 	subdirs := make(map[string]Dir)
@@ -563,11 +561,10 @@ func (mdb *MetadataDb) directoryReadAllEntries(
                         ON dos.inode = namespace.inode
 			WHERE namespace.parent = '%s' AND namespace.obj_type = '%d';
 			`, dirFullName, nsDataObjType)
-	rows, err = mdb.db.Query(sqlStmt)
+	rows, err = oph.txn.Query(sqlStmt)
 	if err != nil {
-		mdb.log(err.Error())
-		mdb.log("Error in data object query")
-		return nil, nil, err
+		mdb.log("Error in data object query, err=%s", err.Error())
+		return nil, nil, oph.RecordError(err)
 	}
 
 	// Find the files in the directory
@@ -602,8 +599,8 @@ const (
 	CDO_NEUTRAL = 3
 )
 func (mdb *MetadataDb) createDataObject(
+	oph *OpHandle,
 	flag int,
-	txn *sql.Tx,
 	kind int,
 	projId string,
 	objId string,
@@ -619,7 +616,7 @@ func (mdb *MetadataDb) createDataObject(
 			filepath.Clean(parentDir + "/" + fname))
 	}
 
-	inode, nlink, ok, err := mdb.lookupDataObjectById(txn, objId)
+	inode, nlink, ok, err := mdb.lookupDataObjectById(oph, objId)
 	if err != nil {
 		return 0, err
 	}
@@ -639,10 +636,10 @@ func (mdb *MetadataDb) createDataObject(
  		        INSERT INTO data_objects
 			VALUES ('%d', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%d', '%s');`,
 			kind, objId, projId, inode, size, ctime, mtime, int(mode), 1, inlineData)
-		if _, err := txn.Exec(sqlStmt); err != nil {
+		if _, err := oph.txn.Exec(sqlStmt); err != nil {
 			mdb.log(err.Error())
 			mdb.log("Error inserting into data objects table")
-			return 0, err
+			return 0, oph.RecordError(err)
 		}
 	} else {
 		if flag == CDO_MUST_BE_NEW {
@@ -656,9 +653,10 @@ func (mdb *MetadataDb) createDataObject(
                         SET nlink = '%d'
 			WHERE id = '%s';`,
 			nlink + 1, objId)
-		if _, err := txn.Exec(sqlStmt); err != nil {
-			mdb.log("Error updating data_object table, incrementing the link number")
-			return 0, err
+		if _, err := oph.txn.Exec(sqlStmt); err != nil {
+			mdb.log("Error updating data_object table, incrementing the link number err=%s",
+				err.Error())
+			return 0, oph.RecordError(err)
 		}
 	}
 
@@ -666,9 +664,9 @@ func (mdb *MetadataDb) createDataObject(
  		        INSERT INTO namespace
 			VALUES ('%s', '%s', '%d', '%d');`,
 		parentDir, fname, nsDataObjType, inode)
-	if _, err := txn.Exec(sqlStmt); err != nil {
-		mdb.log("Error inserting %s/%s into the namespace table", parentDir, fname)
-		return 0, err
+	if _, err := oph.txn.Exec(sqlStmt); err != nil {
+		mdb.log("Error inserting %s/%s into the namespace table  err=%s", parentDir, fname, err.Error())
+		return 0, oph.RecordError(err)
 	}
 
 	return inode, nil
@@ -678,7 +676,7 @@ func (mdb *MetadataDb) createDataObject(
 //
 // Assumption: the directory does not already exist in the database.
 func (mdb *MetadataDb) createEmptyDir(
-	txn *sql.Tx,
+	oph *OpHandle,
 	projId string,
 	projFolder string,
 	ctime int64,
@@ -702,10 +700,10 @@ func (mdb *MetadataDb) createEmptyDir(
  		        INSERT INTO namespace
 			VALUES ('%s', '%s', '%d', '%d');`,
 		parentDir, basename, nsDirType,	inode)
-	if _, err := txn.Exec(sqlStmt); err != nil {
-		mdb.log("createEmptyDir: error inserting into namespace table %s/%s",
-			parentDir, basename)
-		return 0, err
+	if _, err := oph.txn.Exec(sqlStmt); err != nil {
+		mdb.log("createEmptyDir: error inserting into namespace table %s/%s, err=%s",
+			parentDir, basename, err.Error())
+		return 0, oph.RecordError(err)
 	}
 
 	// Create an entry for the subdirectory
@@ -714,80 +712,68 @@ func (mdb *MetadataDb) createEmptyDir(
                        INSERT INTO directories
                        VALUES ('%d', '%s', '%s', '%d', '%d', '%d', '%d');`,
 		inode, projId, projFolder, boolToInt(populated), ctime, mtime, int(mode))
-	if _, err := txn.Exec(sqlStmt); err != nil {
+	if _, err := oph.txn.Exec(sqlStmt); err != nil {
 		mdb.log("createEmptyDir: error inserting into directories table %d",
 			inode)
-		return 0, err
+		return 0, oph.RecordError(err)
 	}
 	return inode, nil
 }
 
 // Assumption: the directory does not already exist in the database.
 func (mdb *MetadataDb) CreateDir(
+	oph *OpHandle,
 	projId string,
 	projFolder string,
 	ctime int64,
 	mtime int64,
 	mode os.FileMode,
 	dirPath string) (int64, error) {
-	txn, err := mdb.db.Begin()
 	if err != nil {
-		mdb.log(err.Error())
-		return 0, fmt.Errorf("CreateDir: error opening transaction")
+		mdb.log("CreateDir: error opening transaction %s", err.Error())
+		return 0, oph.RecordError(err)
 	}
 	dnode, err := mdb.createEmptyDir(txn, projId, projFolder, ctime, mtime, mode, dirPath, true)
 	if err != nil {
-		txn.Rollback()
-		mdb.log(err.Error())
-		return 0, fmt.Errorf("error in create dir, rolling back transaction")
-	}
-	if err := txn.Commit(); err != nil {
-		mdb.log(err.Error())
-		return 0, fmt.Errorf("CreateDir: error in commit")
+		fmt.Errorf("error in create dir, rolling back transaction, %s", err.Error())
+		return 0, oph.RecordError(err)
 	}
 	return dnode, nil
 }
 
 // Remove a directory from the database
-func (mdb *MetadataDb) RemoveEmptyDir(inode int64) error {
-	txn, err := mdb.db.Begin()
-	if err != nil {
-		return err
-	}
-
+func (mdb *MetadataDb) RemoveEmptyDir(oph *OpHandle, inode int64) error {
 	sqlStmt := fmt.Sprintf(`
                 DELETE FROM directories
                 WHERE inode='%d';`,
 		inode)
-	if _, err := txn.Exec(sqlStmt); err != nil {
-		txn.Rollback()
+	if _, err := oph.txn.Exec(sqlStmt); err != nil {
 		mdb.log("RemoveEmptyDir(%d): error in directories table removal", inode)
-		return err
+		return oph.RecordError(err)
 	}
 
 	sqlStmt = fmt.Sprintf(`
                 DELETE FROM namespace
                 WHERE inode='%d';`,
 		inode)
-	if _, err := txn.Exec(sqlStmt); err != nil {
-		txn.Rollback()
+	if _, err := oph.txn.Exec(sqlStmt); err != nil {
 		mdb.log("RemoveEmptyDir(%d): error in namespace table removal", inode)
-		return err
+		return oph.RecordError(err)
 	}
 
-	return txn.Commit()
+	return nil
 }
 
 // Update the directory populated flag to TRUE
-func (mdb *MetadataDb) setDirectoryToPopulated(txn *sql.Tx, dinode int64) error {
+func (mdb *MetadataDb) setDirectoryToPopulated(oph *OpHandle, dinode int64) error {
 	sqlStmt := fmt.Sprintf(`
 		UPDATE directories
                 SET populated = '1'
                 WHERE inode = '%d'`,
 		dinode)
-	if _, err := txn.Exec(sqlStmt); err != nil {
+	if _, err := oph.txn.Exec(sqlStmt); err != nil {
 		mdb.log("Error set directory %d to populated", dinode)
-		return err
+		return oph.RecordError(err)
 	}
 	return nil
 }
@@ -834,7 +820,7 @@ func inlineDataOfFile(kind int, o DxDescribeDataObject) string {
 
 // Create a directory with: an i-node, files, and empty unpopulated subdirectories.
 func (mdb *MetadataDb) populateDir(
-	txn *sql.Tx,
+	oph *OpHandle,
 	dinode int64,
 	projId string,
 	projFolder string,
@@ -861,8 +847,8 @@ func (mdb *MetadataDb) populateDir(
 		inlineData := inlineDataOfFile(kind, o)
 
 		_, err := mdb.createDataObject(
+			oph,
 			CDO_NEUTRAL,
-			txn,
 			kind,
 			o.ProjId,
 			o.Id,
@@ -874,7 +860,7 @@ func (mdb *MetadataDb) populateDir(
 			o.Name,
 			inlineData)
 		if err != nil {
-			return err
+			return oph.RecordError(err)
 		}
 	}
 
@@ -887,7 +873,7 @@ func (mdb *MetadataDb) populateDir(
 		// We haven't described it yet from DNAx, so the populate flag
 		// is false.
 		_, err := mdb.createEmptyDir(
-			txn,
+			oph,
 			projId, filepath.Clean(projFolder + "/" + subDirName),
 			ctime, mtime,
 			dirReadWriteMode,
@@ -905,7 +891,7 @@ func (mdb *MetadataDb) populateDir(
 	}
 
 	// Update the directory populated flag to TRUE
-	mdb.setDirectoryToPopulated(txn, dinode)
+	mdb.setDirectoryToPopulated(oph, dinode)
 	return nil
 }
 
@@ -962,22 +948,15 @@ func (mdb *MetadataDb) directoryReadFromDNAx(
 		return err
 	}
 
-	txn, err := mdb.db.Begin()
-	if err != nil {
-		mdb.log(err.Error())
-		return fmt.Errorf("directoryReadFromDNAx: error opening transaction")
-	}
-
 	// build the top level directory
 	err = mdb.populateDir(
-		txn, dinode,
+		oph, dinode,
 		projId, projFolder,
 		ctimeApprox, mtimeApprox,
 		dirFullName, posixDir.dataObjects, posixDir.subdirs)
 	if err != nil {
-		txn.Rollback()
-		mdb.log(err.Error())
-		return fmt.Errorf("directoryReadFromDNAx: Error populating directory")
+		mdb.log("directoryReadFromDNAx: Error populating directory, err=%s", err.Error())
+		return oph.RecordError(err)
 	}
 
 	// create the faux sub directories. These have no additional depth, and are fully
@@ -989,35 +968,33 @@ func (mdb *MetadataDb) directoryReadFromDNAx(
 
 		// create the directory in the namespace, as if it is unpopulated.
 		fauxDirInode, err := mdb.createEmptyDir(
-			txn, projId, "",
+			oph, projId, "",
 			ctimeApprox, mtimeApprox,
 			dirReadWriteMode,
 			fauxDirPath, true)
 		if err != nil {
-			txn.Rollback()
-			mdb.log(err.Error())
-			return fmt.Errorf("directoryReadFromDNAx: creating faux directory %s", fauxDirPath)
+			mdb.log("directoryReadFromDNAx: creating faux directory %s, err=%s", fauxDirPath, err.Error())
+			return oph.RecordError(err)
 		}
 
 		var no_subdirs []string
 		err = mdb.populateDir(
-			txn, fauxDirInode,
+			oph, fauxDirInode,
 			projId, "",
 			ctimeApprox, mtimeApprox,
 			fauxDirPath, fauxFiles, no_subdirs)
 		if err != nil {
-			txn.Rollback()
-			mdb.log(err.Error())
-			return fmt.Errorf("directoryReadFromDNAx: populating faux directory %s", fauxDirPath)
+			mdb.log("directoryReadFromDNAx: populating faux directory %s", fauxDirPath, err.Error())
+			return oph.RecordError(err)
 		}
 	}
 
-	return txn.Commit()
+	return nil
 }
 
 
 // Add a directory with its contents to an exisiting database
-func (mdb *MetadataDb) ReadDirAll(ctx context.Context, dir *Dir) (map[string]File, map[string]Dir, error) {
+func (mdb *MetadataDb) ReadDirAll(ctx context.Context, oph *OpHandle, dir *Dir) (map[string]File, map[string]Dir, error) {
 	if mdb.options.Verbose {
 		mdb.log("ReadDirAll %s", dir.FullPath)
 	}
@@ -1025,6 +1002,7 @@ func (mdb *MetadataDb) ReadDirAll(ctx context.Context, dir *Dir) (map[string]Fil
 	if !dir.Populated {
 		err := mdb.directoryReadFromDNAx(
 			ctx,
+			oph,
 			dir.Inode,
 			dir.ProjId,
 			dir.ProjFolder,
@@ -1038,7 +1016,7 @@ func (mdb *MetadataDb) ReadDirAll(ctx context.Context, dir *Dir) (map[string]Fil
 	}
 
 	// Now that the directory is in the database, we can read it with a local query.
-	return mdb.directoryReadAllEntries(dir.FullPath)
+	return mdb.directoryReadAllEntries(oph, dir.FullPath)
 }
 
 
@@ -1050,9 +1028,9 @@ func (mdb *MetadataDb) ReadDirAll(ctx context.Context, dir *Dir) (map[string]Fil
 // 3. Do a lookup in the directory.
 //
 // Note: the file might not exist.
-func (mdb *MetadataDb) LookupInDir(ctx context.Context, dir *Dir, dirOrFileName string) (Node, bool, error) {
+func (mdb *MetadataDb) LookupInDir(ctx context.Context, oph *OpHandle, dir *Dir, dirOrFileName string) (Node, bool, error) {
 	if !dir.Populated {
-		mdb.ReadDirAll(ctx, dir)
+		mdb.ReadDirAll(ctx, oph, dir)
 	}
 
 	// point lookup in the namespace
@@ -1061,9 +1039,9 @@ func (mdb *MetadataDb) LookupInDir(ctx context.Context, dir *Dir, dirOrFileName 
                         FROM namespace
 			WHERE parent = '%s' AND name = '%s';`,
 		dir.FullPath, dirOrFileName)
-	rows, err := mdb.db.Query(sqlStmt)
+	rows, err := oph.txn.Query(sqlStmt)
 	if err != nil {
-		return nil, false, err
+		return nil, false, oph.RecordError(err)
 	}
 
 	var objType int
@@ -1085,16 +1063,16 @@ func (mdb *MetadataDb) LookupInDir(ctx context.Context, dir *Dir, dirOrFileName 
 	// There is exactly one answer
 	switch objType {
 	case nsDirType:
-		return mdb.lookupDirByInode(dir.FullPath, dirOrFileName, inode)
+		return mdb.lookupDirByInode(oph, dir.FullPath, dirOrFileName, inode)
 	case nsDataObjType:
-		return mdb.lookupDataObjectByInode(dir.ProjId, dirOrFileName, inode)
+		return mdb.lookupDataObjectByInode(oph, dir.ProjId, dirOrFileName, inode)
 	default:
 		panic(fmt.Sprintf("Invalid object type %d", objType))
 	}
 }
 
 // Build a toplevel directory for each project.
-func (mdb *MetadataDb) PopulateRoot(ctx context.Context, manifest Manifest) error {
+func (mdb *MetadataDb) PopulateRoot(ctx context.Context, oph *OpHandle, manifest Manifest) error {
 	mdb.log("Populating root directory")
 
 	for _, d := range manifest.Directories {
@@ -1110,43 +1088,36 @@ func (mdb *MetadataDb) PopulateRoot(ctx context.Context, manifest Manifest) erro
 		mdb.log("dirSkeleton = %v", dirSkel)
 	}
 
-	txn, err := mdb.db.Begin()
-	if err != nil {
-		mdb.log("PopulateRoot: Error opening transaction")
-		return err
-	}
-
 	// build the supporting directory structure.
 	// We mark each directory as populated, so that the platform would not
 	// be queries.
 	nowSeconds := time.Now().Unix()
 	for _, d := range dirSkel {
 		_, err := mdb.createEmptyDir(
-			txn,
+			oph,
 			"", "",   // There is no backing project/folder
 			nowSeconds, nowSeconds,
 			dirReadOnlyMode, // skeleton directories are scaffolding, they cannot be modified.
 			d, true)
 		if err != nil {
-			txn.Rollback()
 			mdb.log("PopulateRoot: Error creating empty dir")
-			return err
+			return oph.RecordError(err)
 		}
 	}
 
 	// create individual files
 	for _, fl := range manifest.Files {
 		_, err := mdb.createDataObject(
+			oph,
 			CDO_NEUTRAL,
-			txn, FK_Regular, fl.ProjId, fl.FileId,
+			FK_Regular, fl.ProjId, fl.FileId,
 			fl.Size,
 			fl.CtimeSeconds, fl.MtimeSeconds,
 			fileReadOnlyMode,
 			fl.Parent, fl.Fname, "")
 		if err != nil {
-			txn.Rollback()
 			mdb.log("PopulateRoot: error creating singleton file")
-			return err
+			return oph.RecordError(err)
 		}
 	}
 
@@ -1160,25 +1131,24 @@ func (mdb *MetadataDb) PopulateRoot(ctx context.Context, manifest Manifest) erro
 			dirReadWriteMode,
 			d.Dirname, false)
 		if err != nil {
-			txn.Rollback()
 			mdb.log("PopulateRoot: error creating empty manifest directory")
-			return err
+			return oph.RecordError(err)
 		}
 	}
 
 	// set the root to be populated
 	if err := mdb.setDirectoryToPopulated(txn, InodeRoot); err != nil {
-		txn.Rollback()
 		mdb.log("PopulateRoot: error setting root directory to populated")
-		return err
+		return oph.RecordError(err)
 	}
 
-	return txn.Commit()
+	return nil
 }
 
 // We know that the parent directory exists, is populated, and the file does not exist
 func (mdb *MetadataDb) CreateFile(
 	ctx context.Context,
+	oph *OpHandle,
 	dir *Dir,
 	fileId string,
 	fname string,
@@ -1189,16 +1159,10 @@ func (mdb *MetadataDb) CreateFile(
 			dir.FullPath, fname, localPath, dir.ProjId)
 	}
 
-	// insert into the database
-	txn, err := mdb.db.Begin()
-	if err != nil {
-		mdb.log(err.Error())
-		return File{}, fmt.Errorf("CreateFile error opening transaction")
-	}
 	nowSeconds := time.Now().Unix()
 	inode, err := mdb.createDataObject(
+		oph,
 		CDO_MUST_BE_NEW,
-		txn,
 		FK_Regular,
 		dir.ProjId,
 		fileId,
@@ -1210,13 +1174,8 @@ func (mdb *MetadataDb) CreateFile(
 		fname,
 		localPath)
 	if err != nil {
-		txn.Rollback()
-		mdb.log(err.Error())
-		return File{}, fmt.Errorf("CreateFile error creating data object")
-	}
-	if err := txn.Commit(); err != nil {
-		mdb.log(err.Error())
-		return File{}, fmt.Errorf("CreateFile commit failed")
+		mdb.log("CreateFile error creating data object, %s", rr.Error())
+		return File{}, err
 	}
 
 	// 3. return a File structure
@@ -1239,16 +1198,11 @@ func (mdb *MetadataDb) CreateFile(
 // 1) the parent directory exists and is populated
 // 2) the target file
 // 3) the source i-node exists
-func (mdb *MetadataDb) CreateLink(ctx context.Context, srcFile File, dstParent Dir, name string) (File, error) {
+func (mdb *MetadataDb) CreateLink(ctx context.Context, oph *OpHandle, srcFile File, dstParent Dir, name string) (File, error) {
 	// insert into the database
-	txn, err := mdb.db.Begin()
-	if err != nil {
-		mdb.log(err.Error())
-		return File{}, fmt.Errorf("CreateFile error opening transaction")
-	}
 	_, err = mdb.createDataObject(
+		oph,
 		CDO_ALREADY_EXISTS,
-		txn,
 		FK_Regular,
 		dstParent.ProjId,
 		srcFile.Id,
@@ -1260,13 +1214,8 @@ func (mdb *MetadataDb) CreateLink(ctx context.Context, srcFile File, dstParent D
 		name,
 		"")
 	if err != nil {
-		txn.Rollback()
-		mdb.log(err.Error())
-		return File{}, fmt.Errorf("CreateLink error creating data object")
-	}
-	if err := txn.Commit(); err != nil {
-		mdb.log(err.Error())
-		return File{}, fmt.Errorf("CreateLink commit failed")
+		mdb.log("CreateLink error creating data object, err=%s", err.Error())
+		return File{}, oph.RecordError(err)
 	}
 
 	// 3. return a File structure
@@ -1288,13 +1237,7 @@ func (mdb *MetadataDb) CreateLink(ctx context.Context, srcFile File, dstParent D
 // reduce link count by one. If it reaches zero, delete the file.
 //
 // TODO: take into account the case of ForgetInode, and files that are open, but unlinked.
-func (mdb *MetadataDb) Unlink(ctx context.Context, file File) error {
-	txn, err := mdb.db.Begin()
-	if err != nil {
-		mdb.log(err.Error())
-		return fmt.Errorf("Unlink error opening transaction")
-	}
-
+func (mdb *MetadataDb) Unlink(ctx context.Context, oph *OpHandle, file File) error {
 	nlink := file.Nlink - 1
 	if nlink > 0 {
 		// reduce one from the link count. It is still positive,
@@ -1304,10 +1247,11 @@ func (mdb *MetadataDb) Unlink(ctx context.Context, file File) error {
                            SET nlink = '%d'
                            WHERE inode = '%d'`,
 			nlink, file.Inode)
-		if _, err := txn.Exec(sqlStmt); err != nil {
+		if _, err := oph.txn.Exec(sqlStmt); err != nil {
 			mdb.log(err.Error())
-			return fmt.Errorf("could not reduce the link count for inode=%d to %d",
+			mdb.log("could not reduce the link count for inode=%d to %d",
 				file.Inode, nlink)
+			return oph.RecordError(err)
 		}
 	} else {
 		// the link hit zero, we can remove the file
@@ -1315,20 +1259,22 @@ func (mdb *MetadataDb) Unlink(ctx context.Context, file File) error {
                            DELETE FROM namespace
                            WHERE inode='%d';`,
 			file.Inode)
-		if _, err := txn.Exec(sqlStmt); err != nil {
+		if _, err := oph.txn.Exec(sqlStmt); err != nil {
 			mdb.log(err.Error())
-			return fmt.Errorf("could not delete row for inode=%d from the namespace table",
+			mdb.log("could not delete row for inode=%d from the namespace table",
 				file.Inode)
+			return oph.RecordError(err)
 		}
 
 		sqlStmt = fmt.Sprintf(`
                            DELETE FROM data_objects
                            WHERE inode='%d';`,
 			file.Inode)
-		if _, err := txn.Exec(sqlStmt); err != nil {
+		if _, err := oph.txn.Exec(sqlStmt); err != nil {
 			mdb.log(err.Error())
-			return fmt.Errorf("could not delete row for inode=%d from the data_objects table",
+			mdb.log("could not delete row for inode=%d from the data_objects table",
 				file.Inode)
+			return oph.RecordError(err)
 		}
 
 		if file.Kind == RW_File || file.Kind == RO_LocalCopy {
@@ -1341,17 +1287,12 @@ func (mdb *MetadataDb) Unlink(ctx context.Context, file File) error {
 			}
 		}
 	}
-
-	if err := txn.Commit(); err != nil {
-		mdb.log(err.Error())
-		return fmt.Errorf("Unlink inode=%d commit failed", file.Inode)
-	}
-
 	return nil
 }
 
 func (mdb *MetadataDb) UpdateFile(
 	ctx context.Context,
+	oph *OpHandle,
 	f File,
 	fileSize int64,
 	modTime time.Time,
@@ -1359,13 +1300,6 @@ func (mdb *MetadataDb) UpdateFile(
 	if mdb.options.Verbose {
 		mdb.log("Update file=%v size=%d mode=%d", f, fileSize, mode)
 	}
-
-	txn, err := mdb.db.Begin()
-	if err != nil {
-		mdb.log(err.Error())
-		return fmt.Errorf("UpdateFile error opening transaction")
-	}
-
 	modTimeSec := modTime.Unix()
 	sqlStmt := fmt.Sprintf(`
  		        UPDATE data_objects
@@ -1373,38 +1307,31 @@ func (mdb *MetadataDb) UpdateFile(
 			WHERE inode = '%d';`,
 		fileSize, modTimeSec, int(mode), f.Inode)
 
-	if _, err := txn.Exec(sqlStmt); err != nil {
-		txn.Rollback()
+	if _, err := oph.txn.Exec(sqlStmt); err != nil {
 		mdb.log(err.Error())
-		return fmt.Errorf("UpdateFile error executing transaction")
+		mdb.log("UpdateFile error executing transaction")
+		return oph.RecordError(err)
 	}
-	return txn.Commit()
+	return nil
 }
 
 
-func (mdb *MetadataDb) UpdateFileMakeRemote(ctx context.Context, fileId string) error {
+func (mdb *MetadataDb) UpdateFileMakeRemote(ctx context.Context, oph *OpHandle, fileId string) error {
 	if mdb.options.Verbose {
 		mdb.log("Make file remote fileId=%s", fileId)
 	}
-
-	txn, err := mdb.db.Begin()
-	if err != nil {
-		mdb.log(err.Error())
-		return fmt.Errorf("UpdateFileMakeRemote error opening transaction")
-	}
-
 	sqlStmt := fmt.Sprintf(`
  		        UPDATE data_objects
                         SET Mode = '%d', InlineData=''
 			WHERE id = '%s';`,
 		fileReadOnlyMode, fileId)
 
-	if _, err := txn.Exec(sqlStmt); err != nil {
-		txn.Rollback()
+	if _, err := oph.txn.Exec(sqlStmt); err != nil {
 		mdb.log(err.Error())
-		return fmt.Errorf("UpdateFileMakeRemote error executing transaction")
+		mdb.log("UpdateFileMakeRemote error executing transaction")
+		return oph.RecordError(err)
 	}
-	return txn.Commit()
+	return nil
 }
 
 // Move a file
@@ -1413,31 +1340,25 @@ func (mdb *MetadataDb) UpdateFileMakeRemote(ctx context.Context, fileId string) 
 // 2) Can change the filename.
 func (mdb *MetadataDb) MoveFile(
 	ctx context.Context,
+	oph *OpHandle,
 	inode int64,
 	newParentDir Dir,
 	newName string) error {
 	if mdb.options.Verbose {
 		mdb.log("MoveFile -> %s/%s", newParentDir.FullPath, newName)
 	}
-
-	txn, err := mdb.db.Begin()
-	if err != nil {
-		mdb.log(err.Error())
-		return fmt.Errorf("MoveFile error opening transaction")
-	}
-
 	sqlStmt := fmt.Sprintf(`
  		        UPDATE namespace
                         SET parent = '%s', name = '%s'
 			WHERE inode = '%d';`,
 		newParentDir.FullPath, newName, inode)
 
-	if _, err := txn.Exec(sqlStmt); err != nil {
-		txn.Rollback()
+	if _, err := oph.txn.Exec(sqlStmt); err != nil {
 		mdb.log(err.Error())
-		return fmt.Errorf("MoveFile error executing transaction")
+		mdb.log("MoveFile error executing transaction")
+		return oph.RecordError(err)
 	}
-	return txn.Commit()
+	return nil
 }
 
 
@@ -1450,7 +1371,7 @@ type MoveRecord struct  {
 	nsObjType     int
 }
 
-func (mdb *MetadataDb) execModifyRecord(txn *sql.Tx, r MoveRecord) error {
+func (mdb *MetadataDb) execModifyRecord(oph *OpHandle, r MoveRecord) error {
 	// Modify the parent fields in the namespace table.
 	if mdb.options.Verbose {
 		mdb.log("%s -> %s/%s", r.oldFullPath, r.newParent, r.name)
@@ -1460,9 +1381,10 @@ func (mdb *MetadataDb) execModifyRecord(txn *sql.Tx, r MoveRecord) error {
                         SET parent = '%s', name = '%s'
 			WHERE inode = '%d';`,
 		r.newParent, r.name, r.inode)
-	if _, err := txn.Exec(sqlStmt); err != nil {
+	if _, err := oph.txn.Exec(sqlStmt); err != nil {
 		mdb.log(err.Error())
-		return fmt.Errorf("MoveDir error executing transaction")
+		mdb.log("MoveDir error executing transaction")
+		return oph.RecordError(err)
 	}
 
 	if r.nsObjType == nsDataObjType {
@@ -1482,7 +1404,8 @@ func (mdb *MetadataDb) execModifyRecord(txn *sql.Tx, r MoveRecord) error {
 		r.newProjFolder, r.inode)
 	if _, err := txn.Exec(sqlStmt); err != nil {
 		mdb.log(err.Error())
-		return fmt.Errorf("MoveDir error executing transaction")
+		mdb.log("MoveDir error executing transaction")
+		return oph.RecordError(err)
 	}
 	return nil
 }
@@ -1506,6 +1429,7 @@ func (mdb *MetadataDb) execModifyRecord(txn *sql.Tx, r MoveRecord) error {
 //
 func (mdb *MetadataDb) MoveDir(
 	ctx context.Context,
+	oph *OpHandle,
 	oldParentDir Dir,
 	newParentDir Dir,
 	oldDir Dir,
@@ -1520,12 +1444,6 @@ func (mdb *MetadataDb) MoveDir(
 		mdb.log("MoveDir %s -> %s/%s", oldDir.FullPath, newParentDir.FullPath, newName)
 	}
 
-	txn, err := mdb.db.Begin()
-	if err != nil {
-		mdb.log(err.Error())
-		return fmt.Errorf("MoveDir error opening transaction")
-	}
-
 	// Find all directories and data objects in the subtree rooted at
 	// the old directory. We use the SQL ability to match the prefix
 	// of a string; we add % at the end.
@@ -1534,9 +1452,9 @@ func (mdb *MetadataDb) MoveDir(
                         FROM namespace
 			WHERE parent LIKE '%s';`,
 		oldDir.FullPath + "%")
-	rows, err := txn.Query(sqlStmt)
+	rows, err := oph.txn.Query(sqlStmt)
 	if err != nil {
-		return err
+		return oph.RecordError(err)
 	}
 
 	// extract the records, close the query
@@ -1591,16 +1509,11 @@ func (mdb *MetadataDb) MoveDir(
 	}
 
 	for _, r := range records {
-		if err := mdb.execModifyRecord(txn, r); err != nil {
-			txn.Rollback()
+		if err := mdb.execModifyRecord(oph, r); err != nil {
 			return err
 		}
 	}
-
-	if mdb.options.Verbose {
-		mdb.log("commiting transaction")
-	}
-	return txn.Commit()
+	return nil
 }
 
 func (mdb *MetadataDb) Shutdown() {

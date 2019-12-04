@@ -241,7 +241,7 @@ function check_file_write_content {
 #
 function write_files {
     local src_dir=$1
-    local target_dir=$2
+    local write_dir=$2
 
     echo "write_dir = $write_dir"
     ls -l $write_dir
@@ -684,11 +684,12 @@ main() {
     target_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
     target_dir2=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
     target_dir3=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+    target_dir4=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
     faux_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
     faux_dir="faux_$faux_dir"
     expr_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
-    expr_dir="expriment_$expr_dir"
-    writeable_dirs=($target_dir $target_dir2 $target_dir3 $faux_dir $expr_dir)
+    expr_dir="expr_$expr_dir"
+    writeable_dirs=($target_dir $target_dir2 $target_dir3 $target_dir4 $faux_dir $expr_dir)
     for d in ${writeable_dirs[@]}; do
         dx rm -r $projName:/$d >& /dev/null || true
     done
@@ -747,26 +748,26 @@ main() {
 #    echo "parallel downloads"
 #    check_parallel_cat
 
-    echo "can write to a small file"
-    check_file_write_content "$mountpoint/$projName" $target_dir
-
-    echo "can write several files to a directory"
-    write_files $mountpoint/$projName/$dxDirOnProject/large $mountpoint/$projName/$target_dir
-
-    echo "can't write to read-only project"
-    write_to_read_only_project
-
-    echo "create directory"
-    create_dir $mountpoint/$projName/$dxDirOnProject/small  $mountpoint/$projName/$target_dir2
+#    echo "can write to a small file"
+#    check_file_write_content "$mountpoint/$projName" $target_dir
+#
+#    echo "can write several files to a directory"
+#    write_files $mountpoint/$projName/$dxDirOnProject/large $mountpoint/$projName/$target_dir
+#
+#    echo "can't write to read-only project"
+#    write_to_read_only_project
+#
+#    echo "create directory"
+#    create_dir $mountpoint/$projName/$dxDirOnProject/small  $mountpoint/$projName/$target_dir2
 
     echo "create/remove directory"
     create_remove_dir "yes" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$target_dir3
     create_remove_dir "no" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$target_dir3
 
     echo "mkdir rmdir"
-    rmdir_non_empty $mountpoint/$projName/$target_dir2/sunny
-    rmdir_not_exist $mountpoint/$projName/$target_dir2
-    mkdir_existing  $mountpoint/$projName/$target_dir2
+    rmdir_non_empty $mountpoint/$projName/$target_dir4/sunny
+    rmdir_not_exist $mountpoint/$projName/$target_dir4
+    mkdir_existing  $mountpoint/$projName/$target_dir4
 
     echo "file create remove"
     file_create_existing "$mountpoint/$projName"
