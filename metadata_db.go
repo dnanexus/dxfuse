@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/dnanexus/dxda"
-	"github.com/hashicorp/go-retryablehttp" // use http libraries from hashicorp for implement retry logic
 )
 
 
@@ -713,6 +712,7 @@ func (mdb *MetadataDb) createEmptyDir(
                        VALUES ('%d', '%s', '%s', '%d', '%d', '%d', '%d');`,
 		inode, projId, projFolder, boolToInt(populated), ctime, mtime, int(mode))
 	if _, err := oph.txn.Exec(sqlStmt); err != nil {
+		mdb.log(err.Error())
 		mdb.log("createEmptyDir: error inserting into directories table %d",
 			inode)
 		return 0, oph.RecordError(err)
@@ -729,13 +729,9 @@ func (mdb *MetadataDb) CreateDir(
 	mtime int64,
 	mode os.FileMode,
 	dirPath string) (int64, error) {
+	dnode, err := mdb.createEmptyDir(oph, projId, projFolder, ctime, mtime, mode, dirPath, true)
 	if err != nil {
-		mdb.log("CreateDir: error opening transaction %s", err.Error())
-		return 0, oph.RecordError(err)
-	}
-	dnode, err := mdb.createEmptyDir(txn, projId, projFolder, ctime, mtime, mode, dirPath, true)
-	if err != nil {
-		fmt.Errorf("error in create dir, rolling back transaction, %s", err.Error())
+		mdb.log("error in create dir")
 		return 0, oph.RecordError(err)
 	}
 	return dnode, nil
@@ -1116,6 +1112,7 @@ func (mdb *MetadataDb) PopulateRoot(ctx context.Context, oph *OpHandle, manifest
 			fileReadOnlyMode,
 			fl.Parent, fl.Fname, "")
 		if err != nil {
+			mdb.log(err.Error())
 			mdb.log("PopulateRoot: error creating singleton file")
 			return oph.RecordError(err)
 		}
@@ -1125,7 +1122,7 @@ func (mdb *MetadataDb) PopulateRoot(ctx context.Context, oph *OpHandle, manifest
 		// Local directory [d.Dirname] represents
 		// folder [d.Folder] on project [d.ProjId].
 		_, err := mdb.createEmptyDir(
-			txn,
+			oph,
 			d.ProjId, d.Folder,
 			d.CtimeSeconds, d.MtimeSeconds,
 			dirReadWriteMode,
@@ -1137,7 +1134,7 @@ func (mdb *MetadataDb) PopulateRoot(ctx context.Context, oph *OpHandle, manifest
 	}
 
 	// set the root to be populated
-	if err := mdb.setDirectoryToPopulated(txn, InodeRoot); err != nil {
+	if err := mdb.setDirectoryToPopulated(oph, InodeRoot); err != nil {
 		mdb.log("PopulateRoot: error setting root directory to populated")
 		return oph.RecordError(err)
 	}
@@ -1174,7 +1171,7 @@ func (mdb *MetadataDb) CreateFile(
 		fname,
 		localPath)
 	if err != nil {
-		mdb.log("CreateFile error creating data object, %s", rr.Error())
+		mdb.log("CreateFile error creating data object")
 		return File{}, err
 	}
 
@@ -1200,7 +1197,7 @@ func (mdb *MetadataDb) CreateFile(
 // 3) the source i-node exists
 func (mdb *MetadataDb) CreateLink(ctx context.Context, oph *OpHandle, srcFile File, dstParent Dir, name string) (File, error) {
 	// insert into the database
-	_, err = mdb.createDataObject(
+	_, err := mdb.createDataObject(
 		oph,
 		CDO_ALREADY_EXISTS,
 		FK_Regular,
@@ -1214,7 +1211,7 @@ func (mdb *MetadataDb) CreateLink(ctx context.Context, oph *OpHandle, srcFile Fi
 		name,
 		"")
 	if err != nil {
-		mdb.log("CreateLink error creating data object, err=%s", err.Error())
+		mdb.log("CreateLink error creating data object")
 		return File{}, oph.RecordError(err)
 	}
 
@@ -1402,7 +1399,7 @@ func (mdb *MetadataDb) execModifyRecord(oph *OpHandle, r MoveRecord) error {
                         SET proj_folder = '%s'
 			WHERE inode = '%d';`,
 		r.newProjFolder, r.inode)
-	if _, err := txn.Exec(sqlStmt); err != nil {
+	if _, err := oph.txn.Exec(sqlStmt); err != nil {
 		mdb.log(err.Error())
 		mdb.log("MoveDir error executing transaction")
 		return oph.RecordError(err)

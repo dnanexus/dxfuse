@@ -235,7 +235,7 @@ type OpHandle struct {
 }
 
 func (oph *OpHandle) RecordError(err error) error {
-	oph.err = error
+	oph.err = err
 	return err
 }
 

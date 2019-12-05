@@ -363,8 +363,10 @@ function rmdir_non_empty {
 
 # removing a non-existent directory fails
 function rmdir_not_exist {
-    local top_dir=$1
-    cd $top_dir
+    local write_dir=$1
+
+    mkdir $write_dir
+    cd $write_dir
 
     set +e
     rmdir E >& /dev/null
@@ -374,6 +376,8 @@ function rmdir_not_exist {
         echo "Error, removing non existent directory should fail"
         exit 1
     fi
+
+    rm -rf $write_dir
 }
 
 # create an existing directory fails
@@ -765,7 +769,7 @@ main() {
     create_remove_dir "no" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$target_dir3
 
     echo "mkdir rmdir"
-    rmdir_non_empty $mountpoint/$projName/$target_dir4/sunny
+    rmdir_non_empty $mountpoint/$projName/$target_dir4
     rmdir_not_exist $mountpoint/$projName/$target_dir4
     mkdir_existing  $mountpoint/$projName/$target_dir4
 

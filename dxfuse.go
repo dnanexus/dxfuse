@@ -66,7 +66,7 @@ func NewDxfuse(
 	}
 
 	// create the metadata database
-	mdb, err := NewMetadataDb(fsys.dbFullPath, dxEnv, httpIoPool, options)
+	mdb, err := NewMetadataDb(fsys.dbFullPath, dxEnv, options)
 	if err != nil {
 		return nil, err
 	}
@@ -131,9 +131,9 @@ func (fsys *Filesys) OpOpen() *OpHandle {
 }
 
 func (fsys *Filesys) OpClose(oph *OpHandle) {
-	fsys.httpClientPool <- foh.httpClient
+	fsys.httpClientPool <- oph.httpClient
 
-	if foh.err == nil {
+	if oph.err == nil {
 		err := oph.txn.Commit()
 		if err != nil {
 			panic("could not commit transaction")
@@ -863,6 +863,8 @@ func (fsys *Filesys) renameDir(
 	newParentDir Dir,
 	oldDir Dir,
 	newName string) error {
+	projId := oldParentDir.ProjId
+
 	if oldParentDir.Inode == newParentDir.Inode {
 		// rename a folder, but leave it under the same parent
 		err := DxRenameFolder(
@@ -1383,7 +1385,7 @@ func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp,
 	return nil
 }
 
-func (fsys *Filesys) ReadFile(ctx context.Context, oph *OpHandle, op *fuseops.ReadFileOp) error {
+func (fsys *Filesys) ReadFile(ctx context.Context, op *fuseops.ReadFileOp) error {
 	// Here, we start from the file handle
 	fsys.mutex.Lock()
 	fh,ok := fsys.fhTable[op.Handle]
