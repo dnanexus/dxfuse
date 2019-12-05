@@ -4,12 +4,19 @@
 ## constants
 
 projName="dxfuse_test_data"
-dxDirOnProject="correctness"
+
+if [[ $DX_JOB_ID == "" ]]; then
+    # small test for a remote laptop
+    dxDirOnProject="correctness_mini"
+else
+    # larger test for a cloud worker
+    dxDirOnProject="correctness"
+fi
 
 baseDir="$HOME/dxfuse_test"
 mountpoint="${baseDir}/MNT"
 
-dxfuseDir="$mountpoint/$projName/$dxDirOnProject"
+dxfuseDir=$mountpoint/$projName/$dxDirOnProject
 dxpyDir="${baseDir}/dxCopy/$dxDirOnProject"
 
 ######################################################################
@@ -49,7 +56,7 @@ function check_cmd_line_utils {
     d=$(pwd)
 
     cd $dxfuseDir
-    files=$(find dxWDL_source_code -type f)
+    files=$(find . -type f)
     cd $d
 
     for f in $files; do
@@ -98,8 +105,8 @@ function check_cmd_line_utils {
 }
 
 function check_find {
-    find $dxfuseDir -type f -name "*.conf" > 1.txt
-    find $dxpyDir -type f -name "*.conf" > 2.txt
+    find $dxfuseDir -type f -name "*.wdl" > 1.txt
+    find $dxpyDir -type f -name "*.wdl" > 2.txt
 
     # each line starts with the directory name. those are different, so we normliaze them
     sed -i "s/MNT/dxCopy/g" 1.txt
@@ -123,8 +130,8 @@ function check_find {
 }
 
 function check_grep {
-    grep --directories=skip -R "stream" $dxfuseDir/dxWDL_source_code/src > 1.txt
-    grep --directories=skip -R "stream" $dxpyDir/dxWDL_source_code/src > 2.txt
+    grep -R --include="*.wdl" "task" $dxfuseDir > 1.txt
+    grep -R --include="*.wdl" "task" $dxpyDir > 2.txt
 
     # each line starts with the directory name. those are different, so we normliaze them
 
@@ -234,7 +241,7 @@ function check_file_write_content {
 #
 function write_files {
     local src_dir=$1
-    local target_dir=$2
+    local write_dir=$2
 
     echo "write_dir = $write_dir"
     ls -l $write_dir
@@ -356,8 +363,10 @@ function rmdir_non_empty {
 
 # removing a non-existent directory fails
 function rmdir_not_exist {
-    local top_dir=$1
-    cd $top_dir
+    local write_dir=$1
+
+    mkdir $write_dir
+    cd $write_dir
 
     set +e
     rmdir E >& /dev/null
@@ -367,6 +376,8 @@ function rmdir_not_exist {
         echo "Error, removing non existent directory should fail"
         exit 1
     fi
+
+    rm -rf $write_dir
 }
 
 # create an existing directory fails
@@ -677,11 +688,12 @@ main() {
     target_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
     target_dir2=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
     target_dir3=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+    target_dir4=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
     faux_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
     faux_dir="faux_$faux_dir"
     expr_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
-    expr_dir="expriment_$expr_dir"
-    writeable_dirs=($target_dir $target_dir2 $target_dir3 $faux_dir $expr_dir)
+    expr_dir="expr_$expr_dir"
+    writeable_dirs=($target_dir $target_dir2 $target_dir3 $target_dir4 $faux_dir $expr_dir)
     for d in ${writeable_dirs[@]}; do
         dx rm -r $projName:/$d >& /dev/null || true
     done
@@ -696,10 +708,10 @@ main() {
     if [[ $verbose != "" ]]; then
         flags="-verbose 2"
     fi
-    sudo -E $dxfuse $flags $mountpoint dxfuse_test_data dxfuse_test_read_only
+    sudo -E $dxfuse -uid $(id -u) -gid $(id -g) $flags $mountpoint dxfuse_test_data dxfuse_test_read_only
 
-    echo "comparing symlink content"
-    compare_symlink_content
+#    echo "comparing symlink content"
+#    compare_symlink_content
 
     echo "download recursively with dx download"
     dxTrgDir="${baseDir}/dxCopy"
@@ -757,9 +769,9 @@ main() {
     create_remove_dir "no" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$target_dir3
 
     echo "mkdir rmdir"
-    rmdir_non_empty $mountpoint/$projName/$target_dir2/sunny
-    rmdir_not_exist $mountpoint/$projName/$target_dir2
-    mkdir_existing  $mountpoint/$projName/$target_dir2
+    rmdir_non_empty $mountpoint/$projName/$target_dir4
+    rmdir_not_exist $mountpoint/$projName/$target_dir4
+    mkdir_existing  $mountpoint/$projName/$target_dir4
 
     echo "file create remove"
     file_create_existing "$mountpoint/$projName"
