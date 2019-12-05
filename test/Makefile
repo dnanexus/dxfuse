@@ -16,6 +16,7 @@ copy_all : dxfuse
 	cp -f dxfuse dxfuse_benchmark/resources/usr/bin/
 	mkdir -p dxfuse_correctness/resources/usr/bin
 	cp -f dxfuse dxfuse_correctness/resources/usr/bin/
+	cp -f test_routines.sh dxfuse_correctness/code.sh
 
 clean :
 	rm -f dxfuse

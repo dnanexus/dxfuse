@@ -23,7 +23,6 @@ const (
 	slowIoThresh = 60 // when does a slow IO become worth reporting
 
 	prefetchMinIoSize = (256 * KiB)   // threshold for deciding the file is sequentially accessed
-	prefetchMaxIoSize = (16 * MiB)    // maximal size of prefetch IO
 	prefetchIoFactor = 4
 
 	numSlotsInChunk = 64
@@ -35,7 +34,7 @@ const (
 	// maximum number of prefetch threads, regardless of machine size
 	maxNumPrefetchThreads = 32
 
-	minFileSize = 2 * MiB     // do not track files smaller than this size
+	minFileSize = 1 * MiB     // do not track files smaller than this size
 
 	// An prefetch request time limit
 	readRequestTimeout = 90 * time.Second
@@ -120,15 +119,16 @@ type PrefetchFileMetadata struct {
 
 // global limits
 type PrefetchGlobalState struct {
-	mutex         sync.Mutex  // Lock used to control the files table
-	verbose       bool
-	verboseLevel  int
-	files         map[File](*PrefetchFileMetadata) // tracking state per file-id
-	ioQueue       chan IoReq    // queue of IOs to prefetch
-	wg            sync.WaitGroup
-	numPrefetchThreads int
+	mutex                 sync.Mutex  // Lock used to control the files table
+	verbose               bool
+	verboseLevel          int
+	files                 map[File](*PrefetchFileMetadata) // tracking state per file-id
+	ioQueue               chan IoReq    // queue of IOs to prefetch
+	wg                    sync.WaitGroup
+	prefetchMaxIoSize     int64
+	numPrefetchThreads    int
 	maxNumChunksReadAhead int
-	ioCounter     uint64
+	ioCounter             uint64
 }
 
 func fileDesc(f File) string {
@@ -190,7 +190,7 @@ func (pgs *PrefetchGlobalState) log(a string, args ...interface{}) {
 	LogMsg("prefetch", a, args...)
 }
 
-func NewPrefetchGlobalState(verboseLevel int) *PrefetchGlobalState {
+func NewPrefetchGlobalState(verboseLevel int, dxEnv dxda.DXEnvironment) *PrefetchGlobalState {
 	// We want to:
 	// 1) allow all streams to have a worker available
 	// 2) not have more than two workers per CPU
@@ -203,12 +203,27 @@ func NewPrefetchGlobalState(verboseLevel int) *PrefetchGlobalState {
 	maxNumChunksReadAhead := MinInt(8, numPrefetchThreads-1)
 	maxNumChunksReadAhead = MaxInt(1, maxNumChunksReadAhead)
 
+	// determine the maximal size of a prefetch IO.
+	//
+	// TODO: make this dynamic based on network performance.
+	var prefetchMaxIoSize int64
+	if dxEnv.DxJobId == "" {
+		// on a remote machine the timeouts are too great
+		// for large IO sizes. It is common to see 90 second
+		// IOs.
+		prefetchMaxIoSize = 1 * MiB
+	} else {
+		// on a worker we can use large sizes, because
+		// we have a good network connection to S3 and dnanexus servers
+		prefetchMaxIoSize = 16 * MiB
+	}
+
 	// calculate how much memory will be used in the worst cast.
 	// - Each stream uses two chunks.
 	// - In addition, we are spreading around [maxNumChunksReadAhead] chunks.
 	// Each chunk could be as large as [prefetchMaxIoSize].
 	totalMemoryBytes := 2 * maxNumEntriesInTable * prefetchMaxIoSize
-	totalMemoryBytes += maxNumChunksReadAhead * prefetchMaxIoSize
+	totalMemoryBytes += int64(maxNumChunksReadAhead) * prefetchMaxIoSize
 
 	log.Printf("maximal memory usage: %dMiB", totalMemoryBytes / MiB)
 	log.Printf("number of prefetch worker threads: %d", numPrefetchThreads)
@@ -219,6 +234,7 @@ func NewPrefetchGlobalState(verboseLevel int) *PrefetchGlobalState {
 		verboseLevel : verboseLevel,
 		files : make(map[File](*PrefetchFileMetadata)),
 		ioQueue : make(chan IoReq),
+		prefetchMaxIoSize : prefetchMaxIoSize,
 		numPrefetchThreads: numPrefetchThreads,
 		maxNumChunksReadAhead : maxNumChunksReadAhead,
 	}
@@ -708,7 +724,7 @@ func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIn
 				endByte : iov.endByte,
 				id : uniqueId,
 			}
-			check(iov.ioSize <= prefetchMaxIoSize)
+			check(iov.ioSize <= pgs.prefetchMaxIoSize)
 			pfm.cache.iovecs = append(pfm.cache.iovecs, iov)
 
 			if pgs.verbose {
@@ -795,11 +811,11 @@ func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 		}
 
 		// increase io size, using a bounded exponential formula
-		if pfm.cache.prefetchIoSize < prefetchMaxIoSize {
+		if pfm.cache.prefetchIoSize < pgs.prefetchMaxIoSize {
 			pfm.cache.prefetchIoSize =
-				MinInt64(prefetchMaxIoSize, pfm.cache.prefetchIoSize * prefetchIoFactor)
+				MinInt64(pgs.prefetchMaxIoSize, pfm.cache.prefetchIoSize * prefetchIoFactor)
 		}
-		if pfm.cache.prefetchIoSize == prefetchMaxIoSize {
+		if pfm.cache.prefetchIoSize == pgs.prefetchMaxIoSize {
 			// Give each stream at least one read-ahead request. If there
 			// are only a few streams, we can give more.
 			nStreams := len(pgs.files)

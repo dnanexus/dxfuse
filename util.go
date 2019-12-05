@@ -1,6 +1,7 @@
 package dxfuse
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"os"
@@ -22,7 +23,7 @@ const (
 	MaxDirSize         = 10 * 1000
 	MaxNumFileHandles  = 1000 * 1000
 	NumRetriesDefault  = 3
-	Version            = "v0.13"
+	Version            = "v0.14"
 )
 const (
 	InodeInvalid       = 0
@@ -123,9 +124,12 @@ type Dir struct {
 	Gid         uint32
 
 	// extra information, used internally
-	ProjId     string
-	ProjFolder string
+	ProjId      string
+	ProjFolder  string
 	Populated   bool
+
+	// is this a faux dir?
+	faux        bool
 }
 
 func (d Dir) GetAttrs() (a fuseops.InodeAttributes) {
@@ -222,6 +226,18 @@ type DirHandle struct {
 	entries []fuseutil.Dirent
 }
 
+// A handle used when operating on a filesystem
+// operation. We normally need a transaction and an http client.
+type OpHandle struct {
+	httpClient *retryablehttp.Client
+	txn        *sql.Tx
+	err         error
+}
+
+func (oph *OpHandle) RecordError(err error) error {
+	oph.err = err
+	return err
+}
 
 // Utility functions
 

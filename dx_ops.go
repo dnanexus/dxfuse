@@ -296,3 +296,201 @@ func dxFileUploadPart(
 	_, err = dxda.DxHttpRequest(ctx, httpClient, NumRetriesDefault, "PUT", reply.Url, reply.Headers, data)
 	return err
 }
+
+
+type RequestRename struct {
+	ProjId string  `json:"project"`
+	Name   string  `json:"name"`
+}
+
+type ReplyRename struct {
+	Id string `json:"id"`
+}
+
+//  API method: /class-xxxx/rename
+//
+//  rename a data object
+func DxRename(
+	ctx context.Context,
+	httpClient *retryablehttp.Client,
+	dxEnv *dxda.DXEnvironment,
+	projId string,
+	fileId string,
+	newName string) error {
+
+	var request RequestRename
+	request.ProjId = projId
+	request.Name = newName
+
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return err
+	}
+	repJs, err := dxda.DxAPI(
+		ctx, httpClient, NumRetriesDefault, dxEnv,
+		fmt.Sprintf("%s/rename", fileId),
+		string(payload))
+	if err != nil {
+		return err
+	}
+
+	var reply ReplyRename
+	if err := json.Unmarshal(repJs, &reply); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+
+type RequestMove struct {
+	Objects    []string `json:"objects"`
+	Folders    []string `json:"folders"`
+	Destination  string `json:"destination"`
+}
+
+type ReplyMove struct {
+	Id string `json:"id"`
+}
+
+//  API method: /class-xxxx/move
+//
+// Moves the specified data objects and folders to a destination folder in the same container.
+func DxMove(
+	ctx context.Context,
+	httpClient *retryablehttp.Client,
+	dxEnv *dxda.DXEnvironment,
+	projId      string,
+	objectIds []string,
+	folders   []string,
+	destination string) error {
+
+	LogMsg("dx_ops", "%s source folders=%v  -> %s", projId, folders, destination)
+	var request RequestMove
+	request.Objects = objectIds
+	request.Folders = folders
+	request.Destination = destination
+
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return err
+	}
+	repJs, err := dxda.DxAPI(
+		ctx, httpClient, NumRetriesDefault, dxEnv,
+		fmt.Sprintf("%s/move", projId),
+		string(payload))
+	if err != nil {
+		return err
+	}
+
+	var reply ReplyMove
+	if err := json.Unmarshal(repJs, &reply); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+type RequestRenameFolder struct {
+	Folder string `json:"folder"`
+	Name   string `json:"name"`
+}
+
+type ReplyRenameFolder struct {
+	Id string `json:"id"`
+}
+
+func DxRenameFolder(
+	ctx context.Context,
+	httpClient *retryablehttp.Client,
+	dxEnv *dxda.DXEnvironment,
+	projId string,
+	folder string,
+	newName string) error {
+
+	var request RequestRenameFolder
+	request.Folder = folder
+	request.Name = newName
+
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return err
+	}
+
+	repJs, err := dxda.DxAPI(
+		ctx, httpClient, NumRetriesDefault, dxEnv,
+		fmt.Sprintf("%s/renameFolder", projId),
+		string(payload))
+	if err != nil {
+		return err
+	}
+
+	var reply ReplyRenameFolder
+	if err := json.Unmarshal(repJs, &reply); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+
+type RequestClone struct {
+	Objects []string `json:"objects"`
+	Folders []string `json:"folders"`
+	Project string   `json:"project"`
+	Destination string `json:"destination"`
+	Parents bool     `json:"parents"`
+}
+
+type ReplyClone struct {
+	Id string `json:"id"`
+	Project string `json:"project"`
+	Exists []string `json:"exists"`
+}
+
+func DxClone(
+	ctx context.Context,
+	httpClient *retryablehttp.Client,
+	dxEnv *dxda.DXEnvironment,
+	srcProjId string,
+	srcId string,
+	destProjId string,
+	destProjFolder string) (bool, error) {
+
+	var request RequestClone
+	objs := make([]string, 1)
+	objs[0] = srcId
+	request.Objects = objs
+	request.Folders = make([]string, 0)
+	request.Project = destProjId
+	request.Destination = destProjFolder
+	request.Parents = false
+
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return false, err
+	}
+
+	repJs, err := dxda.DxAPI(
+		ctx, httpClient, NumRetriesDefault, dxEnv,
+		fmt.Sprintf("%s/clone", srcProjId),
+		string(payload))
+	if err != nil {
+		return false, err
+	}
+
+	var reply ReplyClone
+	if err := json.Unmarshal(repJs, &reply); err != nil {
+		return false, err
+	}
+
+	for _,id := range reply.Exists {
+		if id == srcId {
+			// was not copied, because there is an existing
+			// copy in the destination project.
+			return false, nil
+		}
+	}
+
+	return true, nil
+}
