@@ -101,7 +101,7 @@ go build -o /go/bin/dxfuse /go/src/github.com/dnanexus/cmd/main.go
 
 To mount a dnanexus project `mammals` on local directory `/home/jonas/foo` do:
 ```
-sudo dxfuse /home/jonas/foo mammals
+sudo dxfuse -uid $(id -u) -gid $(id -g) /home/jonas/foo mammals
 ```
 
 The bootstrap process has some asynchrony, so it could take it a
@@ -137,13 +137,15 @@ sudo umount MOUNT-POINT
 
 ## Mac OS (OSX)
 
-For OSX you will need to install [OSXFUSE](http://osxfuse.github.com/). This is a requirement of
-[bazil.org/fuse](https://godoc.org/bazil.org/fuse).
+For OSX you will need to install [OSXFUSE](http://osxfuse.github.com/).
 
 # Common problems
 
 If a project appears empty, or is missing files, it could be that the dnanexus token does not have permissions for it. Try to see if you can do `dx ls YOUR_PROJECT:`.
 
+If you do not set the `uid` and `gid` options then creating hard links
+will fail on Linux. This is because it will fail the kernel's
+permissions check.
 
 # Known filesystem issues
 

@@ -7,7 +7,7 @@ projName="dxfuse_test_data"
 
 if [[ $DX_JOB_ID == "" ]]; then
     # small test for a remote laptop
-    dxDirOnProject="correctness_mini"
+    dxDirOnProject="mini"
 else
     # larger test for a cloud worker
     dxDirOnProject="correctness"
@@ -710,8 +710,8 @@ main() {
     fi
     sudo -E $dxfuse -uid $(id -u) -gid $(id -g) $flags $mountpoint dxfuse_test_data dxfuse_test_read_only
 
-#    echo "comparing symlink content"
-#    compare_symlink_content
+    echo "comparing symlink content"
+    compare_symlink_content
 
     echo "download recursively with dx download"
     parentDxpyDir=$(dirname $dxpyDir)
