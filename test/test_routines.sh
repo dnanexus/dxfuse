@@ -710,15 +710,15 @@ main() {
     fi
     sudo -E $dxfuse -uid $(id -u) -gid $(id -g) $flags $mountpoint dxfuse_test_data dxfuse_test_read_only
 
-if [[ 0 == 1 ]]; then
-    echo "comparing symlink content"
-    compare_symlink_content
-fi
+#    echo "comparing symlink content"
+#    compare_symlink_content
 
     echo "download recursively with dx download"
-    if [[ ! -d $dxfuseDir ]]; then
-        echo "downloading into $dxfuseDir from $projName:/$dxDirOnProject"
-        dx download --no-progress -o $dxfuseDir -r $projName:/$dxDirOnProject/*
+    parentDxpyDir=$(dirname $dxpyDir)
+    if [[ ! -d $parentDxpyDir ]]; then
+        echo "downloading into $parentDxpyDir from $projName:/$dxDirOnProject"
+        mkdir -p $parentDxpyDir
+        dx download --no-progress -o $parentDxpyDir -r $projName:/$dxDirOnProject
     fi
 
     # do not exit immediately if there are differences; we want to see the files
