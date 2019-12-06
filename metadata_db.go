@@ -939,7 +939,8 @@ func (mdb *MetadataDb) directoryReadFromDNAx(
 	// to fix the elements in the directory, so they would comply. This
 	// comes at the cost of renaming the original files, which can
 	// very well mislead the user.
-	posixDir, err := PosixFixDir(mdb.options, dxDir)
+	px := NewPosix(mdb.options)
+	posixDir, err := px.FixDir(dxDir)
 	if err != nil {
 		return err
 	}

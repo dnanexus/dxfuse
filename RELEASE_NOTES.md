@@ -1,5 +1,9 @@
 # Release Notes
 
+## v0.15
+- Make the prefetch algorithm recognize cases where the file is read from the middle. This
+allows sambamba to work with sequential prefetch.
+
 ## v0.14
 Initializing the filesystem with a subprocess. The dxfuse program spawns a subprocess that runs
 the actual filesystem. The main program waits for the subprocess to start and then returns the status.
