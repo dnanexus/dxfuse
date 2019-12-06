@@ -30,8 +30,18 @@ type PosixDir struct {
 	fauxSubdirs  map[string]([]DxDescribeDataObject)
 }
 
+type Posix struct {
+	options Options
+}
+
+func NewPosix(options Options) *Posix {
+	return &Posix{
+		options : options,
+	}
+}
+
 // write a log message, and add a header
-func posixLog(a string, args ...interface{}) {
+func (px *Posix) log(a string, args ...interface{}) {
 	LogMsg("posix", a, args...)
 }
 
@@ -43,18 +53,23 @@ func FilenameIsPosixCompliant(filename string) bool {
 }
 
 // Slashes cannot be included in a posix filename. Replace them with a triple underscore.
-func filenameNormalize(filename string) string {
+func (px *Posix) filenameNormalize(filename string) string {
 	return strings.ReplaceAll(filename, "/", "___")
 }
 
 // Choose a directory name that is unused.
-func chooseFauxDirName(usedNames map[string]bool, counter *int) string {
-	posixLog("chooseFauxDirName used=%v counter=%d", usedNames, *counter)
+func (px *Posix) chooseFauxDirName(usedNames map[string]bool, counter *int) string {
+	if px.options.Verbose {
+		px.log("chooseFauxDirName used=%v counter=%d", usedNames, *counter)
+	}
 	maxNumIter := len(usedNames) + 1
 
 	for i := 0; i <= maxNumIter; i++ {
 		tentativeName := strconv.Itoa(*counter)
-		posixLog("choose dir name=%s", tentativeName)
+		if px.options.VerboseLevel > 1 {
+			px.log("choose dir name=%s", tentativeName)
+		}
+
 		_, ok := usedNames[tentativeName]
 		if !ok {
 			// name has not been used yet
@@ -95,9 +110,9 @@ func makeCut(dxObjs []DxDescribeDataObject) ([]DxDescribeDataObject, []DxDescrib
 //
 // 1. Keep directory names fixed
 // 2. Change file names to not collide with directories, or with each other.
-func PosixFixDir(options Options, dxFolder *DxFolder) (*PosixDir, error) {
-	if options.VerboseLevel > 1 {
-		posixLog("PosixFixDir %s #objects=%d #subdirs=%d",
+func (px *Posix) FixDir(dxFolder *DxFolder) (*PosixDir, error) {
+	if px.options.VerboseLevel > 1 {
+		px.log("PosixFixDir %s #objects=%d #subdirs=%d",
 			dxFolder.path,
 			len(dxFolder.dataObjects),
 			len(dxFolder.subdirs))
@@ -113,19 +128,19 @@ func PosixFixDir(options Options, dxFolder *DxFolder) (*PosixDir, error) {
 		lastPart := strings.TrimPrefix(subDirName, dxFolder.path)
 		lastPart = strings.TrimPrefix(lastPart,"/")
 		if strings.Contains(lastPart, "/") {
-			posixLog("Dropping subdirectory %s, it contains a slash", lastPart)
+			px.log("Dropping subdirectory %s, it contains a slash", lastPart)
 			continue
 		}
 		if lastPart != filepath.Base(subDirName) {
-			posixLog("Dropping subdirectory %s, it isn't the same as Base(d)=%s",
+			px.log("Dropping subdirectory %s, it isn't the same as Base(d)=%s",
 				lastPart, filepath.Base(subDirName))
 			continue
 		}
 
 		subdirs = append(subdirs, filepath.Base(subDirName))
 	}
-	if options.VerboseLevel > 1 {
-		posixLog("subdirs = %v", subdirs)
+	if px.options.VerboseLevel > 1 {
+		px.log("subdirs = %v", subdirs)
 	}
 
 	// convert the map into an array. Normalize any non Posix names.
@@ -135,7 +150,7 @@ func PosixFixDir(options Options, dxFolder *DxFolder) (*PosixDir, error) {
 
 		if !FilenameIsPosixCompliant(objNorm.Name) {
 			// we need to normalize the name
-			objNorm.Name = filenameNormalize(objNorm.Name)
+			objNorm.Name = px.filenameNormalize(objNorm.Name)
 		}
 		allDxObjs = append(allDxObjs, objNorm)
 	}
@@ -143,8 +158,8 @@ func PosixFixDir(options Options, dxFolder *DxFolder) (*PosixDir, error) {
 	// Take all the data-objects that appear just once. There will be placed
 	// at the toplevel.
 	nonUniqueNamedObjs, topLevelObjs := makeCut(allDxObjs)
-	if options.VerboseLevel > 1 {
-		posixLog("make cut: nonUniqueObj=%v topLevelObjs=%v", nonUniqueNamedObjs, topLevelObjs)
+	if px.options.VerboseLevel > 1 {
+		px.log("make cut: nonUniqueObj=%v topLevelObjs=%v", nonUniqueNamedObjs, topLevelObjs)
 	}
 
 	// Iteratively, take unique files from the remaining objects, and place them in
@@ -159,11 +174,11 @@ func PosixFixDir(options Options, dxFolder *DxFolder) (*PosixDir, error) {
 	remaining := nonUniqueNamedObjs
 	for len(remaining) > 0 {
 		notChosenThisTime, uniqueObjs := makeCut(remaining)
-		fauxDir := chooseFauxDirName(usedSubdirNames, &fauxDirCounter)
+		fauxDir := px.chooseFauxDirName(usedSubdirNames, &fauxDirCounter)
 		fauxSubdirs[fauxDir] = uniqueObjs
 
-		if options.VerboseLevel > 1 {
-			posixLog("fauxDir=%s  len(remainingObjs)=%d  len(uniqueObjs)=%d",
+		if px.options.VerboseLevel > 1 {
+			px.log("fauxDir=%s  len(remainingObjs)=%d  len(uniqueObjs)=%d",
 				fauxDir, len(notChosenThisTime), len(uniqueObjs))
 		}
 
@@ -181,6 +196,5 @@ func PosixFixDir(options Options, dxFolder *DxFolder) (*PosixDir, error) {
 		subdirs: subdirs,
 		fauxSubdirs: fauxSubdirs,
 	}
-	posixLog("posix folder: %v", posixDxFolder)
 	return posixDxFolder, nil
 }

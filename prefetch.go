@@ -40,13 +40,16 @@ const (
 	readRequestTimeout = 90 * time.Second
 )
 
+// enumerated type for the state of a PFM (file metadata)
 const (
-	// enumerated type for the state of a PFM (file metadata)
-	PFM_DETECT_SEQ = 1      // Beginning of the file, detecting if access is sequential
-	PFM_PREFETCH_IN_PROGRESS = 2  // normal case --- prefetch is ongoing
-	PFM_EOF = 3   // reached the end of the file
+	PFM_NIL = 1                  // No IOs have been seen yet, cache is empty
+	PFM_DETECT_SEQ = 2           // First accesses, detecting if access is sequential
+	PFM_PREFETCH_IN_PROGRESS = 3 // prefetch is ongoing
+	PFM_EOF = 4                  // reached the end of the file
+)
 
-	// state of an io-vector
+// state of an io-vector
+const (
 	IOV_HOLE = 1      // empty
 	IOV_IN_FLIGHT = 2 // in progress
 	IOV_DONE = 3      // completed successfully
@@ -545,28 +548,48 @@ func (pgs *PrefetchGlobalState) newPrefetchFileMetadata(f File, url DxDownloadUR
 	pfm.sequentiallyAccessed = false
 	pfm.mw.timestamp = time.Now()
 
-	// Initial state of the file; detect if it is accessed sequentially.
-	pfm.state = PFM_DETECT_SEQ
+	// Initial state of the file; not IOs were detected yet
+	pfm.state = PFM_NIL
 
-	// setup so we can detect a sequential stream.
-	// There is no data held in cache yet.
-	pfm.cache = Cache{
-		prefetchIoSize : prefetchMinIoSize,
-		maxNumIovecs : 2,
-		startByte : 0,
-		endByte : prefetchMinIoSize - 1,
-		iovecs : make([](*Iovec), 1),
+	return &pfm
+}
+
+// setup so we can detect a sequential stream.
+// There is no data held in cache yet.
+func (pgs *PrefetchGlobalState) firstAccessToStream(pfm *PrefetchFileMetadata, ofs int64) {
+	if pgs.verbose {
+		pfm.log("first IO %d", ofs)
 	}
-	pfm.cache.iovecs[0] = &Iovec{
-		ioSize : pfm.cache.endByte - pfm.cache.startByte + 1,
-		startByte : pfm.cache.startByte,
-		endByte : pfm.cache.endByte,
+
+	startOfs := (ofs / prefetchMinIoSize) * prefetchMinIoSize
+
+	iov1 := &Iovec{
+		ioSize : prefetchMinIoSize,
+		startByte : startOfs,
+		endByte : startOfs + prefetchMinIoSize - 1,
 		touched : 0,
 		data : nil,
 		state : IOV_HOLE,
 		cond : sync.NewCond(&pfm.mutex),
 	}
-	return &pfm
+	iov2 := &Iovec{
+		ioSize : prefetchMinIoSize,
+		startByte : iov1.startByte + prefetchMinIoSize,
+		endByte : iov1.endByte + prefetchMinIoSize,
+		touched : 0,
+		data : nil,
+		state : IOV_HOLE,
+		cond : sync.NewCond(&pfm.mutex),
+	}
+	pfm.cache = Cache{
+		prefetchIoSize : prefetchMinIoSize,
+		maxNumIovecs : 2,
+		startByte : iov1.startByte,
+		endByte : iov2.endByte,
+		iovecs : make([]*Iovec, 2),
+	}
+	pfm.cache.iovecs[0] = iov1
+	pfm.cache.iovecs[1] = iov2
 }
 
 func (pgs *PrefetchGlobalState) CreateStreamEntry(f File, url DxDownloadURL) {
@@ -749,9 +772,9 @@ func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIn
 				// it can be discarded.
 				if pfm.state == PFM_PREFETCH_IN_PROGRESS {
 					// Estimate if the file is sequentially accessed,
-					// by checking if the chunk we are discarding was fully accessed.
+					// by checking if the chunk we are discarding was mostly accessed.
 					numAccessed := bits.OnesCount64(pfm.cache.iovecs[i].touched)
-					fullyAccessed := (numAccessed == numSlotsInChunk)
+					fullyAccessed := (numSlotsInChunk/2 <= numAccessed)
 					pfm.sequentiallyAccessed = pfm.sequentiallyAccessed && fullyAccessed
 				}
 				nRemoved++
@@ -971,6 +994,12 @@ func (pgs *PrefetchGlobalState) CacheLookup(f File, startOfs int64, endOfs int64
 	pfm.mw.numIOs++
 
 	switch pfm.state {
+	case PFM_NIL:
+		pgs.firstAccessToStream(pfm, startOfs)
+		pfm.state = PFM_DETECT_SEQ
+		pgs.markAccessedAndMaybeStartPrefetch(pfm, startOfs, endOfs)
+		return false, 0
+
 	case PFM_DETECT_SEQ:
 		// No data is cached. Only detecting if there is sequential access.
 		pgs.markAccessedAndMaybeStartPrefetch(pfm, startOfs, endOfs)

@@ -193,7 +193,6 @@ func parseCmdLineArgs() Config {
 		os.Exit(2)
 	}
 	mountpoint := flag.Arg(0)
-
 	uid,gid := initUidGid(*uid, *gid)
 
 	options := dxfuse.Options{
@@ -225,6 +224,21 @@ result in the filesystem freezing, or being unmounted.
 		mountpoint : mountpoint,
 		dxEnv : dxEnv,
 		options : options,
+	}
+}
+
+func validateConfig(cfg Config) {
+	fileInfo, err := os.Stat(cfg.mountpoint)
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Printf("error, mountpoint %s does not exist\n", cfg.mountpoint)
+			os.Exit(1)
+		}
+		fmt.Printf("error opening mountpoint %s %s", cfg.mountpoint, err.Error())
+	}
+	if !fileInfo.IsDir() {
+		fmt.Printf("error, mountpoint %s is not a directory\n", cfg.mountpoint)
+		os.Exit(1)
 	}
 }
 
@@ -286,6 +300,7 @@ func main() {
 	flag.Usage = usage
 	flag.Parse()
 	cfg := parseCmdLineArgs()
+	validateConfig(cfg)
 
 	if isActual() {
 		manifest, err := parseManifest(cfg)
@@ -302,7 +317,6 @@ func main() {
 		}
 		return
 	}
-
 
 	// Set up a pipe for the "ready" status.
 	errorReader, errorWriter, err := os.Pipe()
@@ -332,11 +346,13 @@ func main() {
 		fmt.Printf("failed to start filesystem daemon: %v\n", err)
 		os.Exit(1)
 	}
-	time.Sleep(2 * time.Second)
 
-	// Wait for the tool to say the file system is ready. In parallel, watch for
-	// the tool to fail.
+	// Wait for the tool to say the file system is ready.
 	fmt.Println("wait for ready")
+
+	// This is needed for older versions of mac?
+	time.Sleep(1 * time.Second)
+
 	readyChan := make(chan string, 1)
 	go waitForReady(errorReader, readyChan)
 
