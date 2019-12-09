@@ -50,7 +50,7 @@ There are several limitations currently:
 ## Implementation
 
 The implementation uses an [sqlite](https://www.sqlite.org/index.html)
-database, located on `/var/dxfs/metadata.db`. It stores files and
+database, located on `/var/dxuse/metadata.db`. It stores files and
 directories in tables, indexed to speed up common queries.
 
 Load on the DNAx API servers and the cloud object system is carefully controlled. Bulk calls
