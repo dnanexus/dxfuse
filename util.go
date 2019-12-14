@@ -39,7 +39,8 @@ const (
 	// we need to use 777 permissions for directories.
 	dirReadOnlyMode = 0555 | os.ModeDir
 	dirReadWriteMode = 0777 | os.ModeDir
-	fileReadOnlyMode = 0444
+//	fileReadOnlyMode = 0444
+	fileReadWriteMode = 0644
 )
 
 // A URL generated with the /file-xxxx/download API call, that is
@@ -200,9 +201,12 @@ func (f File) GetInode() fuseops.InodeID {
 
 // Files can be opened in read-only mode, or read-write mode.
 const (
-	RO_Remote = 1     // read only file that is on the cloud
-	RW_File = 2       // newly created file
-	RO_LocalCopy = 3  // read only file that has a local copy
+	// read only file that is on the cloud
+	FKIND_REMOTE = 1
+
+	// file with a local copy. It may be updated,
+	// in which case the entire file needs to be uploaded.
+	FKIND_LOCAL = 2
 )
 
 type FileHandle struct {

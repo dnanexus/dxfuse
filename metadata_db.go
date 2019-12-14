@@ -1275,7 +1275,7 @@ func (mdb *MetadataDb) Unlink(ctx context.Context, oph *OpHandle, file File) err
 			return oph.RecordError(err)
 		}
 
-		if file.Kind == RW_File || file.Kind == RO_LocalCopy {
+		if file.Kind == FKIND_LOCAL {
 			// remove the file data so it does not take up space on disk.
 			// This might be undergoing upload at the moment. Removing the local
 			// file will cause the download to fail early, which is what we

@@ -129,9 +129,21 @@ than five minutes, or, access is outside the prefetched area, the process stops.
 
 ## File upload and creation
 
-It is possible to create new files. These are written to the local disk, and uploaded when they
-are closed. Since DNAnexus files are immutable, once a file is closed, it becomes read only. The local
-copy is not erased, it is accessed when performing read IOs.
+DNAnexus files are immutable, which is a problem when users want to
+modify them. The solution is to download such a file, modify it
+locally, erase the original file, and upload the new one. The downside is that large files
+are expensive to modify, because they have to be downloaded in their entirety.
+
+A background daemon scans periodically for dirty files that have not
+changed recently. These are either new files or
+files that were downloaded and modified locally. Each file fitting this criteria go
+through the following procedure:
+1) make a local immutable copy
+2) upload to the platform
+3) erase the `dirty` mark
+If the file is modified during upload, it will remain dirty, and will have to be uploaded
+again.
+
 
 ## Manifest
 

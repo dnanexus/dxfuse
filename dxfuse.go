@@ -1088,17 +1088,17 @@ func (fsys *Filesys) Unlink(ctx context.Context, op *fuseops.UnlinkOp) error {
 func (fsys *Filesys) openRegularFile(ctx context.Context, oph *OpHandle, op *fuseops.OpenFileOp, f File) (*FileHandle, error) {
 	if f.InlineData != "" {
 		// a regular file that has a local copy
-		reader, err := os.Open(f.InlineData)
+		fd, err := os.Open(f.InlineData, os.O_RDWR|os.O_CREATE, 0600)
 		if err != nil {
 			fsys.log("Could not open local file %s, err=%s", f.InlineData, err.Error())
 			return nil, err
 		}
 		fh := &FileHandle{
-			fKind: RO_LocalCopy,
+			fKind: FKIND_LOCAL,
 			f : f,
 			url: nil,
 			localPath : &f.InlineData,
-			fd : reader,
+			fd : fd,
 		}
 
 		return fh, nil
@@ -1119,7 +1119,7 @@ func (fsys *Filesys) openRegularFile(ctx context.Context, oph *OpHandle, op *fus
 	json.Unmarshal(body, &u)
 
 	fh := &FileHandle{
-		fKind: RO_Remote,
+		fKind: FKIND_REMOTE,
 		f : f,
 		url: &u,
 		localPath : nil,
@@ -1275,14 +1275,14 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 
 	// Clear the state involved with this open file descriptor
 	switch fh.fKind {
-	case RO_Remote:
+	case FKIND_REMOTE:
 		// Read-only file that is accessed remotely
 		fsys.pgs.RemoveStreamEntry(fh.f)
 		return nil
 
-	case RW_File:
+	case FKIND_LOCAL:
 		// A new file created locally. We need to upload it
-		// to the platform.
+		// to the platform, if it has any modifications.
 		if fsys.options.Verbose {
 			fsys.log("Close new file(%s)", fh.f.Name)
 		}
@@ -1298,11 +1298,6 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 		}
 		fh.fd = nil
 
-		// make this file read only
-		if err := os.Chmod(*fh.localPath, fileReadOnlyMode); err != nil {
-			return err
-		}
-
 		fInfo, err := os.Lstat(*fh.localPath)
 		if err != nil {
 			return err
@@ -1311,20 +1306,10 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 		modTime := fInfo.ModTime()
 
 		// update database entry
-		if err := fsys.mdb.UpdateFile(ctx, oph, fh.f, fileSize, modTime, fileReadOnlyMode); err != nil {
-			fsys.log("database error in OpenFile %s", err.Error())
+		if err := fsys.mdb.UpdateFile(ctx, oph, fh.f, fileSize, modTime, fileReadWriteMode); err != nil {
+			fsys.log("database error in ReleaseFileHandle %s", err.Error())
 			return fuse.EIO
 		}
-
-		// initiate a background request to upload the file to the cloud
-		return fsys.fugs.UploadFile(fh.f, fileSize)
-
-	case RO_LocalCopy:
-		// Read-only file with a local copy
-		if fh.fd != nil {
-			fh.fd.Close()
-		}
-		return nil
 
 	default:
 		panic(fmt.Sprintf("Invalid file kind %d", fh.fKind))
@@ -1436,14 +1421,28 @@ func (fsys *Filesys) findWritableFileHandle(handle fuseops.HandleID) (*FileHandl
 		// invalid file handle. It doesn't exist in the table
 		return nil, fuse.EINVAL
 	}
-	if fh.fKind != RW_File {
-		// This file isn't open for writing
-		return nil, syscall.EPERM
+	switch fh.fKind {
+	case FKIND_LOCAL:
+		if fh.fd == nil {
+			panic("file descriptor is empty")
+		}
+		return fh, nil
+
+	case FKIND_REMOTE:
+		// This is a remote file that we want to modify
+		// we need to first download it.
+		//
+		// TODO
+		//   download the file
+		//   mark the file as "dirty" in the database.
+		//   modify the upload module to scan for dirty files once
+		//   every minute, and upload those that haven't changed in
+		//   the last, say, minute.
+		panic("need to download the entire file at this point")
+
+	default:
+		panic(fmt.Sprintf("unknown file type %d", fh.fKind))
 	}
-	if fh.fd == nil {
-		panic("file descriptor is empty")
-	}
-	return fh, nil
 }
 
 // Writes to files.
