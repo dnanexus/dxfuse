@@ -87,20 +87,21 @@ func (px *Posix) chooseFauxDirName(usedNames map[string]bool, counter *int) stri
 
 // Choose each name once. Return the remaining data-objects, those that are multiply named,
 // and were not chosen.
-func makeCut(dxObjs []DxDescribeDataObject) ([]DxDescribeDataObject, []DxDescribeDataObject) {
-	used := make(map[string]bool)
+func (px *Posix) makeCut(
+	dxObjs []DxDescribeDataObject,
+	usedNames map[string]bool) ([]DxDescribeDataObject, []DxDescribeDataObject) {
 	remaining := make([]DxDescribeDataObject, 0)
 	firstTimers := make([]DxDescribeDataObject, 0)
 
 	for _, oDesc := range dxObjs {
-		_, ok := used[oDesc.Name]
+		_, ok := usedNames[oDesc.Name]
 		if ok {
-			// We have already seen a file with this name
+			// We have already used this name
 			remaining = append(remaining, oDesc)
 		} else {
-			// first time for this file name
+			// first time for this name
 			firstTimers = append(firstTimers, oDesc)
-			used[oDesc.Name] = true
+			usedNames[oDesc.Name] = true
 		}
 	}
 	return remaining, firstTimers
@@ -155,31 +156,33 @@ func (px *Posix) FixDir(dxFolder *DxFolder) (*PosixDir, error) {
 		allDxObjs = append(allDxObjs, objNorm)
 	}
 
+	usedNames := make(map[string]bool)
+	for _, dname := range subdirs {
+		usedNames[dname] = true
+	}
+
 	// Take all the data-objects that appear just once. There will be placed
-	// at the toplevel.
-	nonUniqueNamedObjs, topLevelObjs := makeCut(allDxObjs)
+	// at the toplevel. Don't use any of the sub-directory names.
+	nonUniqueNamedObjs, topLevelObjs := px.makeCut(allDxObjs, usedNames)
 	if px.options.VerboseLevel > 1 {
-		px.log("make cut: nonUniqueObj=%v topLevelObjs=%v", nonUniqueNamedObjs, topLevelObjs)
+		px.log("make cut: nonUniqueObj=%v topLevelObjs=%v used=%v",
+			nonUniqueNamedObjs, topLevelObjs, usedNames)
 	}
 
 	// Iteratively, take unique files from the remaining objects, and place them in
 	// subdirectories 1, 2, 3, ... Be careful to create unused directory names
 	fauxDirCounter := 1
 	fauxSubdirs := make(map[string][]DxDescribeDataObject)
-	usedSubdirNames := make(map[string]bool)
-	for _, dname := range subdirs {
-		usedSubdirNames[dname] = true
-	}
 
 	remaining := nonUniqueNamedObjs
 	for len(remaining) > 0 {
-		notChosenThisTime, uniqueObjs := makeCut(remaining)
-		fauxDir := px.chooseFauxDirName(usedSubdirNames, &fauxDirCounter)
+		notChosenThisTime, uniqueObjs := px.makeCut(remaining, usedNames)
+		fauxDir := px.chooseFauxDirName(usedNames, &fauxDirCounter)
 		fauxSubdirs[fauxDir] = uniqueObjs
 
 		if px.options.VerboseLevel > 1 {
-			px.log("fauxDir=%s  len(remainingObjs)=%d  len(uniqueObjs)=%d",
-				fauxDir, len(notChosenThisTime), len(uniqueObjs))
+			px.log("fauxDir=%s  len(remainingObjs)=%d  len(uniqueObjs)=%d len(usedNames)=%d",
+				fauxDir, len(notChosenThisTime), len(uniqueObjs), len(usedNames))
 		}
 
 		if len(remaining) <= len(notChosenThisTime) {
