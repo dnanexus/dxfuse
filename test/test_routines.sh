@@ -664,6 +664,12 @@ function populate_faux_dir {
     rm -f /tmp/XXX /tmp/YYY /tmp/ZZZ /tmp/VVV
 }
 
+function dir_and_file_with_the_same_name {
+    local root_dir=$1
+
+    ls -lR $root_dir/same_names
+}
+
 main() {
     # Get all the DX environment variables, so that dxfuse can use them
     echo "loading the dx environment"
@@ -685,23 +691,23 @@ main() {
     mkdir -p $mountpoint
 
     # bash generate random alphanumeric strings
-    target_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
-    target_dir2=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
-    target_dir3=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
-    target_dir4=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
-    faux_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
-    faux_dir="faux_$faux_dir"
-    expr_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
-    expr_dir="expr_$expr_dir"
-    writeable_dirs=($target_dir $target_dir2 $target_dir3 $target_dir4 $faux_dir $expr_dir)
-    for d in ${writeable_dirs[@]}; do
-        dx rm -r $projName:/$d >& /dev/null || true
-    done
-
-    dx mkdir $projName:/$target_dir
-    populate_faux_dir $faux_dir
-    dx mkdir $projName:/$expr_dir
-
+#    target_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+#    target_dir2=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+#    target_dir3=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+#    target_dir4=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+#    faux_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+#    faux_dir="faux_$faux_dir"
+#    expr_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+#    expr_dir="expr_$expr_dir"
+#    writeable_dirs=($target_dir $target_dir2 $target_dir3 $target_dir4 $faux_dir $expr_dir)
+#    for d in ${writeable_dirs[@]}; do
+#        dx rm -r $projName:/$d >& /dev/null || true
+#    done
+#
+#    dx mkdir $projName:/$target_dir
+#    populate_faux_dir $faux_dir
+#    dx mkdir $projName:/$expr_dir
+#
     # Start the dxfuse daemon in the background, and wait for it to initilize.
     echo "Mounting dxfuse"
     flags=""
@@ -710,119 +716,122 @@ main() {
     fi
     sudo -E $dxfuse -uid $(id -u) -gid $(id -g) $flags $mountpoint dxfuse_test_data dxfuse_test_read_only
 
-    echo "comparing symlink content"
-    compare_symlink_content
+#    echo "comparing symlink content"
+#    compare_symlink_content
+#
+#    echo "download recursively with dx download"
+#    parentDxpyDir=$(dirname $dxpyDir)
+#    if [[ ! -d $parentDxpyDir ]]; then
+#        echo "downloading into $parentDxpyDir from $projName:/$dxDirOnProject"
+#        mkdir -p $parentDxpyDir
+#        dx download --no-progress -o $parentDxpyDir -r $projName:/$dxDirOnProject
+#    fi
+#
+#    # do not exit immediately if there are differences; we want to see the files
+#    # that aren't the same
+#    diff -r --brief $dxpyDir $dxfuseDir > diff.txt || true
+#    if [[ -s diff.txt ]]; then
+#        echo "Difference in basic file structure"
+#        cat diff.txt
+#        echo "===== dxpy ==== "
+#        tree $dxpyDir
+#        echo
+#        echo "===== dxfuse ==== "
+#        tree $dxfuseDir
+#        exit 1
+#    fi
+#
+#   # find
+#    echo "find"
+#    check_find
+#
+#    # grep
+#    echo "grep"
+#    check_grep
+#
+#    # tree
+#    echo "tree"
+#    check_tree
+#
+#    # ls
+#    echo "ls -R"
+#    check_ls
+#
+#    # find
+#    echo "head, tail, wc"
+#    check_cmd_line_utils
+#
+#    echo "parallel downloads"
+#    check_parallel_cat
+#
+#    echo "can write to a small file"
+#    check_file_write_content "$mountpoint/$projName" $target_dir
+#
+#    echo "can write several files to a directory"
+#    write_files $mountpoint/$projName/$dxDirOnProject/large $mountpoint/$projName/$target_dir
+#
+#    echo "can't write to read-only project"
+#    write_to_read_only_project
+#
+#    echo "create directory"
+#    create_dir $mountpoint/$projName/$dxDirOnProject/small  $mountpoint/$projName/$target_dir2
+#
+#    echo "create/remove directory"
+#    create_remove_dir "yes" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$target_dir3
+#    create_remove_dir "no" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$target_dir3
+#
+#    echo "mkdir rmdir"
+#    rmdir_non_empty $mountpoint/$projName/$target_dir4
+#    rmdir_not_exist $mountpoint/$projName/$target_dir4
+#    mkdir_existing  $mountpoint/$projName/$target_dir4
+#
+#    echo "file create remove"
+#    file_create_existing "$mountpoint/$projName"
+#    file_remove_non_exist "$mountpoint/$projName"
+#
+#    echo "move file I"
+#    move_file $mountpoint/$projName/$expr_dir
+#
+#    echo "move file II"
+#    move_file2 $mountpoint/$projName/$expr_dir
+#
+#    echo "rename directory"
+#    rename_dir $mountpoint/$projName/$expr_dir
+#    rename_dir /tmp
+#    diff -r /tmp/B $mountpoint/$projName/$expr_dir/B
+#    rm -rf /tmp/B $mountpoint/$projName/$expr_dir/B
+#
+#    echo "move directory"
+#    move_dir $mountpoint/$projName/$expr_dir
+#
+#    echo "move a deep directory"
+#    move_dir_deep $mountpoint/$projName/$expr_dir 1
+#    move_dir_deep /tmp 2
+#    cd $HOME
+#
+#    diff /tmp/results_1.txt /tmp/results_2.txt
+#    diff -r $mountpoint/$projName/$expr_dir/D /tmp/D
+#    rm -rf $mountpoint/$projName/$expr_dir/D
+#    rm -rf /tmp/D
+#
+#    echo "checking illegal directory moves"
+#    move_non_existent_dir "$mountpoint/$projName"
+#    move_dir_to_file "$mountpoint/$projName"
+#
+#    echo "faux dirs cannot be moved"
+#    faux_dirs_move $mountpoint/$projName/$faux_dir
+#
+#    echo "faux dir operations"
+#    faux_dirs_remove $mountpoint/$projName/$faux_dir
 
-    echo "download recursively with dx download"
-    parentDxpyDir=$(dirname $dxpyDir)
-    if [[ ! -d $parentDxpyDir ]]; then
-        echo "downloading into $parentDxpyDir from $projName:/$dxDirOnProject"
-        mkdir -p $parentDxpyDir
-        dx download --no-progress -o $parentDxpyDir -r $projName:/$dxDirOnProject
-    fi
+#    echo "hard links"
+#    hard_links $mountpoint/$projName/$faux_dir
 
-    # do not exit immediately if there are differences; we want to see the files
-    # that aren't the same
-    diff -r --brief $dxpyDir $dxfuseDir > diff.txt || true
-    if [[ -s diff.txt ]]; then
-        echo "Difference in basic file structure"
-        cat diff.txt
-        echo "===== dxpy ==== "
-        tree $dxpyDir
-        echo
-        echo "===== dxfuse ==== "
-        tree $dxfuseDir
-        exit 1
-    fi
+    echo "directory and file with the same name"
+    dir_and_file_with_the_same_name $mountpoint/$projName
 
-   # find
-    echo "find"
-    check_find
-
-    # grep
-    echo "grep"
-    check_grep
-
-    # tree
-    echo "tree"
-    check_tree
-
-    # ls
-    echo "ls -R"
-    check_ls
-
-    # find
-    echo "head, tail, wc"
-    check_cmd_line_utils
-
-    echo "parallel downloads"
-    check_parallel_cat
-
-    echo "can write to a small file"
-    check_file_write_content "$mountpoint/$projName" $target_dir
-
-    echo "can write several files to a directory"
-    write_files $mountpoint/$projName/$dxDirOnProject/large $mountpoint/$projName/$target_dir
-
-    echo "can't write to read-only project"
-    write_to_read_only_project
-
-    echo "create directory"
-    create_dir $mountpoint/$projName/$dxDirOnProject/small  $mountpoint/$projName/$target_dir2
-
-    echo "create/remove directory"
-    create_remove_dir "yes" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$target_dir3
-    create_remove_dir "no" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$target_dir3
-
-    echo "mkdir rmdir"
-    rmdir_non_empty $mountpoint/$projName/$target_dir4
-    rmdir_not_exist $mountpoint/$projName/$target_dir4
-    mkdir_existing  $mountpoint/$projName/$target_dir4
-
-    echo "file create remove"
-    file_create_existing "$mountpoint/$projName"
-    file_remove_non_exist "$mountpoint/$projName"
-
-    echo "move file I"
-    move_file $mountpoint/$projName/$expr_dir
-
-    echo "move file II"
-    move_file2 $mountpoint/$projName/$expr_dir
-
-    echo "rename directory"
-    rename_dir $mountpoint/$projName/$expr_dir
-    rename_dir /tmp
-    diff -r /tmp/B $mountpoint/$projName/$expr_dir/B
-    rm -rf /tmp/B $mountpoint/$projName/$expr_dir/B
-
-    echo "move directory"
-    move_dir $mountpoint/$projName/$expr_dir
-
-    echo "move a deep directory"
-    move_dir_deep $mountpoint/$projName/$expr_dir 1
-    move_dir_deep /tmp 2
-    cd $HOME
-
-    diff /tmp/results_1.txt /tmp/results_2.txt
-    diff -r $mountpoint/$projName/$expr_dir/D /tmp/D
-    rm -rf $mountpoint/$projName/$expr_dir/D
-    rm -rf /tmp/D
-
-    echo "checking illegal directory moves"
-    move_non_existent_dir "$mountpoint/$projName"
-    move_dir_to_file "$mountpoint/$projName"
-
-    echo "faux dirs cannot be moved"
-    faux_dirs_move $mountpoint/$projName/$faux_dir
-
-    echo "faux dir operations"
-    faux_dirs_remove $mountpoint/$projName/$faux_dir
-
-    echo "hard links"
-    hard_links $mountpoint/$projName/$faux_dir
-
-    echo "syncing filesystem"
-    sync
+#    echo "syncing filesystem"
+#    sync
 
     echo "unmounting dxfuse"
     cd $HOME
