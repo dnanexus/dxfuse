@@ -664,6 +664,12 @@ function populate_faux_dir {
     rm -f /tmp/XXX /tmp/YYY /tmp/ZZZ /tmp/VVV
 }
 
+function dir_and_file_with_the_same_name {
+    local root_dir=$1
+
+    tree $root_dir/same_names
+}
+
 main() {
     # Get all the DX environment variables, so that dxfuse can use them
     echo "loading the dx environment"
@@ -821,8 +827,11 @@ main() {
     echo "hard links"
     hard_links $mountpoint/$projName/$faux_dir
 
-    echo "syncing filesystem"
-    sync
+    echo "directory and file with the same name"
+    dir_and_file_with_the_same_name $mountpoint/$projName
+
+#    echo "syncing filesystem"
+#    sync
 
     echo "unmounting dxfuse"
     cd $HOME
