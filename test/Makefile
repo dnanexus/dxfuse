@@ -9,13 +9,13 @@ azure: dxfuse copy_all
 	dx build dxfuse_correctness -f --destination dxfuse_azure_westus:/applets/dxfuse_correctness
 
 dxfuse : $(wildcard ../**/*)
-	go build -o dxfuse /go/src/github.com/dnanexus/dxfuse/cli/main.go
+	go build -o /go/bin/dxfuse /go/src/github.com/dnanexus/dxfuse/cli/main.go
 
 copy_all : dxfuse
 	mkdir -p dxfuse_benchmark/resources/usr/bin
-	cp -f dxfuse dxfuse_benchmark/resources/usr/bin/
+	cp -f /go/bin/dxfuse dxfuse_benchmark/resources/usr/bin/
 	mkdir -p dxfuse_correctness/resources/usr/bin
-	cp -f dxfuse dxfuse_correctness/resources/usr/bin/
+	cp -f /go/bin/dxfuse dxfuse_correctness/resources/usr/bin/
 	cp -f test_routines.sh dxfuse_correctness/code.sh
 
 clean :

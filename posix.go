@@ -1,6 +1,7 @@
 package dxfuse
 
 import (
+	"fmt"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -19,7 +20,16 @@ import (
 //
 // 2. DNAx files can include slashes. Drop these files, with a put note in the log.
 //
-// 3. A directory and a file can have the same name. This is not handled right now.
+// 3. A directory and a file can have the same name. For example:
+//    ROOT/
+//         zoo/      sub-directory
+//         zoo       regular file
+//
+//    Is converted into:
+//    ROOT
+//         zoo/      sub-directory
+//         1/        faux sub-directory
+//           zoo     regular file
 //
 type PosixDir struct {
 	path          string   // entire directory path
@@ -58,76 +68,74 @@ func (px *Posix) filenameNormalize(filename string) string {
 	return strings.ReplaceAll(filename, "/", "___")
 }
 
-// Choose a directory name that is unused.
-func (px *Posix) chooseFauxDirName(usedNames map[string]bool, counter *int) string {
-	if px.options.Verbose {
-		px.log("chooseFauxDirName used=%v counter=%d", usedNames, *counter)
+// Choose [num] directory names that are not taken by existing subdirs or files
+func (px *Posix) pickFauxDirNames(subdirs []string, uniqueFileNames []string, num int) []string {
+	usedNames := make(map[string]bool)
+	for _, dName := range subdirs {
+		usedNames[dName] = true
 	}
-	maxNumIter := len(usedNames) + 1
+	for _, fName := range uniqueFileNames {
+		usedNames[fName] = true
+	}
 
-	for i := 0; i <= maxNumIter; i++ {
-		tentativeName := strconv.Itoa(*counter)
-		if px.options.VerboseLevel > 1 {
-			px.log("choose dir name=%s", tentativeName)
-		}
+	i := 1
+	maxNumIter := (len(subdirs) + len(uniqueFileNames) + num) * 2
+	var dirNames []string
+	for len(dirNames) < num {
+		tentativeName := strconv.Itoa(i)
 
 		_, ok := usedNames[tentativeName]
 		if !ok {
 			// name has not been used yet
 			usedNames[tentativeName] = true
-			return tentativeName
+			dirNames = append(dirNames, tentativeName)
 		}
 
 		// already used, we need another name
-		*counter++
+		i++
+		if i > maxNumIter {
+			panic(fmt.Sprintf("Too many iterations choosing faux directory names %d > %d",
+				i, maxNumIter))
+		}
 	}
 
-	panic("could not choose a directory name after " + string(maxNumIter) + " iterations")
+	return dirNames
 }
 
 
-// Choose each name once. Return the remaining data-objects, those that are multiply named,
-// and were not chosen.
-func (px *Posix) chooseUnique(
-	dxObjs []DxDescribeDataObject,
-	usedNames map[string]bool) ([]DxDescribeDataObject, []DxDescribeDataObject) {
-	remaining := make([]DxDescribeDataObject, 0)
-	firstTimers := make([]DxDescribeDataObject, 0)
+// Find all the unique file names.
+//
+func (px *Posix) uniqueFileNames(dxObjs []DxDescribeDataObject) []string {
+	usedNames := make(map[string]bool)
 
+	var firstTimers []string
 	for _, oDesc := range dxObjs {
 		_, ok := usedNames[oDesc.Name]
-		if ok {
-			// We have already used this name
-			remaining = append(remaining, oDesc)
-		} else {
+		if !ok {
 			// first time for this name
-			firstTimers = append(firstTimers, oDesc)
+			firstTimers = append(firstTimers, oDesc.Name)
 			usedNames[oDesc.Name] = true
 		}
 	}
-	return remaining, firstTimers
+	return firstTimers
 }
 
 // pick all the objects with "name" from the list. Return an empty array
 // if none exist. Sort them from newest to oldest.
 func (px *Posix) chooseAllObjectsWithName(
 	dxObjs []DxDescribeDataObject,
-	name string) ([]DxDescribeDataObject, []DxDescribeDataObject) {
+	name string) []DxDescribeDataObject {
 
 	objs := make([]DxDescribeDataObject, 0)
-	remaining := make([]DxDescribeDataObject, 0)
-
 	for _, o := range(dxObjs) {
 		if o.Name == name {
 			objs = append(objs, o)
-		} else {
-			remaining = append(remaining, o)
 		}
 	}
 
 	// sort by date
 	sort.Slice(objs, func(i, j int) bool { return objs[i].CtimeSeconds > objs[j].CtimeSeconds })
-	return remaining, objs
+	return objs
 }
 
 
@@ -180,60 +188,61 @@ func (px *Posix) FixDir(dxFolder *DxFolder) (*PosixDir, error) {
 		allDxObjs = append(allDxObjs, objNorm)
 	}
 
-	usedNames := make(map[string]bool)
-	for _, dname := range subdirs {
-		usedNames[dname] = true
-	}
-
-	// Take all the data-objects that appear just once. They will be placed
-	// at the toplevel. Don't use any of the sub-directory names.
-	//
 	// TODO: choose the latest object for each name. For example, if we
 	// have two files named zoo, the toplevel one will be the most recent.
-	nonUniqueNamedObjs, topLevelObjs := px.chooseUnique(allDxObjs, usedNames)
+	uniqueFileNames := px.uniqueFileNames(allDxObjs)
 	if px.options.VerboseLevel > 1 {
-		px.log("make cut: nonUniqueObj=%v topLevelObjs=%v used=%v",
-			nonUniqueNamedObjs, topLevelObjs, usedNames)
+		px.log("unique file names=%v", uniqueFileNames)
 	}
 
 	// Iteratively, take unique files from the remaining objects, and place them in
 	// subdirectories 1, 2, 3, ... Be careful to create unused directory names
-	fauxDirCounter := 1
-	fauxSubdirs := make(map[string][]DxDescribeDataObject)
+	fauxSubDirs := make(map[string][]DxDescribeDataObject)
 
 	// choose names for faux subdirs for the worst case where all objects
 	// have the same name.
-	fauxDirNames := make([]string)
-	for i := 0; i < len(nonUniqueNamedObjs); i++ {
-		dName := px.chooseFauxDirName(usedNames, &fauxDirCounter)
-		fauxDirNames = append(fauxDirNames, dName)
+	var fauxDirNames []string
+	maxNumDirs := len(allDxObjs)
+	fauxDirNames = px.pickFauxDirNames(subdirs, uniqueFileNames, maxNumDirs)
+	if px.options.Verbose {
+		px.log("pickFauxDirNames %v", fauxDirNames)
 	}
 
-	remaining := nonUniqueNamedObjs
-	for len(remaining) > 0 {
-		oName := remaining[0].Name
+	subdirSet := make(map[string]bool)
+	for _, dName := range subdirs {
+		subdirSet[dName] = true
+	}
 
-		// extract all the objects with this name
-		remaining, dxObjs := px.chooseAllObjectsWithName(remaining, oName)
-		if len(dxObjs) == 0 {
-			panic("not making progress")
-		}
+	// Take all the data-objects that have names that aren't already taken
+	// up by subdirs. They go in the top level
+	var topLevelObjs []DxDescribeDataObject
+
+	for _, oName := range(uniqueFileNames) {
+		dxObjs := px.chooseAllObjectsWithName(allDxObjs, oName)
 		if px.options.VerboseLevel > 1 {
-			px.log("len(remainingObjs)=%d  len(uniqueObjs)=%d len(usedNames)=%d",
-				len(remaining), len(dxObjs), len(usedNames))
+			px.log("name=%s len(objs)=%d", oName, len(dxObjs))
 		}
 
-		// spread them across the faux subdirectories
+		_, ok := subdirSet[oName]
+		if !ok {
+			// There is no directory with this name, we
+			// place the object at the toplevel
+			topLevelObjs = append(topLevelObjs, dxObjs[0])
+			dxObjs = dxObjs[1:]
+		}
+
+		// spread the remaining copies across the faux subdirectories
 		for i, obj := range(dxObjs) {
 			dName := fauxDirNames[i]
+			px.log("i=%d dName=%s", i, dName)
 			vec, ok := fauxSubDirs[dName]
 			if !ok {
 				// need to start a new faux subdir called "dName"
 				v := make([]DxDescribeDataObject, 1)
-				v[0] = dxObj
+				v[0] = obj
 				fauxSubDirs[dName] = v
 			} else {
-
+				fauxSubDirs[dName] = append(vec, obj)
 			}
 		}
 	}
@@ -242,7 +251,8 @@ func (px *Posix) FixDir(dxFolder *DxFolder) (*PosixDir, error) {
 		path: dxFolder.path,
 		dataObjects: topLevelObjs,
 		subdirs: subdirs,
-		fauxSubdirs: fauxSubdirs,
+		fauxSubdirs: fauxSubDirs,
 	}
+	px.log("%v", posixDxFolder)
 	return posixDxFolder, nil
 }

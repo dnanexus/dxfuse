@@ -44,6 +44,7 @@ var (
 	debugFuseFlag = flag.Bool("debugFuse", false, "Tap into FUSE debugging information")
 	gid = flag.Int("gid", -1, "User group id (gid)")
 	help = flag.Bool("help", false, "display program options")
+	nowait = flag.Bool("nowait", false, "start the daemon, but do not wait for initialization to complete")
 	readOnly = flag.Bool("readOnly", false, "mount the filesystem in read-only mode")
 	uid = flag.Int("uid", -1, "User id (uid)")
 	verbose = flag.Int("verbose", 0, "Enable verbose debugging")
@@ -282,6 +283,21 @@ func parseManifest(cfg Config) (*dxfuse.Manifest, error) {
 }
 
 
+func startDaemon(cfg Config) {
+	manifest, err := parseManifest(cfg)
+	if err != nil {
+		os.Stdout.WriteString(err.Error())
+		os.Stdout.Close()
+		os.Exit(1)
+	}
+	err = fsDaemon(cfg.mountpoint, cfg.dxEnv, *manifest, cfg.options)
+	if err != nil {
+		os.Stdout.WriteString(err.Error())
+		os.Stdout.Close()
+		os.Exit(1)
+	}
+}
+
 // check if the variable ACTUAL is set to 1.
 // This means that we need to run the filesystem inside this process
 func isActual() bool {
@@ -295,26 +311,10 @@ func isActual() bool {
 }
 
 
-func main() {
-	// parse command line options
-	flag.Usage = usage
-	flag.Parse()
-	cfg := parseCmdLineArgs()
-	validateConfig(cfg)
-
+func startDaemonAndWaitForInitializationToComplete(cfg Config) {
 	if isActual() {
-		manifest, err := parseManifest(cfg)
-		if err != nil {
-			os.Stdout.WriteString(err.Error())
-			os.Stdout.Close()
-			os.Exit(1)
-		}
-		err = fsDaemon(cfg.mountpoint, cfg.dxEnv, *manifest, cfg.options)
-		if err != nil {
-			os.Stdout.WriteString(err.Error())
-			os.Stdout.Close()
-			os.Exit(1)
-		}
+		// This will be true -only- in the child sub-process
+		startDaemon(cfg)
 		return
 	}
 
@@ -358,12 +358,24 @@ func main() {
 
 	status := <-readyChan
 	status = strings.ToLower(status)
-	if strings.HasPrefix(status, "ready") {
-		fmt.Println("Daemon started successfully")
+	if !strings.HasPrefix(status, "ready") {
+		fmt.Println("There was an error starting the daemon")
+		fmt.Println(status)
+		os.Exit(1)
+	}
+	fmt.Println("Daemon started successfully")
+}
+
+func main() {
+	// parse command line options
+	flag.Usage = usage
+	flag.Parse()
+	cfg := parseCmdLineArgs()
+	validateConfig(cfg)
+
+	if *nowait {
+		startDaemon(cfg)
 		return
 	}
-
-	fmt.Println("There was an error starting the daemon")
-	fmt.Println(status)
-	os.Exit(1)
+	startDaemonAndWaitForInitializationToComplete(cfg)
 }

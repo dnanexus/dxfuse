@@ -1,5 +1,8 @@
 # Release Notes
 
+## v0.16
+- Fixed bug when a file and a directory have the same name.
+
 ## v0.15
 - The prefetch algorithm recognizes cases where a file is read from the middle. This
 allows sambamba to work with sequential prefetch.
