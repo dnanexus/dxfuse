@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/dnanexus/dxda"
+	"github.com/jacobsa/fuse/fuseops"
 	"github.com/hashicorp/go-retryablehttp" // use http libraries from hashicorp for implement retry logic
 )
 
@@ -58,6 +59,7 @@ const (
 
 // A request that one of the IO-threads will pick up
 type IoReq struct {
+	hid         fuseops.HandleID
 	f           File
 	url         DxDownloadURL
 
@@ -104,13 +106,13 @@ type PrefetchFileMetadata struct {
 	mutex                sync.Mutex
 
 	// the file being tracked
+	hid                  fuseops.HandleID
 	f                    File
 	url                  DxDownloadURL
 	state                int
 
 	lastIoTimestamp      time.Time  // Last time an IO hit this file
 	hiUserAccessOfs      int64      // highest file offset accessed by the user
-	sequentiallyAccessed bool       // estimate if this file is sequentially accessed
 	mw                   MeasureWindow // statistics for stream
 
 	// cached io vectors.
@@ -125,7 +127,7 @@ type PrefetchGlobalState struct {
 	mutex                 sync.Mutex  // Lock used to control the files table
 	verbose               bool
 	verboseLevel          int
-	files                 map[File](*PrefetchFileMetadata) // tracking state per file-id
+	handlesInfo           map[fuseops.HandleID](*PrefetchFileMetadata) // tracking state per handle
 	ioQueue               chan IoReq    // queue of IOs to prefetch
 	wg                    sync.WaitGroup
 	prefetchMaxIoSize     int64
@@ -164,8 +166,19 @@ func (iov Iovec) stateString() string {
 
 // write a log message, and add a header
 func (pfm *PrefetchFileMetadata) log(a string, args ...interface{}) {
-	hdr := fmt.Sprintf("prefetch(%s)", fileDesc(pfm.f))
+	hdr := fmt.Sprintf("prefetch(%d,%s)", pfm.hid, fileDesc(pfm.f))
 	LogMsg(hdr, a, args...)
+}
+
+func (pfm *PrefetchFileMetadata) stateString() string {
+	switch pfm.state {
+	case PFM_NIL: return "NIL"
+	case PFM_DETECT_SEQ: return "DETECT_SEQ"
+	case PFM_PREFETCH_IN_PROGRESS: return "PREFETCHING"
+	case PFM_EOF: return "EOF"
+	default:
+		panic(fmt.Sprintf("bad state for pfm %d", pfm.state))
+	}
 }
 
 // report on the last delta time
@@ -175,7 +188,8 @@ func (pfm *PrefetchFileMetadata) logReport(now time.Time) {
 	// bandwidth in megabytes per second
 	bandwidthMiBSec := float64(pfm.mw.numBytesPrefetched) / (delta.Seconds() * MiB)
 
-	pfm.log("numIovecs=%d size(cache)=%d #IOs=%d #prefetchIOs=%d bandwidth=%.1f MiB/sec",
+	pfm.log("state=%s numIovecs=%d size(cache)=%d #IOs=%d #prefetchIOs=%d bandwidth=%.1f MiB/sec",
+		pfm.stateString(),
 		pfm.cache.maxNumIovecs, len(pfm.cache.iovecs),
 		pfm.mw.numIOs, pfm.mw.numPrefetchIOs,
 		bandwidthMiBSec)
@@ -187,6 +201,22 @@ func (pfm *PrefetchFileMetadata) logReport(now time.Time) {
 	pfm.mw.numPrefetchIOs = 0
 }
 
+// Got an error. Release all waiting IO.
+func (pfm *PrefetchFileMetadata) cancelIOs() {
+	for i, _ := range pfm.cache.iovecs {
+		iovec := pfm.cache.iovecs[i]
+		iovec.state = IOV_ERRORED
+		iovec.cond.Broadcast()
+	}
+}
+
+func (pfm *PrefetchFileMetadata) reset() {
+	pfm.log("access is not sequential, reseting stream state inode=%d", pfm.f.Inode)
+	pfm.cancelIOs()
+	pfm.hiUserAccessOfs = 0
+	pfm.state = PFM_NIL
+	pfm.cache = Cache{}
+}
 
 // write a log message, and add a header
 func (pgs *PrefetchGlobalState) log(a string, args ...interface{}) {
@@ -235,7 +265,7 @@ func NewPrefetchGlobalState(verboseLevel int, dxEnv dxda.DXEnvironment) *Prefetc
 	pgs := &PrefetchGlobalState{
 		verbose : verboseLevel >= 1,
 		verboseLevel : verboseLevel,
-		files : make(map[File](*PrefetchFileMetadata)),
+		handlesInfo : make(map[fuseops.HandleID](*PrefetchFileMetadata)),
 		ioQueue : make(chan IoReq),
 		prefetchMaxIoSize : prefetchMaxIoSize,
 		numPrefetchThreads: numPrefetchThreads,
@@ -262,23 +292,23 @@ func (pgs *PrefetchGlobalState) Shutdown() {
 	pgs.wg.Wait()
 
 	// clear the entire table
-	var allFiles []File
+	var allHandles []fuseops.HandleID
 	pgs.mutex.Lock()
-	for f, _ := range pgs.files {
-		allFiles = append(allFiles, f)
+	for hid, _ := range pgs.handlesInfo {
+		allHandles = append(allHandles, hid)
 	}
 	pgs.mutex.Unlock()
 
-	for _, fid := range allFiles {
-		pfm := pgs.getAndLockPfm(fid)
+	for _, hid := range allHandles {
+		pfm := pgs.getAndLockPfm(hid)
 		if pfm != nil {
-			pgs.streamDone(pfm)
+			pfm.reset()
 			pfm.mutex.Unlock()
 		}
 	}
 
 	pgs.mutex.Lock()
-	pgs.files = nil
+	pgs.handlesInfo = nil
 	pgs.mutex.Unlock()
 
 	// we aren't waiting for the periodic cleanup thread.
@@ -287,15 +317,6 @@ func (pgs *PrefetchGlobalState) Shutdown() {
 func check(value bool) {
 	if !value {
 		panic("assertion failed")
-	}
-}
-
-// Got an error. Release all waiting IO.
-func (pgs *PrefetchGlobalState) streamDone(pfm *PrefetchFileMetadata) {
-	for i, _ := range pfm.cache.iovecs {
-		iovec := pfm.cache.iovecs[i]
-		iovec.state = IOV_ERRORED
-		iovec.cond.Broadcast()
 	}
 }
 
@@ -317,8 +338,8 @@ func (pgs *PrefetchGlobalState) readData(client *retryablehttp.Client, ioReq IoR
 	// http request.
 	expectedLen := ioReq.endByte - ioReq.startByte + 1
 	if pgs.verbose {
-		pgs.log("(%s) (io=%d) reading extent from DNAx ofs=%d len=%d",
-			fileDesc(ioReq.f), ioReq.id, ioReq.startByte, expectedLen)
+		pgs.log("hid=%d (%s) (io=%d) reading extent from DNAx ofs=%d len=%d",
+			ioReq.hid, fileDesc(ioReq.f), ioReq.id, ioReq.startByte, expectedLen)
 	}
 
 	headers := make(map[string]string)
@@ -411,11 +432,11 @@ func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq
 }
 
 
-func (pgs *PrefetchGlobalState) getAndLockPfm(f File) *PrefetchFileMetadata {
+func (pgs *PrefetchGlobalState) getAndLockPfm(hid fuseops.HandleID) *PrefetchFileMetadata {
 	pgs.mutex.Lock()
 
 	// Find the file this IO belongs to
-	pfm, ok := pgs.files[f]
+	pfm, ok := pgs.handlesInfo[hid]
 	if !ok {
 		pgs.mutex.Unlock()
 		return nil
@@ -444,7 +465,7 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 		if pgs.verboseLevel >= 2 {
 			pgs.log("(%s) (io=%d) adding returned data to file", fileDesc(ioReq.f), ioReq.id)
 		}
-		pfm := pgs.getAndLockPfm(ioReq.f)
+		pfm := pgs.getAndLockPfm(ioReq.hid)
 		if pfm == nil {
 			// file is not tracked anymore
 			pgs.log("(%s) (io=%d) dropping prefetch IO [%d -- %d], file is no longer tracked",
@@ -467,13 +488,6 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 
 // Check if a file is worth tracking.
 func (pgs *PrefetchGlobalState) isWorthIt(pfm *PrefetchFileMetadata, now time.Time) bool {
-	if (pfm.state == PFM_PREFETCH_IN_PROGRESS &&
-		!pfm.sequentiallyAccessed) {
-		// The file is no longer sequentially accessed
-		pfm.log("no longer accessed sequentially")
-		return false
-	}
-
 	if now.After(pfm.lastIoTimestamp.Add(maxDeltaTime)) {
 		// File has not been accessed recently
 		pfm.log("has not been accessed in last %s", maxDeltaTime.String())
@@ -489,66 +503,50 @@ func (pgs *PrefetchGlobalState) tableCleanupWorker() {
 	for true {
 		time.Sleep(periodicTime)
 		if pgs.verbose {
-			pgs.log("tableCleanupWorker [")
+			pgs.log("periodic sweep [")
 		}
 
 		// the entire list of file-handles
-		var candidates [](File)
-
-		// Files that are not worth tracking
-		var toRemove [](File)
+		var candidates []fuseops.HandleID
 
 		pgs.mutex.Lock()
-		for f, _ := range pgs.files {
-			candidates = append(candidates, f)
+		for hid, _ := range pgs.handlesInfo {
+			candidates = append(candidates, hid)
 		}
 		pgs.mutex.Unlock()
 
 		// go over the table, and find all the files not worth tracking
 		now := time.Now()
-		for _, f := range candidates {
-			pfm := pgs.getAndLockPfm(f)
+		for _, fh := range candidates {
+			pfm := pgs.getAndLockPfm(fh)
 			if pfm != nil {
 				// print a report for each stream
 				pfm.logReport(now)
 				if !pgs.isWorthIt(pfm, now) {
-					// This stream isn't worth it. stop
-					// the prefetch. Cancel pending user IOs.
-					pgs.streamDone(pfm)
-					toRemove = append(toRemove, f)
+					// This stream isn't worth it, release
+					// the cache resources
+					pfm.reset()
 				}
 				pfm.mutex.Unlock()
 			}
 		}
 
-		numUnworthy := len(toRemove)
-		if pgs.verbose && numUnworthy > 0 {
-			pgs.log("tableCleanupWorkder removing %d unworthy streams",
-				numUnworthy)
-		}
-
-		pgs.mutex.Lock()
-		for _, f := range toRemove {
-			delete(pgs.files, f)
-		}
-		pgs.mutex.Unlock()
-
 		if pgs.verbose {
-			pgs.log("tableCleanupWorker ]")
+			pgs.log("]")
 		}
 	}
 }
 
-func (pgs *PrefetchGlobalState) newPrefetchFileMetadata(f File, url DxDownloadURL) *PrefetchFileMetadata {
+func (pgs *PrefetchGlobalState) newPrefetchFileMetadata(hid fuseops.HandleID, f File, url DxDownloadURL) *PrefetchFileMetadata {
 	var pfm PrefetchFileMetadata
+	pfm.hid = hid
 	pfm.f = f
 	pfm.url = url
 	pfm.lastIoTimestamp = time.Now()
 	pfm.hiUserAccessOfs = 0
-	pfm.sequentiallyAccessed = false
 	pfm.mw.timestamp = time.Now()
 
-	// Initial state of the file; not IOs were detected yet
+	// Initial state of the file; no IOs were detected yet
 	pfm.state = PFM_NIL
 
 	return &pfm
@@ -556,6 +554,8 @@ func (pgs *PrefetchGlobalState) newPrefetchFileMetadata(f File, url DxDownloadUR
 
 // setup so we can detect a sequential stream.
 // There is no data held in cache yet.
+//
+// we set up two io-vectors so they would align on [prefetchMinIoSize] sizes.
 func (pgs *PrefetchGlobalState) firstAccessToStream(pfm *PrefetchFileMetadata, ofs int64) {
 	if pgs.verbose {
 		pfm.log("first IO %d", ofs)
@@ -592,12 +592,12 @@ func (pgs *PrefetchGlobalState) firstAccessToStream(pfm *PrefetchFileMetadata, o
 	pfm.cache.iovecs[1] = iov2
 }
 
-func (pgs *PrefetchGlobalState) CreateStreamEntry(f File, url DxDownloadURL) {
+func (pgs *PrefetchGlobalState) CreateStreamEntry(hid fuseops.HandleID, f File, url DxDownloadURL) {
 	pgs.mutex.Lock()
 	defer pgs.mutex.Unlock()
 
 	// if the table is at the size limit, do not create a new entry
-	if len(pgs.files) >= maxNumEntriesInTable {
+	if len(pgs.handlesInfo) >= maxNumEntriesInTable {
 		return
 	}
 
@@ -608,25 +608,25 @@ func (pgs *PrefetchGlobalState) CreateStreamEntry(f File, url DxDownloadURL) {
 	}
 
 	if pgs.verbose {
-		pgs.log("CreateStreamEntry (%s %d)", f.Name, f.Inode)
+		pgs.log("CreateStreamEntry (%d, %s, %d)", hid, f.Name, f.Inode)
 	}
-	pgs.files[f] = pgs.newPrefetchFileMetadata(f, url)
+	pgs.handlesInfo[hid] = pgs.newPrefetchFileMetadata(hid, f, url)
 }
 
-func (pgs *PrefetchGlobalState) RemoveStreamEntry(f File) {
-	pfm := pgs.getAndLockPfm(f)
+func (pgs *PrefetchGlobalState) RemoveStreamEntry(hid fuseops.HandleID) {
+	pfm := pgs.getAndLockPfm(hid)
 	if pfm != nil {
 		if pgs.verbose {
-			pgs.log("RemoveStreamEntry (%s %d)", f.Name, f.Inode)
+			pgs.log("RemoveStreamEntry (%d, %s, %d)", hid, pfm.f.Name, pfm.f.Inode)
 		}
 
 		// wake up any waiting synchronous user IOs
-		pgs.streamDone(pfm)
+		pfm.reset()
 		pfm.mutex.Unlock()
 
 		// remove from the table
 		pgs.mutex.Lock()
-		delete(pgs.files, f)
+		delete(pgs.handlesInfo, hid)
 		pgs.mutex.Unlock()
 	}
 }
@@ -740,6 +740,7 @@ func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIn
 			}
 			uniqueId := atomic.AddUint64(&pgs.ioCounter, 1)
 			pgs.ioQueue <- IoReq{
+				hid : pfm.hid,
 				f : pfm.f,
 				url : pfm.url,
 				ioSize : iov.ioSize,
@@ -770,13 +771,6 @@ func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIn
 			if pfm.cache.iovecs[i].endByte < pfm.hiUserAccessOfs {
 				// The user has already passed this point in the file.
 				// it can be discarded.
-				if pfm.state == PFM_PREFETCH_IN_PROGRESS {
-					// Estimate if the file is sequentially accessed,
-					// by checking if the chunk we are discarding was mostly accessed.
-					numAccessed := bits.OnesCount64(pfm.cache.iovecs[i].touched)
-					fullyAccessed := (numSlotsInChunk/2 <= numAccessed)
-					pfm.sequentiallyAccessed = pfm.sequentiallyAccessed && fullyAccessed
-				}
 				nRemoved++
 			}
 		}
@@ -807,11 +801,11 @@ func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIn
 func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 	pfm *PrefetchFileMetadata,
 	startOfs int64,
-	endOfs int64) {
+	endOfs int64) bool {
 	// Mark the areas in cache that this IO accessed
 	first, last := pgs.findCoveredRange(pfm, startOfs, endOfs)
 	if first == -1 {
-		return
+		return false
 	}
 	for i := first; i <= last; i++ {
 		pfm.markRangeInIovec(pfm.cache.iovecs[i], startOfs, endOfs)
@@ -830,7 +824,6 @@ func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 		// the next chunk(s)
 		if pfm.state == PFM_DETECT_SEQ {
 			pfm.state = PFM_PREFETCH_IN_PROGRESS
-			pfm.sequentiallyAccessed = true
 		}
 
 		// increase io size, using a bounded exponential formula
@@ -841,7 +834,7 @@ func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 		if pfm.cache.prefetchIoSize == pgs.prefetchMaxIoSize {
 			// Give each stream at least one read-ahead request. If there
 			// are only a few streams, we can give more.
-			nStreams := len(pgs.files)
+			nStreams := len(pgs.handlesInfo)
 			nReadAhead := pgs.maxNumChunksReadAhead / nStreams
 			nReadAhead = MaxInt(1, nReadAhead)
 
@@ -856,6 +849,7 @@ func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 			pfm.state = PFM_EOF
 		}
 	}
+	return true
 }
 
 
@@ -960,9 +954,6 @@ func (pgs *PrefetchGlobalState) getDataFromCache(
 			// wait until the data arrives
 			// release locks, and try again
 			//
-			// TODO: do we really need this?
-			//pfm.mutex.Unlock()
-			//pfm = pgs.getAndLockPfm(pfm.f)
 			continue
 
 		default:
@@ -978,8 +969,8 @@ func (pgs *PrefetchGlobalState) getDataFromCache(
 // and return the data if so. Otherwise, return nil.
 //
 // we are holding the the lock here, so we don't want to wait for any conditions.
-func (pgs *PrefetchGlobalState) CacheLookup(f File, startOfs int64, endOfs int64, data []byte) (bool, int) {
-	pfm := pgs.getAndLockPfm(f)
+func (pgs *PrefetchGlobalState) CacheLookup(hid fuseops.HandleID, startOfs int64, endOfs int64, data []byte) (bool, int) {
+	pfm := pgs.getAndLockPfm(hid)
 	if pfm == nil {
 		// file is not tracked, no prefetch data is available
 		return false, 0
@@ -1002,13 +993,22 @@ func (pgs *PrefetchGlobalState) CacheLookup(f File, startOfs int64, endOfs int64
 
 	case PFM_DETECT_SEQ:
 		// No data is cached. Only detecting if there is sequential access.
-		pgs.markAccessedAndMaybeStartPrefetch(pfm, startOfs, endOfs)
+		ok := pgs.markAccessedAndMaybeStartPrefetch(pfm, startOfs, endOfs)
+		if !ok {
+			pfm.reset()
+		}
 		return false, 0
 
 	case PFM_PREFETCH_IN_PROGRESS:
 		// ongoing prefetch IO
 		pgs.markAccessedAndMaybeStartPrefetch(pfm, startOfs, endOfs)
-		return pgs.getDataFromCache(pfm, startOfs, endOfs, data)
+		ok, len := pgs.getDataFromCache(pfm, startOfs, endOfs, data)
+		if !ok {
+			// The file is not accessed sequentially.
+			// zero out the cache and start over.
+			pfm.reset()
+		}
+		return ok, len
 
 	case PFM_EOF:
 		// don't issue any more prefetch IOs, we have reached the end of the file
