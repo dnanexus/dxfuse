@@ -1352,8 +1352,8 @@ func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp,
 
 	// See if the data has already been prefetched.
 	// This call will wait, if a prefetch IO is in progress.
-	ok, len := fsys.pgs.CacheLookup(fh.hid, op.Offset, endOfs, op.Dst)
-	if ok {
+	len := fsys.pgs.CacheLookup(fh.hid, op.Offset, endOfs, op.Dst)
+	if len > 0 {
 		op.BytesRead = len
 		return nil
 	}

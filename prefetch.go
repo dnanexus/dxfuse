@@ -561,7 +561,8 @@ func (pgs *PrefetchGlobalState) firstAccessToStream(pfm *PrefetchFileMetadata, o
 		pfm.log("first IO %d", ofs)
 	}
 
-	startOfs := (ofs / prefetchMinIoSize) * prefetchMinIoSize
+	pageSize := int64(4 * KiB)
+	startOfs := (ofs / pageSize) * pageSize
 
 	iov1 := &Iovec{
 		ioSize : prefetchMinIoSize,
@@ -856,13 +857,15 @@ func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 const (
 	DATA_OUTSIDE_CACHE = 1 // data not in cache
 	DATA_IN_CACHE      = 2 // data is in cache
-	DATA_WAIT          = 3 // need to wait for some of the IOs
+	DATA_HOLE          = 3 // we would have the data if we were doing caching
+	DATA_WAIT          = 4 // need to wait for some of the IOs
 )
 
 func cacheCode2string(retCode int) string {
 	switch retCode {
 	case DATA_OUTSIDE_CACHE: return "OUTSIDE_CACHE"
 	case DATA_IN_CACHE: return "IN_CACHE"
+	case DATA_HOLE: return "HOLE"
 	case DATA_WAIT : return "WAIT"
 	default: panic(fmt.Sprintf("unknown cache code %d", retCode))
 	}
@@ -883,7 +886,7 @@ func (pgs *PrefetchGlobalState) isDataInCache(
 		iov := pfm.cache.iovecs[i]
 		switch iov.state {
 		case IOV_HOLE:
-			return DATA_OUTSIDE_CACHE
+			return DATA_HOLE
 
 		case IOV_IN_FLIGHT:
 			// waiting for prefetch to come back with data.
@@ -914,7 +917,7 @@ func (pgs *PrefetchGlobalState) copyDataFromCache(
 	pfm *PrefetchFileMetadata,
 	startOfs int64,
 	endOfs int64,
-	data  []byte) (bool, int) {
+	data  []byte) int {
 	first, last := pgs.findCoveredRange(pfm, startOfs, endOfs)
 	check(0 <= first && 0 <= last)
 	cursor := 0
@@ -925,7 +928,7 @@ func (pgs *PrefetchGlobalState) copyDataFromCache(
 		len := copy(data[cursor:], subBuf)
 		cursor += len
 	}
-	return true, cursor
+	return cursor
 }
 
 // assumption: the range is entirely in cache.
@@ -936,7 +939,7 @@ func (pgs *PrefetchGlobalState) getDataFromCache(
 	pfm *PrefetchFileMetadata,
 	startOfs int64,
 	endOfs int64,
-	data  []byte) (bool, int) {
+	data  []byte) (int, int) {
 	numTries := 3
 	for i := 0; i < numTries; i++ {
 		retCode := pgs.isDataInCache(pfm, startOfs, endOfs)
@@ -945,15 +948,20 @@ func (pgs *PrefetchGlobalState) getDataFromCache(
 		}
 		switch retCode {
 		case DATA_OUTSIDE_CACHE:
-			return false, 0
+			return retCode, 0
 
 		case DATA_IN_CACHE:
-			return pgs.copyDataFromCache(pfm, startOfs, endOfs, data)
+			cursor := pgs.copyDataFromCache(pfm, startOfs, endOfs, data)
+			return retCode, cursor
+
+		case DATA_HOLE:
+			return retCode, 0
 
 		case DATA_WAIT:
-			// wait until the data arrives
-			// release locks, and try again
-			//
+			// wait until the data arrives, release locks, and try again.
+			// this will happen every time the conditional is triggered.
+			// We expect it to happen just once, but I think it could happen
+			// more than that.
 			continue
 
 		default:
@@ -962,18 +970,17 @@ func (pgs *PrefetchGlobalState) getDataFromCache(
 	}
 
 	pfm.log("strange: we waited %d times for IOs to return from prefetch, but got nothing", numTries)
-	return false, 0
+	return DATA_OUTSIDE_CACHE, 0
 }
 
-// This is done on behalf of a user read request, check if this range is cached of prefetched
-// and return the data if so. Otherwise, return nil.
+// This is done on behalf of a user read request. If this range has been prefetched, copy the data.
+// Return how much data was copied. Return zero length if the data isn't in cache.
 //
-// we are holding the the lock here, so we don't want to wait for any conditions.
-func (pgs *PrefetchGlobalState) CacheLookup(hid fuseops.HandleID, startOfs int64, endOfs int64, data []byte) (bool, int) {
+func (pgs *PrefetchGlobalState) CacheLookup(hid fuseops.HandleID, startOfs int64, endOfs int64, data []byte) int {
 	pfm := pgs.getAndLockPfm(hid)
 	if pfm == nil {
 		// file is not tracked, no prefetch data is available
-		return false, 0
+		return 0
 	}
 	// the PFM is locked now.
 	// make sure it is unlocked when we leave.
@@ -989,7 +996,7 @@ func (pgs *PrefetchGlobalState) CacheLookup(hid fuseops.HandleID, startOfs int64
 		pgs.firstAccessToStream(pfm, startOfs)
 		pfm.state = PFM_DETECT_SEQ
 		pgs.markAccessedAndMaybeStartPrefetch(pfm, startOfs, endOfs)
-		return false, 0
+		return 0
 
 	case PFM_DETECT_SEQ:
 		// No data is cached. Only detecting if there is sequential access.
@@ -997,22 +1004,23 @@ func (pgs *PrefetchGlobalState) CacheLookup(hid fuseops.HandleID, startOfs int64
 		if !ok {
 			pfm.reset()
 		}
-		return false, 0
+		return 0
 
 	case PFM_PREFETCH_IN_PROGRESS:
 		// ongoing prefetch IO
 		pgs.markAccessedAndMaybeStartPrefetch(pfm, startOfs, endOfs)
-		ok, len := pgs.getDataFromCache(pfm, startOfs, endOfs, data)
-		if !ok {
+		retCode, len := pgs.getDataFromCache(pfm, startOfs, endOfs, data)
+		if retCode == DATA_OUTSIDE_CACHE {
 			// The file is not accessed sequentially.
 			// zero out the cache and start over.
 			pfm.reset()
 		}
-		return ok, len
+		return len
 
 	case PFM_EOF:
 		// don't issue any more prefetch IOs, we have reached the end of the file
-		return pgs.getDataFromCache(pfm, startOfs, endOfs, data)
+		_, len := pgs.getDataFromCache(pfm, startOfs, endOfs, data)
+		return len
 
 	default:
 		panic(fmt.Sprintf("bad state %d for fileId=%s", pfm.state, pfm.f.Id))
