@@ -820,28 +820,31 @@ func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 		pfm.log("touch: ofs=%d  len=%d  numAccessed=%d",
 			startOfs, endOfs - startOfs, numAccessed)
 	}
-	if numAccessed == numSlotsInChunk {
-		// A sufficient number of the slots were accessed. Start a prefetch for
-		// the next chunk(s)
-		if pfm.state == PFM_DETECT_SEQ {
-			pfm.state = PFM_PREFETCH_IN_PROGRESS
-		}
-
-		// increase io size, using a bounded exponential formula
-		if pfm.cache.prefetchIoSize < pgs.prefetchMaxIoSize {
-			pfm.cache.prefetchIoSize =
-				MinInt64(pgs.prefetchMaxIoSize, pfm.cache.prefetchIoSize * prefetchIoFactor)
-		}
-		if pfm.cache.prefetchIoSize == pgs.prefetchMaxIoSize {
-			// Give each stream at least one read-ahead request. If there
-			// are only a few streams, we can give more.
-			nStreams := len(pgs.handlesInfo)
-			nReadAhead := pgs.maxNumChunksReadAhead / nStreams
-			nReadAhead = MaxInt(1, nReadAhead)
-
-			pfm.cache.maxNumIovecs = nReadAhead + 1
-		}
+	if numAccessed < numSlotsInChunk {
+		return true
 	}
+	// A sufficient number of the slots were accessed. Start a prefetch for
+	// the next chunk(s)
+
+	if pfm.state == PFM_DETECT_SEQ {
+		pfm.state = PFM_PREFETCH_IN_PROGRESS
+	}
+
+	// increase io size, using a bounded exponential formula
+	if pfm.cache.prefetchIoSize < pgs.prefetchMaxIoSize {
+		pfm.cache.prefetchIoSize =
+			MinInt64(pgs.prefetchMaxIoSize, pfm.cache.prefetchIoSize * prefetchIoFactor)
+	}
+	if pfm.cache.prefetchIoSize == pgs.prefetchMaxIoSize {
+		// Give each stream at least one read-ahead request. If there
+		// are only a few streams, we can give more.
+		nStreams := len(pgs.handlesInfo)
+		nReadAhead := pgs.maxNumChunksReadAhead / nStreams
+		nReadAhead = MaxInt(1, nReadAhead)
+
+		pfm.cache.maxNumIovecs = nReadAhead + 1
+	}
+
 	if pfm.state == PFM_PREFETCH_IN_PROGRESS {
 		pgs.moveCacheWindow(pfm, last)
 
