@@ -782,7 +782,7 @@ main() {
     dx mkdir $projName:/$expr_dir
 
     target_dir=$base_dir/T1
-    dx mkdir $target_dir
+    dx mkdir $projName:/$target_dir
 
     # Start the dxfuse daemon in the background, and wait for it to initilize.
     echo "Mounting dxfuse"
