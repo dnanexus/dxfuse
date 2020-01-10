@@ -12,12 +12,16 @@
   ],
   "outputSpec": [
     {
-      "name" : "runtime",
-      "class" : "int"
+      "name" : "runtime_bam_diff",
+      "class" : "string"
     },
     {
       "name" : "num_lines",
       "class" : "int"
+    },
+    {
+      "name" : "runtime_sambamba",
+      "class" : "string"
     }
   ],
   "runSpec": {
@@ -25,9 +29,6 @@
     "file": "code.sh",
     "distribution": "Ubuntu",
     "release": "16.04",
-    "execDepends" : [
-      {"name" : "tree", "package_manager" : "apt"}
-    ],
     "timeoutPolicy" : {
       "*" : {
         "hours" : 1
