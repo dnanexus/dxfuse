@@ -19,6 +19,34 @@ mountpoint=${baseDir}/MNT
 dxfuseDir=$mountpoint/$projName/$dxDirOnProject
 dxpyDir=${baseDir}/dxCopy/$dxDirOnProject
 
+# Directories created during the test
+writeable_dirs=()
+######################################################################
+
+teardown_complete=0
+
+# cleanup sequence
+function teardown {
+    if [[ $teardown_complete == 1 ]]; then
+        return
+    fi
+    teardown_complete=1
+
+    echo "syncing filesystem"
+    sync
+
+    echo "unmounting dxfuse"
+    cd $HOME
+    sudo umount $mountpoint
+
+    for d in ${writeable_dirs[@]}; do
+        dx rm -r $projName:/$d >& /dev/null || true
+    done
+}
+
+# trap any errors and cleanup
+trap teardown EXIT
+
 ######################################################################
 
 function check_tree {
@@ -200,6 +228,54 @@ function check_parallel_cat {
     rm -r $target_dir
 }
 
+
+function compare_with_dx_download {
+    echo "download recursively with dx download"
+    parentDxpyDir=$(dirname $dxpyDir)
+    if [[ ! -d $parentDxpyDir ]]; then
+        echo "downloading into $parentDxpyDir from $projName:/$dxDirOnProject"
+        mkdir -p $parentDxpyDir
+        dx download --no-progress -o $parentDxpyDir -r $projName:/$dxDirOnProject
+    fi
+
+    # do not exit immediately if there are differences; we want to see the files
+    # that aren't the same
+    diff -r --brief $dxpyDir $dxfuseDir > diff.txt || true
+    if [[ -s diff.txt ]]; then
+        echo "Difference in basic file structure"
+        cat diff.txt
+        echo "===== dxpy ==== "
+        tree $dxpyDir
+        echo
+        echo "===== dxfuse ==== "
+        tree $dxfuseDir
+        exit 1
+    fi
+
+   # find
+    echo "find"
+    check_find
+
+    # grep
+    echo "grep"
+    check_grep
+
+    # tree
+    echo "tree"
+    check_tree
+
+    # ls
+    echo "ls -R"
+    check_ls
+
+    # find
+    echo "head, tail, wc"
+    check_cmd_line_utils
+
+    echo "parallel downloads"
+    check_parallel_cat
+}
+
 # copy a file and check that platform has the correct content
 #
 function check_file_write_content {
@@ -265,7 +341,6 @@ function write_to_read_only_project {
     (echo "hello" > $mountpoint/dxfuse_test_read_only/A.txt) >& cmd_results.txt || true
     local result=$(cat cmd_results.txt)
 
-    echo "result=$result"
     if [[  $result =~ "Operation not permitted" ]]; then
         echo "Correct, we should not be able to modify a project to which we have VIEW access"
     else
@@ -276,18 +351,18 @@ function write_to_read_only_project {
 
 # create directory on mounted FS
 function create_dir {
-    local top_dir=$1
+    local src_dir=$1
     local write_dir=$2
 
     mkdir $write_dir
 
     # copy files to new directory
     echo "copying small files"
-    cp $top_dir/*  $write_dir
+    cp $src_dir/*  $write_dir
 
     # compare resulting files
     echo "comparing files"
-    local files=$(find $top_dir -type f)
+    local files=$(find $src_dir -type f)
     for f in $files; do
         b_name=$(basename $f)
         diff $f $write_dir/$b_name
@@ -690,23 +765,24 @@ main() {
     # clean and make fresh directories
     mkdir -p $mountpoint
 
-    # bash generate random alphanumeric strings
-    target_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
-    target_dir2=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
-    target_dir3=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
-    target_dir4=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+    # generate random alphanumeric strings
+    base_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+    base_dir="base_$base_dir"
     faux_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
     faux_dir="faux_$faux_dir"
     expr_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
     expr_dir="expr_$expr_dir"
-    writeable_dirs=($target_dir $target_dir2 $target_dir3 $target_dir4 $faux_dir $expr_dir)
+    writeable_dirs=($base_dir $faux_dir $expr_dir)
     for d in ${writeable_dirs[@]}; do
         dx rm -r $projName:/$d >& /dev/null || true
     done
 
-    dx mkdir $projName:/$target_dir
+    dx mkdir $projName:/$base_dir
     populate_faux_dir $faux_dir
     dx mkdir $projName:/$expr_dir
+
+    target_dir=$base_dir/T1
+    dx mkdir $projName:/$target_dir
 
     # Start the dxfuse daemon in the background, and wait for it to initilize.
     echo "Mounting dxfuse"
@@ -719,53 +795,11 @@ main() {
     echo "comparing symlink content"
     compare_symlink_content
 
-    echo "download recursively with dx download"
-    parentDxpyDir=$(dirname $dxpyDir)
-    if [[ ! -d $parentDxpyDir ]]; then
-        echo "downloading into $parentDxpyDir from $projName:/$dxDirOnProject"
-        mkdir -p $parentDxpyDir
-        dx download --no-progress -o $parentDxpyDir -r $projName:/$dxDirOnProject
-    fi
-
-    # do not exit immediately if there are differences; we want to see the files
-    # that aren't the same
-    diff -r --brief $dxpyDir $dxfuseDir > diff.txt || true
-    if [[ -s diff.txt ]]; then
-        echo "Difference in basic file structure"
-        cat diff.txt
-        echo "===== dxpy ==== "
-        tree $dxpyDir
-        echo
-        echo "===== dxfuse ==== "
-        tree $dxfuseDir
-        exit 1
-    fi
-
-   # find
-    echo "find"
-    check_find
-
-    # grep
-    echo "grep"
-    check_grep
-
-    # tree
-    echo "tree"
-    check_tree
-
-    # ls
-    echo "ls -R"
-    check_ls
-
-    # find
-    echo "head, tail, wc"
-    check_cmd_line_utils
-
-    echo "parallel downloads"
-    check_parallel_cat
+    echo "compare with dx download"
+    compare_with_dx_download
 
     echo "can write to a small file"
-    check_file_write_content "$mountpoint/$projName" $target_dir
+    check_file_write_content $mountpoint/$projName $target_dir
 
     echo "can write several files to a directory"
     write_files $mountpoint/$projName/$dxDirOnProject/large $mountpoint/$projName/$target_dir
@@ -774,16 +808,16 @@ main() {
     write_to_read_only_project
 
     echo "create directory"
-    create_dir $mountpoint/$projName/$dxDirOnProject/small  $mountpoint/$projName/$target_dir2
+    create_dir $mountpoint/$projName/$dxDirOnProject/small  $mountpoint/$projName/$base_dir/T2
 
     echo "create/remove directory"
-    create_remove_dir "yes" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$target_dir3
-    create_remove_dir "no" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$target_dir3
+    create_remove_dir "yes" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$base_dir/T3
+    create_remove_dir "no" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$base_dir/T3
 
     echo "mkdir rmdir"
-    rmdir_non_empty $mountpoint/$projName/$target_dir4
-    rmdir_not_exist $mountpoint/$projName/$target_dir4
-    mkdir_existing  $mountpoint/$projName/$target_dir4
+    rmdir_non_empty $mountpoint/$projName/$base_dir/T4
+    rmdir_not_exist $mountpoint/$projName/$base_dir/T4
+    mkdir_existing  $mountpoint/$projName/$base_dir/T4
 
     echo "file create remove"
     file_create_existing "$mountpoint/$projName"
@@ -830,14 +864,5 @@ main() {
     echo "directory and file with the same name"
     dir_and_file_with_the_same_name $mountpoint/$projName
 
-#    echo "syncing filesystem"
-#    sync
-
-    echo "unmounting dxfuse"
-    cd $HOME
-    sudo umount $mountpoint
-
-    for d in ${writeable_dirs[@]}; do
-        dx rm -r $projName:/$d >& /dev/null || true
-    done
+    teardown
 }

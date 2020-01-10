@@ -234,7 +234,6 @@ func (px *Posix) FixDir(dxFolder *DxFolder) (*PosixDir, error) {
 		// spread the remaining copies across the faux subdirectories
 		for i, obj := range(dxObjs) {
 			dName := fauxDirNames[i]
-			px.log("i=%d dName=%s", i, dName)
 			vec, ok := fauxSubDirs[dName]
 			if !ok {
 				// need to start a new faux subdir called "dName"
@@ -253,6 +252,8 @@ func (px *Posix) FixDir(dxFolder *DxFolder) (*PosixDir, error) {
 		subdirs: subdirs,
 		fauxSubdirs: fauxSubDirs,
 	}
-	px.log("%v", posixDxFolder)
+	if px.options.VerboseLevel > 1 {
+		px.log("%v", posixDxFolder)
+	}
 	return posixDxFolder, nil
 }

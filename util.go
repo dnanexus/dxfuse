@@ -208,6 +208,7 @@ const (
 type FileHandle struct {
 	fKind int
 	f File
+	hid fuseops.HandleID
 
 	// URL used for downloading file ranges.
 	// Used for read-only files.

@@ -72,20 +72,19 @@ def get_project(project_name):
         raise Exception('Found more than 1 project matching {0}'.format(project_name))
 
 
-def launch_and_wait(project, bench_applet, instance_types):
+def launch_jobs(project, applet, instance_types):
     # Run the workflows
     jobs=[]
-    print("Launching benchmark applet")
+    desc = applet.describe()
+    applet_name = desc["name"]
+    print("Launching applet {}".format(applet_name))
     for itype in instance_types:
         print("instance: {}".format(itype))
-        job = bench_applet.run({},
-                               project=project.get_id(),
-                               instance_type=itype)
+        job = applet.run({},
+                         project=project.get_id(),
+                         instance_type=itype)
         jobs.append(job)
     print("executables: " + ", ".join([a.get_id() for a in jobs]))
-
-    # Wait for completion
-    wait_for_completion(jobs)
     return jobs
 
 
@@ -105,12 +104,16 @@ def extract_results(jobs):
 
 def run_benchmarks(dx_proj, instance_types):
     applet = lookup_applet("dxfuse_benchmark", dx_proj, "/applets")
-    jobs = launch_and_wait(dx_proj, applet, instance_types)
+    jobs = launch_jobs(dx_proj, applet, instance_types)
+    wait_for_completion(jobs)
     extract_results(jobs)
 
 def run_correctness(dx_proj, instance_types):
+    applet_bam_diff = lookup_applet("dxfuse_bam_diff", dx_proj, "/applets")
+    jobs2 = launch_jobs(dx_proj, applet_bam_diff, instance_types[0:1])
     applet = lookup_applet("dxfuse_correctness", dx_proj, "/applets")
-    launch_and_wait(dx_proj, applet, instance_types)
+    jobs1 = launch_jobs(dx_proj, applet, instance_types)
+    wait_for_completion(jobs1 + jobs2)
 
 def main():
     argparser = argparse.ArgumentParser(description="Run benchmarks on several instance types for dxfuse")
