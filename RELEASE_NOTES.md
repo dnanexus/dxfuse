@@ -2,6 +2,9 @@
 
 ## v0.16
 - Fixed bug when a file and a directory have the same name.
+- Improvements to prefetch. If a file-descriptor stops accessing data sequentially, the algorithm will
+give it a second chance. If access pattern becomes sequential again, then it will resume prefetching.
+- Added regression test for `bam` and `samtools` bioinformatics utilities.
 
 ## v0.15
 - The prefetch algorithm recognizes cases where a file is read from the middle. This
