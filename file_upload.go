@@ -136,7 +136,7 @@ func (fugs *FileUploadGlobalState) bulkDataWorker() {
 
 		// upload the data, and store the error code in the chunk
 		// data structure.
-		chunk.err = dxFileUploadPart(
+		chunk.err = DxFileUploadPart(
 			context.TODO(),
 			client,
 			&fugs.dxEnv,
@@ -240,7 +240,7 @@ func (fugs *FileUploadGlobalState) uploadFileData(
 		if err != nil {
 			return err
 		}
-		return dxFileUploadPart(
+		return DxFileUploadPart(
 			context.TODO(),
 			client,
 			&fugs.dxEnv,
@@ -301,7 +301,7 @@ func (fugs *FileUploadGlobalState) createEmptyFile(
 		// we need to upload an empty part, only
 		// then can we close the file
 		ctx := context.TODO()
-		err := dxFileUploadPart(ctx, httpClient, &fugs.dxEnv, upReq.id, 1, make([]byte, 0))
+		err := DxFileUploadPart(ctx, httpClient, &fugs.dxEnv, upReq.id, 1, make([]byte, 0))
 		if err != nil {
 			fugs.log("error uploading empty chunk to file %s", upReq.id)
 			return err

@@ -256,7 +256,7 @@ type ReplyUploadChunk struct {
 	Headers map[string]string `json:"headers"`
 }
 
-func dxFileUploadPart(
+func DxFileUploadPart(
 	ctx context.Context,
 	httpClient *retryablehttp.Client,
 	dxEnv *dxda.DXEnvironment,
@@ -270,10 +270,11 @@ func dxFileUploadPart(
 		Index: index,
 		Md5: hex.EncodeToString(md5Sum[:]),
 	}
-	log.Printf("%v", uploadReq)
+	LogMsg("DxFileUploadPart","request=%v", uploadReq)
 
 	reqJson, err := json.Marshal(uploadReq)
 	if err != nil {
+		LogMsg("DxFileUploadPart", "error in marshalling")
 		return err
 	}
 	replyJs, err := dxda.DxAPI(
@@ -284,16 +285,25 @@ func dxFileUploadPart(
 		fmt.Sprintf("%s/upload", fileId),
 		string(reqJson))
 	if err != nil {
-		log.Printf(err.Error())
+		LogMsg("DxFileUploadPart", "error in dxapi call [%s/upload] %v",
+			fileId, err.Error())
 		return err
 	}
 
 	var reply ReplyUploadChunk
 	if err = json.Unmarshal(replyJs, &reply); err != nil {
+		LogMsg("DxFileUploadPart", "error in unmarshalling")
 		return err
 	}
+	LogMsg("DxFileUploadPart", "reply headers = %v", reply.Headers)
+	LogMsg("DxFileUploadPart", "Url = %s", reply.Url)
 
+	// the request provides its own implicit length
+	//delete(reply.Headers, "content-length")
 	_, err = dxda.DxHttpRequest(ctx, httpClient, NumRetriesDefault, "PUT", reply.Url, reply.Headers, data)
+	if err != nil {
+		LogMsg("DxFileUploadPart", "failure in data upload")
+	}
 	return err
 }
 
