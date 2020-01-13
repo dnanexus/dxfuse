@@ -89,6 +89,9 @@ type Filesys struct {
 	// background upload state
 	fugs *FileUploadGlobalState
 
+	// API to dx
+	ops *DxOps
+
 	// all open files
 	fhTable map[fuseops.HandleID]*FileHandle
 	fhFreeList []fuseops.HandleID

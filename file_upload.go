@@ -40,6 +40,7 @@ type FileUploadGlobalState struct {
 	wg              sync.WaitGroup
 	mutex           sync.Mutex
 	mdb            *MetadataDb
+	ops            *DxOps
 
 	// list of files undergoing upload. If the flag is true, the file should be
 	// uploaded. If it is false, the upload was cancelled.
@@ -77,6 +78,7 @@ func NewFileUploadGlobalState(
 		chunkQueue : make(chan *Chunk, chunkQueueSize),
 
 		mutex : sync.Mutex{},
+		ops : NewDxOps(dxEnv, options),
 		ongoingOps : make(map[string]bool, 0),
 	}
 
@@ -136,10 +138,9 @@ func (fugs *FileUploadGlobalState) bulkDataWorker() {
 
 		// upload the data, and store the error code in the chunk
 		// data structure.
-		chunk.err = DxFileUploadPart(
+		chunk.err = fugs.ops.DxFileUploadPart(
 			context.TODO(),
 			client,
-			&fugs.dxEnv,
 			chunk.fileId, chunk.index, chunk.data)
 
 		// release the memory used by the chunk, we no longer
@@ -202,7 +203,7 @@ func (fugs *FileUploadGlobalState) calcPartSize(param FileUploadParameters, file
 }
 
 // read a range in a file
-func readFileExtent(filename string, ofs int64, len int) ([]byte, error) {
+func readLocalFileExtent(filename string, ofs int64, len int) ([]byte, error) {
 	fReader, err := os.Open(filename)
 	if err != nil {
 		return nil, err
@@ -236,14 +237,13 @@ func (fugs *FileUploadGlobalState) uploadFileData(
 		// This is a small file, upload it synchronously.
 		// This ensures that only large chunks are uploaded by the bulk-threads,
 		// improving fairness.
-		data, err := readFileExtent(upReq.localPath, 0, int(upReq.fileSize))
+		data, err := readLocalFileExtent(upReq.localPath, 0, int(upReq.fileSize))
 		if err != nil {
 			return err
 		}
-		return DxFileUploadPart(
+		return fugs.ops.DxFileUploadPart(
 			context.TODO(),
 			client,
-			&fugs.dxEnv,
 			upReq.id, 1, data)
 	}
 
@@ -256,7 +256,7 @@ func (fugs *FileUploadGlobalState) uploadFileData(
 	for ofs <= fileEndOfs {
 		chunkEndOfs := MinInt64(ofs + upReq.partSize - 1, fileEndOfs)
 		chunkLen := chunkEndOfs - ofs
-		buf, err := readFileExtent(upReq.localPath, ofs, int(chunkLen))
+		buf, err := readLocalFileExtent(upReq.localPath, ofs, int(chunkLen))
 		if err != nil {
 			return err
 		}
@@ -301,7 +301,7 @@ func (fugs *FileUploadGlobalState) createEmptyFile(
 		// we need to upload an empty part, only
 		// then can we close the file
 		ctx := context.TODO()
-		err := DxFileUploadPart(ctx, httpClient, &fugs.dxEnv, upReq.id, 1, make([]byte, 0))
+		err := fugs.ops.DxFileUploadPart(ctx, httpClient, upReq.id, 1, make([]byte, 0))
 		if err != nil {
 			fugs.log("error uploading empty chunk to file %s", upReq.id)
 			return err
@@ -335,7 +335,7 @@ func (fugs *FileUploadGlobalState) uploadFileDataAndWait(
 		fugs.log("Closing %s", upReq.id)
 	}
 	ctx := context.TODO()
-	return DxFileCloseAndWait(ctx, client, &fugs.dxEnv, upReq.id, fugs.options.Verbose)
+	return fugs.ops.DxFileCloseAndWait(ctx, client, upReq.id, fugs.options.Verbose)
 }
 
 // check if the upload has been cancelled

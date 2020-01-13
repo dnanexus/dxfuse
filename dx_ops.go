@@ -6,12 +6,28 @@ import (
 	"encoding/json"
 	"encoding/hex"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/dnanexus/dxda"
 	"github.com/hashicorp/go-retryablehttp"
 )
+
+type DxOps struct {
+	dxEnv   dxda.DXEnvironment
+	options  Options
+}
+
+func NewDxOps(dxEnv dxda.DXEnvironment, options Options) *DxOps {
+	return &DxOps{
+		dxEnv : dxEnv,
+		options : options,
+	}
+}
+
+func (ops *DxOps) log(a string, args ...interface{}) {
+	LogMsg("dx_ops", a, args...)
+}
+
 
 type RequestFolderNew struct {
 	ProjId   string `json:"project"`
@@ -23,10 +39,9 @@ type ReplyFolderNew struct {
 	Id string `json:"id"`
 }
 
-func DxFolderNew(
+func (ops *DxOps) DxFolderNew(
 	ctx context.Context,
 	httpClient *retryablehttp.Client,
-	dxEnv *dxda.DXEnvironment,
 	projId string,
 	folder string) error {
 
@@ -43,7 +58,7 @@ func DxFolderNew(
 		ctx,
 		httpClient,
 		NumRetriesDefault,
-		dxEnv,
+		&ops.dxEnv,
 		fmt.Sprintf("%s/newFolder", projId),
 		string(payload))
 	if err != nil {
@@ -68,10 +83,9 @@ type ReplyFolderRemove struct {
 	Id string `json:"id"`
 }
 
-func DxFolderRemove(
+func (ops *DxOps) DxFolderRemove(
 	ctx context.Context,
 	httpClient *retryablehttp.Client,
-	dxEnv *dxda.DXEnvironment,
 	projId string,
 	folder string) error {
 
@@ -87,7 +101,7 @@ func DxFolderRemove(
 		ctx,
 		httpClient,
 		NumRetriesDefault,
-		dxEnv,
+		&ops.dxEnv,
 		fmt.Sprintf("%s/removeFolder", projId),
 		string(payload))
 	if err != nil {
@@ -113,10 +127,9 @@ type ReplyRemoveObjects struct {
 }
 
 
-func DxRemoveObjects(
+func (ops *DxOps) DxRemoveObjects(
 	ctx context.Context,
 	httpClient *retryablehttp.Client,
-	dxEnv *dxda.DXEnvironment,
 	projId string,
 	objectIds []string) error {
 
@@ -132,7 +145,7 @@ func DxRemoveObjects(
 		ctx,
 		httpClient,
 		NumRetriesDefault,
-		dxEnv,
+		&ops.dxEnv,
 		fmt.Sprintf("%s/removeObjects", projId),
 		string(payload))
 	if err != nil {
@@ -159,10 +172,9 @@ type ReplyNewFile struct {
 	Id string `json:"id"`
 }
 
-func DxFileNew(
+func (ops *DxOps) DxFileNew(
 	ctx context.Context,
 	httpClient *retryablehttp.Client,
-	dxEnv *dxda.DXEnvironment,
 	nonceStr string,
 	projId string,
 	fname string,
@@ -179,7 +191,7 @@ func DxFileNew(
 	if err != nil {
 		return "", err
 	}
-	repJs, err := dxda.DxAPI(ctx, httpClient, NumRetriesDefault, dxEnv, "file/new", string(payload))
+	repJs, err := dxda.DxAPI(ctx, httpClient, NumRetriesDefault, &ops.dxEnv, "file/new", string(payload))
 	if err != nil {
 		return "", err
 	}
@@ -193,10 +205,9 @@ func DxFileNew(
 	return reply.Id, nil
 }
 
-func DxFileCloseAndWait(
+func (ops *DxOps) DxFileCloseAndWait(
 	ctx context.Context,
 	httpClient *retryablehttp.Client,
-	dxEnv *dxda.DXEnvironment,
 	fid string,
 	verbose bool) error {
 
@@ -204,7 +215,7 @@ func DxFileCloseAndWait(
 		ctx,
 		httpClient,
 		NumRetriesDefault,
-		dxEnv,
+		&ops.dxEnv,
 		fmt.Sprintf("%s/close", fid),
 		"{}")
 	if err != nil {
@@ -215,7 +226,7 @@ func DxFileCloseAndWait(
 	start := time.Now()
 	deadline := start.Add(fileCloseMaxWaitTime)
         for true {
-		fDesc, err := DxDescribe(ctx, httpClient, dxEnv, fid, false)
+		fDesc, err := DxDescribe(ctx, httpClient, &ops.dxEnv, fid, false)
 		if err != nil {
 			return err
 		}
@@ -227,7 +238,7 @@ func DxFileCloseAndWait(
 			// not done yet.
 			if verbose {
 				elapsed := time.Now().Sub(start)
-				log.Printf("Waited %s for file %s to close", elapsed.String(), fid)
+				ops.log("Waited %s for file %s to close", elapsed.String(), fid)
 			}
 			time.Sleep(fileCloseWaitTime)
 
@@ -256,10 +267,9 @@ type ReplyUploadChunk struct {
 	Headers map[string]string `json:"headers"`
 }
 
-func DxFileUploadPart(
+func (ops *DxOps) DxFileUploadPart(
 	ctx context.Context,
 	httpClient *retryablehttp.Client,
-	dxEnv *dxda.DXEnvironment,
 	fileId string,
 	index int,
 	data []byte) error {
@@ -270,41 +280,37 @@ func DxFileUploadPart(
 		Index: index,
 		Md5: hex.EncodeToString(md5Sum[:]),
 	}
-	LogMsg("DxFileUploadPart","request=%v", uploadReq)
 
 	reqJson, err := json.Marshal(uploadReq)
 	if err != nil {
-		LogMsg("DxFileUploadPart", "error in marshalling")
 		return err
 	}
 	replyJs, err := dxda.DxAPI(
 		ctx,
 		httpClient,
 		NumRetriesDefault,
-		dxEnv,
+		&ops.dxEnv,
 		fmt.Sprintf("%s/upload", fileId),
 		string(reqJson))
 	if err != nil {
-		LogMsg("DxFileUploadPart", "error in dxapi call [%s/upload] %v",
+		ops.log("DxFileUploadPart", "error in dxapi call [%s/upload] %v",
 			fileId, err.Error())
 		return err
 	}
 
 	var reply ReplyUploadChunk
 	if err = json.Unmarshal(replyJs, &reply); err != nil {
-		LogMsg("DxFileUploadPart", "error in unmarshalling")
 		return err
 	}
-	LogMsg("DxFileUploadPart", "reply headers = %v", reply.Headers)
-	LogMsg("DxFileUploadPart", "Url = %s", reply.Url)
 
 	// the request provides its own implicit length
 	//delete(reply.Headers, "content-length")
 	_, err = dxda.DxHttpRequest(ctx, httpClient, NumRetriesDefault, "PUT", reply.Url, reply.Headers, data)
 	if err != nil {
-		LogMsg("DxFileUploadPart", "failure in data upload")
+		ops.log("DxFileUploadPart", "failure in data upload")
+		return err
 	}
-	return err
+	return nil
 }
 
 
@@ -320,10 +326,9 @@ type ReplyRename struct {
 //  API method: /class-xxxx/rename
 //
 //  rename a data object
-func DxRename(
+func (ops *DxOps) DxRename(
 	ctx context.Context,
 	httpClient *retryablehttp.Client,
-	dxEnv *dxda.DXEnvironment,
 	projId string,
 	fileId string,
 	newName string) error {
@@ -337,7 +342,7 @@ func DxRename(
 		return err
 	}
 	repJs, err := dxda.DxAPI(
-		ctx, httpClient, NumRetriesDefault, dxEnv,
+		ctx, httpClient, NumRetriesDefault, &ops.dxEnv,
 		fmt.Sprintf("%s/rename", fileId),
 		string(payload))
 	if err != nil {
@@ -366,16 +371,17 @@ type ReplyMove struct {
 //  API method: /class-xxxx/move
 //
 // Moves the specified data objects and folders to a destination folder in the same container.
-func DxMove(
+func (ops *DxOps) DxMove(
 	ctx context.Context,
 	httpClient *retryablehttp.Client,
-	dxEnv *dxda.DXEnvironment,
 	projId      string,
 	objectIds []string,
 	folders   []string,
 	destination string) error {
 
-	LogMsg("dx_ops", "%s source folders=%v  -> %s", projId, folders, destination)
+	if ops.options.Verbose {
+		ops.log("dx_ops", "%s source folders=%v  -> %s", projId, folders, destination)
+	}
 	var request RequestMove
 	request.Objects = objectIds
 	request.Folders = folders
@@ -386,7 +392,7 @@ func DxMove(
 		return err
 	}
 	repJs, err := dxda.DxAPI(
-		ctx, httpClient, NumRetriesDefault, dxEnv,
+		ctx, httpClient, NumRetriesDefault, &ops.dxEnv,
 		fmt.Sprintf("%s/move", projId),
 		string(payload))
 	if err != nil {
@@ -410,10 +416,9 @@ type ReplyRenameFolder struct {
 	Id string `json:"id"`
 }
 
-func DxRenameFolder(
+func (ops *DxOps) DxRenameFolder(
 	ctx context.Context,
 	httpClient *retryablehttp.Client,
-	dxEnv *dxda.DXEnvironment,
 	projId string,
 	folder string,
 	newName string) error {
@@ -428,7 +433,7 @@ func DxRenameFolder(
 	}
 
 	repJs, err := dxda.DxAPI(
-		ctx, httpClient, NumRetriesDefault, dxEnv,
+		ctx, httpClient, NumRetriesDefault, &ops.dxEnv,
 		fmt.Sprintf("%s/renameFolder", projId),
 		string(payload))
 	if err != nil {
@@ -458,10 +463,9 @@ type ReplyClone struct {
 	Exists []string `json:"exists"`
 }
 
-func DxClone(
+func (ops *DxOps) DxClone(
 	ctx context.Context,
 	httpClient *retryablehttp.Client,
-	dxEnv *dxda.DXEnvironment,
 	srcProjId string,
 	srcId string,
 	destProjId string,
@@ -482,7 +486,7 @@ func DxClone(
 	}
 
 	repJs, err := dxda.DxAPI(
-		ctx, httpClient, NumRetriesDefault, dxEnv,
+		ctx, httpClient, NumRetriesDefault, &ops.dxEnv,
 		fmt.Sprintf("%s/clone", srcProjId),
 		string(payload))
 	if err != nil {
