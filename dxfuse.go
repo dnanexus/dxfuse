@@ -39,6 +39,7 @@ func NewDxfuse(
 		dbFullPath : DatabaseFile,
 		mutex : sync.Mutex{},
 		httpClientPool: httpIoPool,
+		ops : NewDxOps(dxEnv, options),
 		fhTable : make(map[fuseops.HandleID]*FileHandle),
 		fhFreeList : make([]fuseops.HandleID, 0),
 		dhTable : make(map[fuseops.HandleID]*DirHandle),
@@ -450,7 +451,7 @@ func (fsys *Filesys) MkDir(ctx context.Context, op *fuseops.MkDirOp) error {
 
 	// create the directory on dnanexus
 	folderFullPath := parentDir.ProjFolder + "/" + op.Name
-	err = DxFolderNew(ctx, oph.httpClient, &fsys.dxEnv, parentDir.ProjId, folderFullPath)
+	err = fsys.ops.DxFolderNew(ctx, oph.httpClient, parentDir.ProjId, folderFullPath)
 	if err != nil {
 		fsys.log("Error in creating directory (%s:%s) on dnanexus: %s",
 			parentDir.ProjId, folderFullPath, err.Error())
@@ -550,7 +551,7 @@ func (fsys *Filesys) RmDir(ctx context.Context, op *fuseops.RmDirOp) error {
 	if !childDir.faux {
 		// The directory exists and is empty, we can remove it.
 		folderFullPath := parentDir.ProjFolder + "/" + op.Name
-		err = DxFolderRemove(ctx, oph.httpClient, &fsys.dxEnv, parentDir.ProjId, folderFullPath)
+		err = fsys.ops.DxFolderRemove(ctx, oph.httpClient, parentDir.ProjId, folderFullPath)
 		if err != nil {
 			fsys.log("Error in removing directory (%s:%s) on dnanexus: %s",
 				parentDir.ProjId, folderFullPath, err.Error())
@@ -657,8 +658,8 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	localPath := fmt.Sprintf("%s/%d_%s", CreatedFilesDir, cnt, op.Name)
 
 	// create the file object on the platform.
-	fileId, err := DxFileNew(
-		ctx, oph.httpClient, &fsys.dxEnv, fsys.nonce.String(),
+	fileId, err := fsys.ops.DxFileNew(
+		ctx, oph.httpClient, fsys.nonce.String(),
 		parentDir.ProjId, op.Name, parentDir.ProjFolder)
 	if err != nil {
 		fsys.log("Error in creating file (%s:%s/%s) on dnanexus: %s",
@@ -778,8 +779,8 @@ func (fsys *Filesys) CreateLink(ctx context.Context, op *fuseops.CreateLinkOp) e
 	}
 
 	// create a link on the platform. This is done with the clone call.
-	ok, err = DxClone(
-		ctx, oph.httpClient, &fsys.dxEnv,
+	ok, err = fsys.ops.DxClone(
+		ctx, oph.httpClient,
 		targetFile.ProjId,    // source project
 		targetFile.Id,        // source id
 		parentDir.ProjId,     // destination project id
@@ -822,7 +823,7 @@ func (fsys *Filesys) renameFile(
 	newName string) error {
 	if oldParentDir.Inode == newParentDir.Inode {
 		// /file-xxxx/rename  API call
-		err := DxRename(ctx, oph.httpClient, &fsys.dxEnv, file.ProjId, file.Id, newName)
+		err := fsys.ops.DxRename(ctx, oph.httpClient, file.ProjId, file.Id, newName)
 		if err != nil {
 			fsys.log("Error in renaming file (%s:%s%s) on dnanexus: %s",
 				file.ProjId, oldParentDir.ProjFolder, file.Name,
@@ -836,7 +837,7 @@ func (fsys *Filesys) renameFile(
 		// move the file on the platform
 		var objIds []string
 		objIds = append(objIds, file.Id)
-		err := DxMove(ctx, oph.httpClient, &fsys.dxEnv, file.ProjId,
+		err := fsys.ops.DxMove(ctx, oph.httpClient, file.ProjId,
 			objIds, nil, newParentDir.ProjFolder)
 		if err != nil {
 			fsys.log("Error in moving file (%s:%s/%s) on dnanexus: %s",
@@ -868,8 +869,8 @@ func (fsys *Filesys) renameDir(
 
 	if oldParentDir.Inode == newParentDir.Inode {
 		// rename a folder, but leave it under the same parent
-		err := DxRenameFolder(
-			ctx, oph.httpClient, &fsys.dxEnv,
+		err := fsys.ops.DxRenameFolder(
+			ctx, oph.httpClient,
 			projId,
 			oldDir.ProjFolder,
 			newName)
@@ -891,8 +892,8 @@ func (fsys *Filesys) renameDir(
 		folders := make([]string, 1)
 		folders[0] = oldDir.ProjFolder
 
-		err := DxMove(
-			ctx, oph.httpClient, &fsys.dxEnv,
+		err := fsys.ops.DxMove(
+			ctx, oph.httpClient,
 			projId,
 			objIds, folders,
 			newParentDir.ProjFolder)
@@ -1071,7 +1072,7 @@ func (fsys *Filesys) Unlink(ctx context.Context, op *fuseops.UnlinkOp) error {
 	// remove the file on the platform
 	objectIds := make([]string, 1)
 	objectIds[0] = fileToRemove.Id
-	if err := DxRemoveObjects(ctx, oph.httpClient, &fsys.dxEnv, parentDir.ProjId, objectIds); err != nil {
+	if err := fsys.ops.DxRemoveObjects(ctx, oph.httpClient, parentDir.ProjId, objectIds); err != nil {
 		fsys.log("Error in removing file (%s:%s/%s) on dnanexus: %s",
 			parentDir.ProjId, parentDir.ProjFolder, op.Name,
 			err.Error())

@@ -311,6 +311,33 @@ function check_file_write_content {
         echo "should be: $content"
         echo "found: $content2"
     fi
+
+
+    # create an empty file
+    touch $write_dir/B.txt
+    ls -l $write_dir/B.txt
+
+    # wait for the file to achieve the closed state
+    while true; do
+        file_state=$(dx describe $projName:/$target_dir/B.txt --json | grep state | awk '{ gsub("[,\"]", "", $2); print $2 }')
+        if [[ "$file_state" == "closed" ]]; then
+            break
+        fi
+        sleep 2
+    done
+
+    echo "file is closed"
+    dx ls -l $projName:/$target_dir/B.txt
+
+    # compare the data
+    local content3=$(dx cat $projName:/$target_dir/B.txt)
+    if [[ "$content3" == "" ]]; then
+        echo "correct"
+    else
+        echo "bad content"
+        echo "should be empty"
+        echo "found: $content3"
+    fi
 }
 
 # copy files inside the mounted filesystem
