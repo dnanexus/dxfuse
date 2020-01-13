@@ -23,6 +23,7 @@ type DxDescribeDataObject struct {
 	ProjId         string
 	Name           string
 	State          string
+	ArchivalState  string
 	Folder         string
 	Size           int64
 	CtimeSeconds   int64
@@ -81,6 +82,7 @@ type DxDescribeRaw struct {
 	ProjId           string `json:"project"`
 	Name             string `json:"name"`
 	State            string `json:"state"`
+	ArchivalState    string `json:"archivalState"`
 	Folder           string `json:"folder"`
 	CreatedMillisec  int64 `json:"created"`
 	ModifiedMillisec int64 `json:"modified"`
@@ -105,6 +107,7 @@ func submit(
 				"project" : true,
 				"name" : true,
 				"state" : true,
+				"archivalState" : true,
 				"folder" : true,
 				"created" : true,
 				"modified" : true,
@@ -145,6 +148,11 @@ func submit(
 				continue
 			}
 		}
+		if descRaw.ArchivalState != "live" {
+			log.Printf("File %s is not live, it is %s, dropping", descRaw.Id, descRaw.ArchivalState)
+			continue
+		}
+
 		symlinkUrl := ""
 		if descRaw.SymlinkPath != nil {
 			symlinkUrl = descRaw.SymlinkPath.Url
@@ -155,6 +163,7 @@ func submit(
 			ProjId : descRaw.ProjId,
 			Name : descRaw.Name,
 			State : descRaw.State,
+			ArchivalState : descRaw.ArchivalState,
 			Folder : descRaw.Folder,
 			Size : descRaw.Size,
 			CtimeSeconds : descRaw.CreatedMillisec / 1000,
