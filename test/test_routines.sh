@@ -831,17 +831,17 @@ main() {
     fi
     sudo -E $dxfuse -uid $(id -u) -gid $(id -g) $flags $mountpoint dxfuse_test_data dxfuse_test_read_only ArchivedStuff
 
-#    echo "comparing symlink content"
-#    compare_symlink_content
-#
-#    echo "compare with dx download"
-#    compare_with_dx_download
-#
-#    echo "can write to a small file"
-#    check_file_write_content $mountpoint/$projName $target_dir
-#
-#    echo "can write several files to a directory"
-#    write_files $mountpoint/$projName/$dxDirOnProject/large $mountpoint/$projName/$target_dir
+    echo "comparing symlink content"
+    compare_symlink_content
+
+    echo "compare with dx download"
+    compare_with_dx_download
+
+    echo "can write to a small file"
+    check_file_write_content $mountpoint/$projName $target_dir
+
+    echo "can write several files to a directory"
+    write_files $mountpoint/$projName/$dxDirOnProject/large $mountpoint/$projName/$target_dir
 
     echo "can't write to read-only project"
     write_to_read_only_project
@@ -849,62 +849,62 @@ main() {
     echo "can't see archived files"
     archived_files $mountpoint/ArchivedStuff
 
-#    echo "create directory"
-#    create_dir $mountpoint/$projName/$dxDirOnProject/small  $mountpoint/$projName/$base_dir/T2
+    echo "create directory"
+    create_dir $mountpoint/$projName/$dxDirOnProject/small  $mountpoint/$projName/$base_dir/T2
 
-#    echo "create/remove directory"
-#    create_remove_dir "yes" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$base_dir/T3
-#    create_remove_dir "no" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$base_dir/T3
-#
-#    echo "mkdir rmdir"
-#    rmdir_non_empty $mountpoint/$projName/$base_dir/T4
-#    rmdir_not_exist $mountpoint/$projName/$base_dir/T4
-#    mkdir_existing  $mountpoint/$projName/$base_dir/T4
-#
-#    echo "file create remove"
-#    file_create_existing "$mountpoint/$projName"
-#    file_remove_non_exist "$mountpoint/$projName"
-#
-#    echo "move file I"
-#    move_file $mountpoint/$projName/$expr_dir
-#
-#    echo "move file II"
-#    move_file2 $mountpoint/$projName/$expr_dir
-#
-#    echo "rename directory"
-#    rename_dir $mountpoint/$projName/$expr_dir
-#    rename_dir /tmp
-#    diff -r /tmp/B $mountpoint/$projName/$expr_dir/B
-#    rm -rf /tmp/B $mountpoint/$projName/$expr_dir/B
-#
-#    echo "move directory"
-#    move_dir $mountpoint/$projName/$expr_dir
-#
-#    echo "move a deep directory"
-#    move_dir_deep $mountpoint/$projName/$expr_dir 1
-#    move_dir_deep /tmp 2
-#    cd $HOME
-#
-#    diff /tmp/results_1.txt /tmp/results_2.txt
-#    diff -r $mountpoint/$projName/$expr_dir/D /tmp/D
-#    rm -rf $mountpoint/$projName/$expr_dir/D
-#    rm -rf /tmp/D
-#
-#    echo "checking illegal directory moves"
-#    move_non_existent_dir "$mountpoint/$projName"
-#    move_dir_to_file "$mountpoint/$projName"
-#
-#    echo "faux dirs cannot be moved"
-#    faux_dirs_move $mountpoint/$projName/$faux_dir
-#
-#    echo "faux dir operations"
-#    faux_dirs_remove $mountpoint/$projName/$faux_dir
-#
-#    echo "hard links"
-#    hard_links $mountpoint/$projName/$faux_dir
-#
-#    echo "directory and file with the same name"
-#    dir_and_file_with_the_same_name $mountpoint/$projName
+    echo "create/remove directory"
+    create_remove_dir "yes" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$base_dir/T3
+    create_remove_dir "no" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$base_dir/T3
+
+    echo "mkdir rmdir"
+    rmdir_non_empty $mountpoint/$projName/$base_dir/T4
+    rmdir_not_exist $mountpoint/$projName/$base_dir/T4
+    mkdir_existing  $mountpoint/$projName/$base_dir/T4
+
+    echo "file create remove"
+    file_create_existing "$mountpoint/$projName"
+    file_remove_non_exist "$mountpoint/$projName"
+
+    echo "move file I"
+    move_file $mountpoint/$projName/$expr_dir
+
+    echo "move file II"
+    move_file2 $mountpoint/$projName/$expr_dir
+
+    echo "rename directory"
+    rename_dir $mountpoint/$projName/$expr_dir
+    rename_dir /tmp
+    diff -r /tmp/B $mountpoint/$projName/$expr_dir/B
+    rm -rf /tmp/B $mountpoint/$projName/$expr_dir/B
+
+    echo "move directory"
+    move_dir $mountpoint/$projName/$expr_dir
+
+    echo "move a deep directory"
+    move_dir_deep $mountpoint/$projName/$expr_dir 1
+    move_dir_deep /tmp 2
+    cd $HOME
+
+    diff /tmp/results_1.txt /tmp/results_2.txt
+    diff -r $mountpoint/$projName/$expr_dir/D /tmp/D
+    rm -rf $mountpoint/$projName/$expr_dir/D
+    rm -rf /tmp/D
+
+    echo "checking illegal directory moves"
+    move_non_existent_dir "$mountpoint/$projName"
+    move_dir_to_file "$mountpoint/$projName"
+
+    echo "faux dirs cannot be moved"
+    faux_dirs_move $mountpoint/$projName/$faux_dir
+
+    echo "faux dir operations"
+    faux_dirs_remove $mountpoint/$projName/$faux_dir
+
+    echo "hard links"
+    hard_links $mountpoint/$projName/$faux_dir
+
+    echo "directory and file with the same name"
+    dir_and_file_with_the_same_name $mountpoint/$projName
 
     teardown
 }
