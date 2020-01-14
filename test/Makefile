@@ -12,13 +12,20 @@ azure: dxfuse copy_all
 dxfuse : $(wildcard ../**/*)
 	go build -o /go/bin/dxfuse /go/src/github.com/dnanexus/dxfuse/cli/main.go
 
-copy_all : dxfuse
+copy_all : dxfuse mk_bench mk_correct mk_bio
+
+mk_bench : dxfuse
+	rm -rf dxfuse_benchmark/resources
 	mkdir -p dxfuse_benchmark/resources/usr/bin
-	cp -f /go/bin/dxfuse dxfuse_benchmark/resources/usr/bin/
+	cp /go/bin/dxfuse dxfuse_benchmark/resources/usr/bin/
+
+mk_correct: dxfuse
+	rm -rf dxfuse_correctness/resources
 	mkdir -p dxfuse_correctness/resources/usr/bin
-	cp -f /go/bin/dxfuse dxfuse_correctness/resources/usr/bin/
-	cp -f test_routines.sh dxfuse_correctness/code.sh
-	mkdir -p dxfuse_bam_diff/resources/usr/bin
+	cp /go/bin/dxfuse dxfuse_correctness/resources/usr/bin/
+	cp test_routines.sh dxfuse_correctness/resources/
+
+mk_bio : dxfuse
 	cp -f /go/bin/dxfuse dxfuse_bam_diff/resources/usr/bin/
 
 clean :

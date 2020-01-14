@@ -11,6 +11,11 @@
     }
   ],
   "outputSpec": [
+    {
+      "name" : "filesystem_log",
+      "class" : "file",
+      "optional" : true
+    }
   ],
   "runSpec": {
     "interpreter": "bash",

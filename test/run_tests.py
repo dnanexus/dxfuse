@@ -72,7 +72,7 @@ def get_project(project_name):
         raise Exception('Found more than 1 project matching {0}'.format(project_name))
 
 
-def launch_jobs(project, applet, instance_types):
+def launch_jobs(project, applet, instance_types, verbose):
     # Run the workflows
     jobs=[]
     desc = applet.describe()
@@ -80,7 +80,10 @@ def launch_jobs(project, applet, instance_types):
     print("Launching applet {}".format(applet_name))
     for itype in instance_types:
         print("instance: {}".format(itype))
-        job = applet.run({},
+        app_args = {}
+        if verbose:
+            app_args = { "verbose" : True }
+        job = applet.run(app_args,
                          project=project.get_id(),
                          instance_type=itype)
         jobs.append(job)
@@ -102,27 +105,34 @@ def extract_results(jobs):
             parts = line.split(",")
             print("{},\t{},\t{},\t{}".format(i_type, parts[0], parts[2], parts[4]))
 
-def run_benchmarks(dx_proj, instance_types):
+def run_benchmarks(dx_proj, instance_types, verbose):
     applet = lookup_applet("dxfuse_benchmark", dx_proj, "/applets")
-    jobs = launch_jobs(dx_proj, applet, instance_types)
+    jobs = launch_jobs(dx_proj, applet, instance_types, verbose)
     wait_for_completion(jobs)
     extract_results(jobs)
 
-def run_correctness(dx_proj, instance_types):
-    applet_bam_diff = lookup_applet("dxfuse_bam_diff", dx_proj, "/applets")
-    jobs2 = launch_jobs(dx_proj, applet_bam_diff, instance_types[0:1])
+def run_correctness(dx_proj, instance_types, verbose):
     applet = lookup_applet("dxfuse_correctness", dx_proj, "/applets")
-    jobs1 = launch_jobs(dx_proj, applet, instance_types)
-    wait_for_completion(jobs1 + jobs2)
+    jobs = launch_jobs(dx_proj, applet, instance_types, verbose)
+    wait_for_completion(jobs)
+
+def run_biotools(dx_proj, instance_types, verbose):
+    applet_bam_diff = lookup_applet("dxfuse_bam_diff", dx_proj, "/applets")
+    jobs = launch_jobs(dx_proj, applet_bam_diff, instance_types[0:1], verbose)
+    wait_for_completion(jobs)
 
 def main():
     argparser = argparse.ArgumentParser(description="Run benchmarks on several instance types for dxfuse")
     argparser.add_argument("--project", help="DNAnexus project",
                            default="dxfuse_test_data")
-    argparser.add_argument("--test", help="which testing suite to run [benchmark, correctness]",
+    argparser.add_argument("--test", help="which testing suite to run [bench, correct, bio]",
                            default="correctness")
     argparser.add_argument("--size", help="how large should the test be? [small, large]",
                            default="small")
+    argparser.add_argument("--verbose", help="run the tests in verbose mode",
+                           action='store_true')
+    argparser.set_defaults(verbose=False)
+
     args = argparser.parse_args()
     dx_proj = get_project(args.project)
 
@@ -142,10 +152,12 @@ def main():
         print("Unknown size value {}".format(args.scale))
         exit(1)
 
-    if args.test == "benchmark":
-        run_benchmarks(dx_proj, instance_types)
-    elif args.test == "correctness":
-        run_correctness(dx_proj, instance_types)
+    if args.test.startswith("bench"):
+        run_benchmarks(dx_proj, instance_types, args.verbose)
+    elif args.test.startswith("correct"):
+        run_correctness(dx_proj, instance_types, args.verbose)
+    elif args.test.startswith("bio"):
+        run_biotools(dx_proj, instance_types, args.verbose)
     else:
         print("Unknown test {}".format(args.test))
         exit(1)
