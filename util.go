@@ -93,12 +93,12 @@ type Filesys struct {
 	ops *DxOps
 
 	// all open files
+	fhCounter uint64
 	fhTable map[fuseops.HandleID]*FileHandle
-	fhFreeList []fuseops.HandleID
 
 	// all open directories
+	dhCounter uint64
 	dhTable map[fuseops.HandleID]*DirHandle
-	dhFreeList []fuseops.HandleID
 
 	nonce *Nonce
 	tmpFileCounter uint64
