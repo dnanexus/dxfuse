@@ -1,0 +1,41 @@
+{
+  "name": "bam_diff",
+  "summary": "check that bam diff works with dxfuse",
+  "dxapi": "1.0.0",
+  "version": "0.0.1",
+  "inputSpec": [
+    {
+      "name": "verbose",
+      "class": "boolean",
+      "optional": true
+    }
+  ],
+  "outputSpec": [
+    {
+      "name" : "runtime_bam_diff",
+      "class" : "string"
+    },
+    {
+      "name" : "num_lines",
+      "class" : "int"
+    },
+    {
+      "name" : "runtime_sambamba",
+      "class" : "string"
+    }
+  ],
+  "runSpec": {
+    "interpreter": "bash",
+    "file": "code.sh",
+    "distribution": "Ubuntu",
+    "release": "16.04",
+    "timeoutPolicy" : {
+      "*" : {
+        "hours" : 1
+      }
+    }
+  },
+  "access": {
+    "network" : [ "*" ]
+  }
+}

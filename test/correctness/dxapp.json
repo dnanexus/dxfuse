@@ -1,5 +1,5 @@
 {
-  "name": "dxfuse_correctness",
+  "name": "correctness",
   "summary": "check that various Unix commands work corrects on a dxfuse mounted volume",
   "dxapi": "1.0.0",
   "version": "0.0.1",
@@ -11,6 +11,11 @@
     }
   ],
   "outputSpec": [
+    {
+      "name" : "filesystem_log",
+      "class" : "file",
+      "optional" : true
+    }
   ],
   "runSpec": {
     "interpreter": "bash",

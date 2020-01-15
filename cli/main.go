@@ -210,17 +210,6 @@ func parseCmdLineArgs() Config {
 		os.Exit(1)
 	}
 
-	if dxEnv.DxJobId == "" {
-		fmt.Fprintf(os.Stderr, `
-Warning: running outside a worker. Dxfuse is currently engineered to
-operate inside a cloud worker. The system depends on a good network
-connection to the DNAnexus servers, and to the backing store, which is
-S3 or Azure. Without such connectivity, some operations may take a
-long time, causing operating system timeouts to expire. This can
-result in the filesystem freezing, or being unmounted.
-`)
-	}
-
 	return Config{
 		mountpoint : mountpoint,
 		dxEnv : dxEnv,

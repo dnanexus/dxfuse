@@ -40,10 +40,10 @@ func NewDxfuse(
 		mutex : sync.Mutex{},
 		httpClientPool: httpIoPool,
 		ops : NewDxOps(dxEnv, options),
+		fhCounter : 1,
 		fhTable : make(map[fuseops.HandleID]*FileHandle),
-		fhFreeList : make([]fuseops.HandleID, 0),
+		dhCounter : 1,
 		dhTable : make(map[fuseops.HandleID]*DirHandle),
-		dhFreeList : make([]fuseops.HandleID, 0),
 		nonce : NewNonce(),
 		tmpFileCounter : 0,
 		shutdownCalled : false,
@@ -376,7 +376,6 @@ func (fsys *Filesys) removeFileHandlesWithInode(inode int64) {
 
 	for _, hid := range handles {
 		delete(fsys.fhTable, hid)
-		fsys.fhFreeList = append(fsys.fhFreeList, hid)
 	}
 }
 
@@ -390,7 +389,6 @@ func (fsys *Filesys) removeDirHandlesWithInode(inode int64) {
 
 	for _, did := range handles {
 		delete(fsys.dhTable, did)
-		fsys.dhFreeList = append(fsys.dhFreeList, did)
 	}
 }
 
@@ -576,38 +574,19 @@ func (fsys *Filesys) RmDir(ctx context.Context, op *fuseops.RmDirOp) error {
 // randomized approach.
 //
 func (fsys *Filesys) insertIntoFileHandleTable(fh *FileHandle) fuseops.HandleID {
-	numFree := len(fsys.fhFreeList)
+	fsys.fhCounter++
+	hid := fuseops.HandleID(fsys.fhCounter)
 
-	var id fuseops.HandleID
-	if numFree > 0 {
-		// reuse old file handles
-		id = fsys.fhFreeList[numFree - 1]
-		fsys.fhFreeList = fsys.fhFreeList[:numFree-1]
-	} else {
-		// all file handles are in use, choose a new one.
-		id = fuseops.HandleID(len(fsys.fhTable))
-	}
-
-	fsys.fhTable[id] = fh
-	fh.hid = id
-	return id
+	fsys.fhTable[hid] = fh
+	fh.hid = hid
+	return hid
 }
 
 func (fsys *Filesys) insertIntoDirHandleTable(dh *DirHandle) fuseops.HandleID {
-	numFree := len(fsys.dhFreeList)
-
-	var id fuseops.HandleID
-	if numFree > 0 {
-		// reuse old file handles
-		id = fsys.dhFreeList[numFree - 1]
-		fsys.dhFreeList = fsys.dhFreeList[:numFree-1]
-	} else {
-		// all file handles are in use, choose a new one.
-		id = fuseops.HandleID(len(fsys.dhTable))
-	}
-
-	fsys.dhTable[id] = dh
-	return id
+	fsys.dhCounter++
+	did := fuseops.HandleID(fsys.dhCounter)
+	fsys.dhTable[did] = dh
+	return did
 }
 
 // A CreateRequest asks to create and open a file (not a directory).
@@ -1273,7 +1252,6 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 
 	// release the file handle itself
 	delete(fsys.fhTable, op.Handle)
-	fsys.fhFreeList = append(fsys.fhFreeList, op.Handle)
 
 	// Clear the state involved with this open file descriptor
 	switch fh.fKind {
@@ -1605,6 +1583,5 @@ func (fsys *Filesys) ReleaseDirHandle(ctx context.Context, op *fuseops.ReleaseDi
 	defer fsys.mutex.Unlock()
 
 	delete(fsys.dhTable, op.Handle)
-	fsys.dhFreeList = append(fsys.dhFreeList, op.Handle)
 	return nil
 }

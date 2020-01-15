@@ -1,6 +1,6 @@
 {
-  "name": "dxfuse_bam_diff",
-  "summary": "check that bam diff works with dxfuse",
+  "name": "correctness_downloads",
+  "summary": "check that read-only access works correctly",
   "dxapi": "1.0.0",
   "version": "0.0.1",
   "inputSpec": [
@@ -12,16 +12,9 @@
   ],
   "outputSpec": [
     {
-      "name" : "runtime_bam_diff",
-      "class" : "string"
-    },
-    {
-      "name" : "num_lines",
-      "class" : "int"
-    },
-    {
-      "name" : "runtime_sambamba",
-      "class" : "string"
+      "name" : "filesystem_log",
+      "class" : "file",
+      "optional" : true
     }
   ],
   "runSpec": {
@@ -29,6 +22,9 @@
     "file": "code.sh",
     "distribution": "Ubuntu",
     "release": "16.04",
+    "execDepends" : [
+      {"name" : "tree", "package_manager" : "apt"}
+    ],
     "timeoutPolicy" : {
       "*" : {
         "hours" : 1
@@ -36,6 +32,7 @@
     }
   },
   "access": {
+    "project": "VIEW",
     "network" : [ "*" ]
   }
 }
