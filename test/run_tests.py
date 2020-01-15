@@ -111,18 +111,18 @@ def run_benchmarks(dx_proj, instance_types, verbose):
     wait_for_completion(jobs)
     extract_results(jobs)
 
-def run_correctness(dx_proj, instance_types, verbose):
+def run_correctness(dx_proj, itype, verbose):
     correctness = lookup_applet("correctness", dx_proj, "/applets")
     bam_diff = lookup_applet("bam_diff", dx_proj, "/applets")
     correctness_downloads = lookup_applet("correctness_downloads", dx_proj, "/applets")
-    jobs1 = launch_jobs(dx_proj, correctness, instance_types, verbose)
-    jobs2 = launch_jobs(dx_proj, bam_diff, instance_types[0:1], verbose)
-    jobs3 = launch_jobs(dx_proj, correctness_downloads, instance_types[0:1], verbose)
+    jobs1 = launch_jobs(dx_proj, correctness, [itype], verbose)
+    jobs2 = launch_jobs(dx_proj, bam_diff, [itype], verbose)
+    jobs3 = launch_jobs(dx_proj, correctness_downloads, [itype], verbose)
     wait_for_completion(jobs1 + jobs2 + jobs3)
 
-def run_biotools(dx_proj, instance_types, verbose):
+def run_biotools(dx_proj, itype, verbose):
     bam_diff = lookup_applet("bam_diff", dx_proj, "/applets")
-    jobs2 = launch_jobs(dx_proj, bam_diff, instance_types[0:1], verbose)
+    jobs2 = launch_jobs(dx_proj, bam_diff, [itype], verbose)
     wait_for_completion(jobs)
 
 def main():
@@ -159,9 +159,9 @@ def main():
     if args.test.startswith("bench"):
         run_benchmarks(dx_proj, instance_types, args.verbose)
     elif args.test.startswith("correct"):
-        run_correctness(dx_proj, instance_types, args.verbose)
+        run_correctness(dx_proj, instance_types[0], args.verbose)
     elif args.test.startswith("bio"):
-        run_biotools(dx_proj, instance_types, args.verbose)
+        run_biotools(dx_proj, instance_types[0], args.verbose)
     else:
         print("Unknown test {}".format(args.test))
         exit(1)

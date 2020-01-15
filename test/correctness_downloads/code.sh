@@ -6,7 +6,8 @@
 projName="dxfuse_test_data"
 
 # larger test for a cloud worker
-dxDirOnProject="correctness"
+#dxDirOnProject="correctness"
+dxDirOnProject="mini"
 
 baseDir=$HOME/dxfuse_test
 mountpoint=${baseDir}/MNT
@@ -310,6 +311,4 @@ main() {
     compare_with_dx_download
 
     teardown
-
-    sleep 100000
 }
