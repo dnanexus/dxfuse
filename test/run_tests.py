@@ -15,13 +15,13 @@ from dxpy.exceptions import DXJobFailureError
 # The list of instance types to test on. We don't want too many, because it will be expensive.
 # We are trying to take a representative from small, medium, and large instances.
 aws_ladder = {
-    "small" : ["mem1_ssd1_x4"],
-    "large" : ["mem1_ssd1_x4", "mem1_ssd1_x16", "mem3_ssd1_x32"]
+    "small" : ["mem1_ssd1_v2_x8"],
+    "large" : ["mem1_ssd1_v2_x8", "mem1_ssd1_v2_x16", "mem3_ssd1_v2_x32"]
 }
 
 azure_ladder = {
-    "small" : ["azure:mem1_ssd1_x4"],
-    "large" : ["azure:mem1_ssd1_x4", "azure:mem1_ssd1_x16", "azure:mem3_ssd1_x16"],
+    "small" : ["azure:mem1_ssd1_x8"],
+    "large" : ["azure:mem1_ssd1_x8", "azure:mem1_ssd1_x16", "azure:mem3_ssd1_x16"],
 }
 
 def lookup_applet(name, project, folder):
@@ -106,19 +106,23 @@ def extract_results(jobs):
             print("{},\t{},\t{},\t{}".format(i_type, parts[0], parts[2], parts[4]))
 
 def run_benchmarks(dx_proj, instance_types, verbose):
-    applet = lookup_applet("dxfuse_benchmark", dx_proj, "/applets")
+    applet = lookup_applet("benchmark", dx_proj, "/applets")
     jobs = launch_jobs(dx_proj, applet, instance_types, verbose)
     wait_for_completion(jobs)
     extract_results(jobs)
 
 def run_correctness(dx_proj, instance_types, verbose):
-    applet = lookup_applet("dxfuse_correctness", dx_proj, "/applets")
-    jobs = launch_jobs(dx_proj, applet, instance_types, verbose)
-    wait_for_completion(jobs)
+    correctness = lookup_applet("correctness", dx_proj, "/applets")
+    bam_diff = lookup_applet("bam_diff", dx_proj, "/applets")
+    correctness_downloads = lookup_applet("correctness_downloads", dx_proj, "/applets")
+    jobs1 = launch_jobs(dx_proj, correctness, instance_types, verbose)
+    jobs2 = launch_jobs(dx_proj, bam_diff, instance_types[0:1], verbose)
+    jobs3 = launch_jobs(dx_proj, correctness_downloads, instance_types[0:1], verbose)
+    wait_for_completion(jobs1 + jobs2 + jobs3)
 
 def run_biotools(dx_proj, instance_types, verbose):
-    applet_bam_diff = lookup_applet("dxfuse_bam_diff", dx_proj, "/applets")
-    jobs = launch_jobs(dx_proj, applet_bam_diff, instance_types[0:1], verbose)
+    bam_diff = lookup_applet("bam_diff", dx_proj, "/applets")
+    jobs2 = launch_jobs(dx_proj, bam_diff, instance_types[0:1], verbose)
     wait_for_completion(jobs)
 
 def main():

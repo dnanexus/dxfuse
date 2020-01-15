@@ -1,6 +1,6 @@
 {
-  "name": "dxfuse_correctness",
-  "summary": "check that various Unix commands work corrects on a dxfuse mounted volume",
+  "name": "correctness_downloads",
+  "summary": "check that read-only access works correctly",
   "dxapi": "1.0.0",
   "version": "0.0.1",
   "inputSpec": [
@@ -32,8 +32,7 @@
     }
   },
   "access": {
-    "project": "CONTRIBUTE",
-    "allProjects": "VIEW",
+    "project": "VIEW",
     "network" : [ "*" ]
   }
 }

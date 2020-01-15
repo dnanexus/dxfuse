@@ -1,5 +1,5 @@
 {
-  "name": "dxfuse_benchmark",
+  "name": "benchmark",
   "summary": "streaming benchmark for dxfuse",
   "dxapi": "1.0.0",
   "version": "0.0.1",
