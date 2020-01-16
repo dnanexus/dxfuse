@@ -91,6 +91,11 @@ func NewDxfuse(
 		fsys.httpClientPool <- httpClient
 	} ()
 
+/*	if options.ReadOnly || len(manifest.Directories) == 0 {
+		// we don't need the file upload module
+		return fsys, nil
+	}*/
+
 	projId2Desc := make(map[string]DxDescribePrj)
 	for _, d := range manifest.Directories {
 		pDesc, err := DxDescribeProject(context.TODO(), httpClient, &fsys.dxEnv, d.ProjId)
@@ -101,14 +106,12 @@ func NewDxfuse(
 		projId2Desc[pDesc.Id] = *pDesc
 	}
 
-	if !options.ReadOnly {
-		// initialize background upload state
-		fsys.fugs = NewFileUploadGlobalState(options, dxEnv, projId2Desc)
+	// initialize background upload state
+	fsys.fugs = NewFileUploadGlobalState(options, dxEnv, projId2Desc)
 
-		// Provide the upload module with a reference to the database.
-		// This is needed to report the end of an upload.
-		fsys.fugs.mdb = mdb
-	}
+	// Provide the upload module with a reference to the database.
+	// This is needed to report the end of an upload.
+	fsys.fugs.mdb = mdb
 	return fsys, nil
 }
 
@@ -417,9 +420,6 @@ func (fsys *Filesys) MkDir(ctx context.Context, op *fuseops.MkDirOp) error {
 	if fsys.options.Verbose {
 		fsys.log("CreateDir(%s)", op.Name)
 	}
-	if fsys.options.ReadOnly {
-		return syscall.EPERM
-	}
 
 	// the parent is supposed to be a directory
 	parentDir, ok, err := fsys.mdb.LookupDirByInode(ctx, oph, int64(op.Parent))
@@ -503,9 +503,6 @@ func (fsys *Filesys) RmDir(ctx context.Context, op *fuseops.RmDirOp) error {
 
 	if fsys.options.Verbose {
 		fsys.log("Remove Dir(%s)", op.Name)
-	}
-	if fsys.options.ReadOnly {
-		return syscall.EPERM
 	}
 
 	// the parent is supposed to be a directory
@@ -599,9 +596,6 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 
 	if fsys.options.Verbose {
 		fsys.log("CreateFile(%s)", op.Name)
-	}
-	if fsys.options.ReadOnly {
-		return syscall.EPERM
 	}
 
 	// the parent is supposed to be a directory
@@ -704,9 +698,6 @@ func (fsys *Filesys) CreateLink(ctx context.Context, op *fuseops.CreateLinkOp) e
 	if fsys.options.Verbose {
 		fsys.log("CreateLink (inode=%d) -> (parent-inode=%d name=%s)",
 			op.Target, op.Parent, op.Name)
-	}
-	if fsys.options.ReadOnly {
-		return syscall.EPERM
 	}
 
 	// parent is supposed to be a directory
@@ -906,9 +897,6 @@ func (fsys *Filesys) Rename(ctx context.Context, op *fuseops.RenameOp) error {
 			op.OldParent, op.OldName,
 			op.NewParent, op.NewName)
 	}
-	if fsys.options.ReadOnly {
-		return syscall.EPERM
-	}
 
 	// the old parent is supposed to be a directory
 	oldParentDir, ok, err := fsys.mdb.LookupDirByInode(ctx, oph, int64(op.OldParent))
@@ -1009,9 +997,6 @@ func (fsys *Filesys) Unlink(ctx context.Context, op *fuseops.UnlinkOp) error {
 
 	if fsys.options.Verbose {
 		fsys.log("Unlink(%s)", op.Name)
-	}
-	if fsys.options.ReadOnly {
-		return syscall.EPERM
 	}
 
 	// the parent is supposed to be a directory
@@ -1116,6 +1101,10 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 	oph := fsys.OpOpen()
 	defer fsys.OpClose(oph)
 
+	if fsys.options.Verbose {
+		fsys.log("OpenFile inode=%d", op.Inode)
+	}
+
 	// find the file by its inode
 	node, ok, err := fsys.mdb.LookupByInode(ctx, oph, int64(op.Inode))
 	if err != nil {
@@ -1182,10 +1171,6 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 func (fsys *Filesys) getWritableFD(ctx context.Context, handle fuseops.HandleID) (*os.File, error) {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
-
-	if fsys.options.ReadOnly {
-		return nil, syscall.EPERM
-	}
 
 	fh, ok := fsys.fhTable[handle]
 	if !ok {
@@ -1431,9 +1416,6 @@ func (fsys *Filesys) findWritableFileHandle(handle fuseops.HandleID) (*FileHandl
 // A file is created locally, and writes go to the local location. When
 // the file is closed, it becomes read only, and is then uploaded to the cloud.
 func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) error {
-	if fsys.options.ReadOnly {
-		return syscall.EPERM
-	}
 	fh,err := fsys.findWritableFileHandle(op.Handle)
 	if err != nil {
 		return err

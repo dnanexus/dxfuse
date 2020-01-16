@@ -44,7 +44,6 @@ var (
 	debugFuseFlag = flag.Bool("debugFuse", false, "Tap into FUSE debugging information")
 	gid = flag.Int("gid", -1, "User group id (gid)")
 	help = flag.Bool("help", false, "display program options")
-	nowait = flag.Bool("nowait", false, "start the daemon, but do not wait for initialization to complete")
 	readOnly = flag.Bool("readOnly", false, "mount the filesystem in read-only mode")
 	uid = flag.Int("uid", -1, "User id (uid)")
 	verbose = flag.Int("verbose", 0, "Enable verbose debugging")
@@ -162,7 +161,7 @@ func fsDaemon(
 	}
 
 	// shutdown the filesystem
-	fsys.Shutdown()
+	//fsys.Shutdown()
 
 	return nil
 }
@@ -362,9 +361,5 @@ func main() {
 	cfg := parseCmdLineArgs()
 	validateConfig(cfg)
 
-	if *nowait {
-		startDaemon(cfg)
-		return
-	}
 	startDaemonAndWaitForInitializationToComplete(cfg)
 }

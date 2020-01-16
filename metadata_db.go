@@ -1087,7 +1087,7 @@ func (mdb *MetadataDb) PopulateRoot(ctx context.Context, oph *OpHandle, manifest
 
 	// build the supporting directory structure.
 	// We mark each directory as populated, so that the platform would not
-	// be queries.
+	// be queried.
 	nowSeconds := time.Now().Unix()
 	for _, d := range dirSkel {
 		_, err := mdb.createEmptyDir(
@@ -1106,12 +1106,17 @@ func (mdb *MetadataDb) PopulateRoot(ctx context.Context, oph *OpHandle, manifest
 	for _, fl := range manifest.Files {
 		_, err := mdb.createDataObject(
 			oph,
-			CDO_NEUTRAL,
-			FK_Regular, fl.ProjId, fl.FileId,
+			CDO_ALREADY_EXISTS,
+			FK_Regular,
+			fl.ProjId,
+			fl.FileId,
 			fl.Size,
-			fl.CtimeSeconds, fl.MtimeSeconds,
+			fl.CtimeSeconds,
+			fl.MtimeSeconds,
 			fileReadOnlyMode,
-			fl.Parent, fl.Fname, "")
+			fl.Parent,
+			fl.Fname,
+			"")
 		if err != nil {
 			mdb.log(err.Error())
 			mdb.log("PopulateRoot: error creating singleton file")

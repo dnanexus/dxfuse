@@ -16,20 +16,16 @@ dxfuse : $(wildcard ../**/*)
 copy_all : dxfuse bench correct bio correct_downloads
 
 bench : dxfuse
-	rm -rf benchmark/resources
 	mkdir -p benchmark/resources/usr/bin
-	cp /go/bin/dxfuse benchmark/resources/usr/bin/
+	cp -f /go/bin/dxfuse benchmark/resources/usr/bin/
 
 correct: dxfuse
-	rm -rf correctness/resources
 	mkdir -p correctness/resources/usr/bin
-	cp /go/bin/dxfuse correctness/resources/usr/bin/
-	cp test_routines.sh correctness/resources/
+	cp -f /go/bin/dxfuse correctness/resources/usr/bin/
 
 correct_downloads: dxfuse
-	rm -rf correctness_downloads/resources
 	mkdir -p correctness_downloads/resources/usr/bin
-	cp /go/bin/dxfuse correctness_downloads/resources/usr/bin/
+	cp -f /go/bin/dxfuse correctness_downloads/resources/usr/bin/
 
 bio : dxfuse
 	cp -f /go/bin/dxfuse bam_diff/resources/usr/bin/
