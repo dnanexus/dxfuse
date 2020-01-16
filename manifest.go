@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -112,12 +113,12 @@ func (m *Manifest) Clean() {
 func ReadManifest(fname string) (*Manifest, error) {
 	srcData, err := ioutil.ReadFile(fname)
 	if err != nil {
-		panic(err)
+		log.Panic(err)
 	}
 	br := bytes.NewReader(srcData)
 	data, err := ioutil.ReadAll(br)
 	if err != nil {
-		panic(err)
+		log.Panic(err)
 	}
 
 	var mRaw Manifest
@@ -195,7 +196,7 @@ func ancestors(p string) []string {
 	parent := filepath.Dir(p)
 	ators := ancestors(parent)
 	if len(ators) == 0 {
-		panic(fmt.Sprintf("cannot create ancestor list for path %s", p))
+		log.Panic(fmt.Sprintf("cannot create ancestor list for path %s", p))
 	}
 	return append(ators, filepath.Clean(p))
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -123,7 +124,7 @@ func (fsys *Filesys) log(a string, args ...interface{}) {
 func (fsys *Filesys) OpOpen() *OpHandle {
 	txn, err := fsys.mdb.BeginTxn()
 	if err != nil {
-		panic("Could not open transaction")
+		log.Panic("Could not open transaction")
 	}
 	httpClient := <- fsys.httpClientPool
 
@@ -140,12 +141,12 @@ func (fsys *Filesys) OpClose(oph *OpHandle) {
 	if oph.err == nil {
 		err := oph.txn.Commit()
 		if err != nil {
-			panic("could not commit transaction")
+			log.Panic("could not commit transaction")
 		}
 	} else {
 		err := oph.txn.Rollback()
 		if err != nil {
-			panic("could not rollback transaction")
+			log.Panic("could not rollback transaction")
 		}
 	}
 }
@@ -985,8 +986,9 @@ a rename. You will need to issue a separate remove operation prior to rename.
 		}
 		return fsys.renameDir(ctx, oph, oldParentDir, newParentDir, srcDir, op.NewName)
 	default:
-		panic(fmt.Sprintf("bad type for srcNode %v", srcNode))
+		log.Panic(fmt.Sprintf("bad type for srcNode %v", srcNode))
 	}
+	return nil
 }
 
 // Decrement the link count, and remove the file if it hits zero.
@@ -1126,7 +1128,7 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 		// cast to a File type
 		file = node.(File)
 	default:
-		panic(fmt.Sprintf("bad type for node %v", node))
+		log.Panic(fmt.Sprintf("bad type for node %v", node))
 	}
 
 	var fh *FileHandle
@@ -1293,8 +1295,9 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 		return nil
 
 	default:
-		panic(fmt.Sprintf("Invalid file kind %d", fh.fKind))
+		log.Panic(fmt.Sprintf("Invalid file kind %d", fh.fKind))
 	}
+	return nil
 }
 
 
@@ -1407,7 +1410,7 @@ func (fsys *Filesys) findWritableFileHandle(handle fuseops.HandleID) (*FileHandl
 		return nil, syscall.EPERM
 	}
 	if fh.fd == nil {
-		panic("file descriptor is empty")
+		log.Panic("file descriptor is empty")
 	}
 	return fh, nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"path/filepath"
 	"os"
 	"strings"
@@ -294,7 +295,8 @@ func (mdb *MetadataDb) lookupDataObjectById(oph *OpHandle, fId string) (int64, i
 		// correct, there is exactly one such file
 		return inode, nlink, true, nil
 	default:
-		panic(fmt.Sprintf("Found %d data-objects with Id %s", numRows, fId))
+		log.Panicf("Found %d data-objects with Id %s", numRows, fId)
+		return 0, 0, false, nil
 	}
 }
 
@@ -342,7 +344,8 @@ func (mdb *MetadataDb) lookupDataObjectByInode(oph *OpHandle, projId string, ona
 		// found exactly one file
 		return f, true, nil
 	default:
-		panic(fmt.Sprintf("Found %d data-objects with name %s",	numRows, oname))
+		log.Panicf("Found %d data-objects with name %s", numRows, oname)
+		return File{}, false, nil
 	}
 }
 
@@ -390,8 +393,8 @@ func (mdb *MetadataDb) lookupDirByInode(oph *OpHandle, parent string, dname stri
 	case 1:
 		// correct, just one version
 	default:
-		panic(fmt.Sprintf("found %d directory with inode=%d in the directories table",
-			numRows, inode))
+		log.Panicf("found %d directory with inode=%d in the directories table",
+			numRows, inode)
 	}
 
 	// is this a faux directory? These don't exist on the platform,
@@ -413,7 +416,8 @@ func (mdb *MetadataDb) directory2projectId(dirFullPath string) string {
 			return projId
 		}
 	}
-	panic(fmt.Sprintf("directory2projectId did not file a project for path %s", dirFullPath))
+	log.Panicf("directory2projectId did not find a project for path %s", dirFullPath)
+	return ""
 }
 
 // search for a file with a particular inode.
@@ -465,7 +469,7 @@ func (mdb *MetadataDb) LookupByInodeAll(ctx context.Context, oph *OpHandle, inod
 			projId := mdb.directory2projectId(parents[i])
 			node, ok, err = mdb.lookupDataObjectByInode(oph, projId, names[i], inode)
 		default:
-			panic(fmt.Sprintf("Invalid type %d in namespace table", obj_type))
+			log.Panicf("Invalid type %d in namespace table", obj_type)
 		}
 
 		if err != nil {
@@ -491,7 +495,8 @@ func (mdb *MetadataDb) LookupDirByInode(ctx context.Context, oph *OpHandle, inod
 		dir := nodes[0].(Dir)
 		return dir, true, nil
 	default:
-		panic(fmt.Sprintf("found multiple directories for inode=%d", inode))
+		log.Panicf("found multiple directories for inode=%d", inode)
+		return Dir{}, false, nil
 	}
 }
 
@@ -622,8 +627,8 @@ func (mdb *MetadataDb) createDataObject(
 
 	if !ok {
 		if flag == CDO_ALREADY_EXISTS {
-			panic(fmt.Sprintf("Object %s:%s should already exists, but does not",
-				projId, objId))
+			log.Panicf("Object %s:%s should already exists, but does not",
+				projId, objId)
 		}
 
 		// File doesn't exist, we need to choose a new inode number.
@@ -642,8 +647,8 @@ func (mdb *MetadataDb) createDataObject(
 		}
 	} else {
 		if flag == CDO_MUST_BE_NEW {
-			panic(fmt.Sprintf("Object %s:%s must not be already in the database",
-				projId, objId))
+			log.Panicf("Object %s:%s must not be already in the database",
+				projId, objId)
 		}
 
 		// File already exists, we need to increase the link count
@@ -684,7 +689,7 @@ func (mdb *MetadataDb) createEmptyDir(
 	dirPath string,
 	populated bool) (int64, error) {
 	if dirPath[0] != '/' {
-		panic("directory must start with a slash")
+		log.Panicf("directory must start with a slash")
 	}
 
 	// choose unused inode number. It is on stable stoage, and will not change.
@@ -1053,8 +1058,8 @@ func (mdb *MetadataDb) LookupInDir(ctx context.Context, oph *OpHandle, dir *Dir,
 		return nil, false, nil
 	}
 	if numRows > 1 {
-		panic(fmt.Sprintf("Found %d files of the form %s/%s",
-			numRows, dir.FullPath, dirOrFileName))
+		log.Panicf("Found %d files of the form %s/%s",
+			numRows, dir.FullPath, dirOrFileName)
 	}
 
 	// There is exactly one answer
@@ -1064,7 +1069,8 @@ func (mdb *MetadataDb) LookupInDir(ctx context.Context, oph *OpHandle, dir *Dir,
 	case nsDataObjType:
 		return mdb.lookupDataObjectByInode(oph, dir.ProjId, dirOrFileName, inode)
 	default:
-		panic(fmt.Sprintf("Invalid object type %d", objType))
+		log.Panicf("Invalid object type %d", objType)
+		return nil, false, nil
 	}
 }
 
@@ -1106,7 +1112,7 @@ func (mdb *MetadataDb) PopulateRoot(ctx context.Context, oph *OpHandle, manifest
 	for _, fl := range manifest.Files {
 		_, err := mdb.createDataObject(
 			oph,
-			CDO_ALREADY_EXISTS,
+			CDO_NEUTRAL,
 			FK_Regular,
 			fl.ProjId,
 			fl.FileId,
@@ -1471,8 +1477,8 @@ func (mdb *MetadataDb) MoveDir(
 
 		// sanity check: make sure the path actually starts with the old directory
 		if !strings.HasPrefix(parent, oldDir.FullPath) {
-			panic(fmt.Sprintf("Query returned node %s that does not start with prefix %s",
-				parent, oldDir.FullPath))
+			log.Panicf("Query returned node %s that does not start with prefix %s",
+				parent, oldDir.FullPath)
 		}
 
 		// For file /A/fruit/melon.txt

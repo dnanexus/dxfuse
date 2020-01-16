@@ -110,18 +110,15 @@ func fsDaemon(
 	mountpoint string,
 	dxEnv dxda.DXEnvironment,
 	manifest dxfuse.Manifest,
-	options dxfuse.Options) error {
+	options dxfuse.Options,
+	logf *os.File,
+	logger *log.Logger) error {
 
 	fsys, err := dxfuse.NewDxfuse(dxEnv, manifest, options)
 	if err != nil {
 		return err
 	}
 	server := fuseutil.NewFileSystemServer(fsys)
-
-	// initialize the log file
-	logf := initLog()
-	defer logf.Close()
-	logger := log.New(logf, "dxfuse: ", log.Flags())
 
 	logger.Printf("starting fsDaemon")
 	mountOptions := make(map[string]string)
@@ -231,13 +228,13 @@ func validateConfig(cfg Config) {
 	}
 }
 
-func parseManifest(cfg Config) (*dxfuse.Manifest, error) {
+func parseManifest(cfg Config, logger *log.Logger) (*dxfuse.Manifest, error) {
 	numArgs := flag.NArg()
 
 	// distinguish between the case of a manifest, and a list of projects.
 	if numArgs == 2 && strings.HasSuffix(flag.Arg(1), ".json") {
 		p := flag.Arg(1)
-		log.Printf("Provided with a manifest, reading from %s", p)
+		logger.Printf("Provided with a manifest, reading from %s", p)
 		manifest, err := dxfuse.ReadManifest(p)
 		if err != nil {
 			return nil, err
@@ -272,16 +269,20 @@ func parseManifest(cfg Config) (*dxfuse.Manifest, error) {
 
 
 func startDaemon(cfg Config) {
-	manifest, err := parseManifest(cfg)
+	// initialize the log file
+	logf := initLog()
+	defer logf.Close()
+	logger := log.New(logf, "dxfuse: ", log.Flags())
+
+	manifest, err := parseManifest(cfg, logger)
 	if err != nil {
-		os.Stdout.WriteString(err.Error())
-		os.Stdout.Close()
+		logger.Printf(err.Error())
 		os.Exit(1)
 	}
-	err = fsDaemon(cfg.mountpoint, cfg.dxEnv, *manifest, cfg.options)
+	logger.Printf("manifest = %v", manifest)
+	err = fsDaemon(cfg.mountpoint, cfg.dxEnv, *manifest, cfg.options, logf, logger)
 	if err != nil {
-		os.Stdout.WriteString(err.Error())
-		os.Stdout.Close()
+		logger.Printf(err.Error())
 		os.Exit(1)
 	}
 }
