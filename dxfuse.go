@@ -744,7 +744,7 @@ func (fsys *Filesys) CreateLink(ctx context.Context, op *fuseops.CreateLinkOp) e
 	}
 
 	if fsys.options.Verbose {
-		fsys.log("CreateLink %s -> %s",
+		fsys.log("CreateLink %s/%s -> %s",
 			parentDir.FullPath, op.Name, targetFile.Name)
 	}
 
@@ -845,7 +845,8 @@ func (fsys *Filesys) renameDir(
 			oldDir.ProjFolder,
 			newName)
 		if err != nil {
-			fsys.log("Error in folder rename %s -> %s on dnanexus", err.Error())
+			fsys.log("Error in folder rename %s -> %s on dnanexus, %s",
+				oldDir.FullPath, newName, err.Error())
 			oph.RecordError(err)
 			return fsys.translateError(err)
 		}

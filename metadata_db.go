@@ -981,7 +981,7 @@ func (mdb *MetadataDb) directoryReadFromDNAx(
 			ctimeApprox, mtimeApprox,
 			fauxDirPath, fauxFiles, no_subdirs)
 		if err != nil {
-			mdb.log("directoryReadFromDNAx: populating faux directory %s", fauxDirPath, err.Error())
+			mdb.log("directoryReadFromDNAx: populating faux directory %s, %s", fauxDirPath, err.Error())
 			return oph.RecordError(err)
 		}
 	}
