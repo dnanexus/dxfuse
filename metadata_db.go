@@ -305,10 +305,10 @@ func (mdb *MetadataDb) lookupDataObjectById(oph *OpHandle, fId string) (int64, i
 // This is important for a file with multiple hard links. The
 // parent directory determines which project the file belongs to.
 // This is why we set the project-id instead of reading it from the file
-func (mdb *MetadataDb) lookupDataObjectByInode(oph *OpHandle, projId string, oname string, inode int64) (File, bool, error) {
+func (mdb *MetadataDb) lookupDataObjectByInode(oph *OpHandle, oname string, inode int64) (File, bool, error) {
 	// point lookup in the files table
 	sqlStmt := fmt.Sprintf(`
- 		        SELECT kind,id,size,ctime,mtime,mode,nlink,inline_data
+ 		        SELECT kind,id,proj_id,size,ctime,mtime,mode,nlink,inline_data
                         FROM data_objects
 			WHERE inode = '%d';`,
 		inode)
@@ -321,7 +321,6 @@ func (mdb *MetadataDb) lookupDataObjectByInode(oph *OpHandle, projId string, ona
 	var f File
 	f.Name = oname
 	f.Inode = inode
-	f.ProjId = projId
 	f.Uid = mdb.options.Uid
 	f.Gid = mdb.options.Gid
 
@@ -329,7 +328,7 @@ func (mdb *MetadataDb) lookupDataObjectByInode(oph *OpHandle, projId string, ona
 	for rows.Next() {
 		var ctime int64
 		var mtime int64
-		rows.Scan(&f.Kind,&f.Id, &f.Size, &ctime, &mtime, &f.Mode, &f.Nlink, &f.InlineData)
+		rows.Scan(&f.Kind, &f.Id, &f.ProjId, &f.Size, &ctime, &mtime, &f.Mode, &f.Nlink, &f.InlineData)
 		f.Ctime = SecondsToTime(ctime)
 		f.Mtime = SecondsToTime(mtime)
 		numRows++
@@ -409,17 +408,6 @@ func (mdb *MetadataDb) lookupDirByInode(oph *OpHandle, parent string, dname stri
 }
 
 
-// Find the project-id to which a directory belongs
-func (mdb *MetadataDb) directory2projectId(dirFullPath string) string {
-	for baseDirName, projId := range mdb.baseDir2ProjectId {
-		if strings.HasPrefix(dirFullPath, baseDirName) {
-			return projId
-		}
-	}
-	log.Panicf("directory2projectId did not find a project for path %s", dirFullPath)
-	return ""
-}
-
 // search for a file with a particular inode.
 //
 // Note: a file with multiple hard links will appear several times.
@@ -466,8 +454,7 @@ func (mdb *MetadataDb) LookupByInodeAll(ctx context.Context, oph *OpHandle, inod
 		case nsDataObjType:
 			// This is important for a file with multiple hard links. The
 			// parent directory determines which project the file belongs to.
-			projId := mdb.directory2projectId(parents[i])
-			node, ok, err = mdb.lookupDataObjectByInode(oph, projId, names[i], inode)
+			node, ok, err = mdb.lookupDataObjectByInode(oph, names[i], inode)
 		default:
 			log.Panicf("Invalid type %d in namespace table", obj_type)
 		}
@@ -1067,7 +1054,7 @@ func (mdb *MetadataDb) LookupInDir(ctx context.Context, oph *OpHandle, dir *Dir,
 	case nsDirType:
 		return mdb.lookupDirByInode(oph, dir.FullPath, dirOrFileName, inode)
 	case nsDataObjType:
-		return mdb.lookupDataObjectByInode(oph, dir.ProjId, dirOrFileName, inode)
+		return mdb.lookupDataObjectByInode(oph, dirOrFileName, inode)
 	default:
 		log.Panicf("Invalid object type %d", objType)
 		return nil, false, nil
