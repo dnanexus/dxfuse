@@ -23,7 +23,7 @@ const (
 	MaxDirSize         = 10 * 1000
 	MaxNumFileHandles  = 1000 * 1000
 	NumRetriesDefault  = 3
-	Version            = "v0.16"
+	Version            = "v0.17"
 )
 const (
 	InodeInvalid       = 0

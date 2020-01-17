@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -91,6 +92,11 @@ func NewDxfuse(
 		fsys.httpClientPool <- httpClient
 	} ()
 
+/*	if options.ReadOnly || len(manifest.Directories) == 0 {
+		// we don't need the file upload module
+		return fsys, nil
+	}*/
+
 	projId2Desc := make(map[string]DxDescribePrj)
 	for _, d := range manifest.Directories {
 		pDesc, err := DxDescribeProject(context.TODO(), httpClient, &fsys.dxEnv, d.ProjId)
@@ -101,14 +107,12 @@ func NewDxfuse(
 		projId2Desc[pDesc.Id] = *pDesc
 	}
 
-	if !options.ReadOnly {
-		// initialize background upload state
-		fsys.fugs = NewFileUploadGlobalState(options, dxEnv, projId2Desc)
+	// initialize background upload state
+	fsys.fugs = NewFileUploadGlobalState(options, dxEnv, projId2Desc)
 
-		// Provide the upload module with a reference to the database.
-		// This is needed to report the end of an upload.
-		fsys.fugs.mdb = mdb
-	}
+	// Provide the upload module with a reference to the database.
+	// This is needed to report the end of an upload.
+	fsys.fugs.mdb = mdb
 	return fsys, nil
 }
 
@@ -120,7 +124,7 @@ func (fsys *Filesys) log(a string, args ...interface{}) {
 func (fsys *Filesys) OpOpen() *OpHandle {
 	txn, err := fsys.mdb.BeginTxn()
 	if err != nil {
-		panic("Could not open transaction")
+		log.Panic("Could not open transaction")
 	}
 	httpClient := <- fsys.httpClientPool
 
@@ -137,12 +141,12 @@ func (fsys *Filesys) OpClose(oph *OpHandle) {
 	if oph.err == nil {
 		err := oph.txn.Commit()
 		if err != nil {
-			panic("could not commit transaction")
+			log.Panic("could not commit transaction")
 		}
 	} else {
 		err := oph.txn.Rollback()
 		if err != nil {
-			panic("could not rollback transaction")
+			log.Panic("could not rollback transaction")
 		}
 	}
 }
@@ -417,9 +421,6 @@ func (fsys *Filesys) MkDir(ctx context.Context, op *fuseops.MkDirOp) error {
 	if fsys.options.Verbose {
 		fsys.log("CreateDir(%s)", op.Name)
 	}
-	if fsys.options.ReadOnly {
-		return syscall.EPERM
-	}
 
 	// the parent is supposed to be a directory
 	parentDir, ok, err := fsys.mdb.LookupDirByInode(ctx, oph, int64(op.Parent))
@@ -503,9 +504,6 @@ func (fsys *Filesys) RmDir(ctx context.Context, op *fuseops.RmDirOp) error {
 
 	if fsys.options.Verbose {
 		fsys.log("Remove Dir(%s)", op.Name)
-	}
-	if fsys.options.ReadOnly {
-		return syscall.EPERM
 	}
 
 	// the parent is supposed to be a directory
@@ -599,9 +597,6 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 
 	if fsys.options.Verbose {
 		fsys.log("CreateFile(%s)", op.Name)
-	}
-	if fsys.options.ReadOnly {
-		return syscall.EPERM
 	}
 
 	// the parent is supposed to be a directory
@@ -705,9 +700,6 @@ func (fsys *Filesys) CreateLink(ctx context.Context, op *fuseops.CreateLinkOp) e
 		fsys.log("CreateLink (inode=%d) -> (parent-inode=%d name=%s)",
 			op.Target, op.Parent, op.Name)
 	}
-	if fsys.options.ReadOnly {
-		return syscall.EPERM
-	}
 
 	// parent is supposed to be a directory
 	parentDir, ok, err := fsys.mdb.LookupDirByInode(ctx, oph, int64(op.Parent))
@@ -753,7 +745,7 @@ func (fsys *Filesys) CreateLink(ctx context.Context, op *fuseops.CreateLinkOp) e
 	}
 
 	if fsys.options.Verbose {
-		fsys.log("CreateLink %s -> %s",
+		fsys.log("CreateLink %s/%s -> %s",
 			parentDir.FullPath, op.Name, targetFile.Name)
 	}
 
@@ -854,7 +846,8 @@ func (fsys *Filesys) renameDir(
 			oldDir.ProjFolder,
 			newName)
 		if err != nil {
-			fsys.log("Error in folder rename %s -> %s on dnanexus", err.Error())
+			fsys.log("Error in folder rename %s -> %s on dnanexus, %s",
+				oldDir.FullPath, newName, err.Error())
 			oph.RecordError(err)
 			return fsys.translateError(err)
 		}
@@ -905,9 +898,6 @@ func (fsys *Filesys) Rename(ctx context.Context, op *fuseops.RenameOp) error {
 		fsys.log("Rename (inode=%d name=%s) -> (inode=%d, name=%s)",
 			op.OldParent, op.OldName,
 			op.NewParent, op.NewName)
-	}
-	if fsys.options.ReadOnly {
-		return syscall.EPERM
 	}
 
 	// the old parent is supposed to be a directory
@@ -996,8 +986,9 @@ a rename. You will need to issue a separate remove operation prior to rename.
 		}
 		return fsys.renameDir(ctx, oph, oldParentDir, newParentDir, srcDir, op.NewName)
 	default:
-		panic(fmt.Sprintf("bad type for srcNode %v", srcNode))
+		log.Panic(fmt.Sprintf("bad type for srcNode %v", srcNode))
 	}
+	return nil
 }
 
 // Decrement the link count, and remove the file if it hits zero.
@@ -1009,9 +1000,6 @@ func (fsys *Filesys) Unlink(ctx context.Context, op *fuseops.UnlinkOp) error {
 
 	if fsys.options.Verbose {
 		fsys.log("Unlink(%s)", op.Name)
-	}
-	if fsys.options.ReadOnly {
-		return syscall.EPERM
 	}
 
 	// the parent is supposed to be a directory
@@ -1116,6 +1104,10 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 	oph := fsys.OpOpen()
 	defer fsys.OpClose(oph)
 
+	if fsys.options.Verbose {
+		fsys.log("OpenFile inode=%d", op.Inode)
+	}
+
 	// find the file by its inode
 	node, ok, err := fsys.mdb.LookupByInode(ctx, oph, int64(op.Inode))
 	if err != nil {
@@ -1136,7 +1128,7 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 		// cast to a File type
 		file = node.(File)
 	default:
-		panic(fmt.Sprintf("bad type for node %v", node))
+		log.Panic(fmt.Sprintf("bad type for node %v", node))
 	}
 
 	var fh *FileHandle
@@ -1182,10 +1174,6 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 func (fsys *Filesys) getWritableFD(ctx context.Context, handle fuseops.HandleID) (*os.File, error) {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
-
-	if fsys.options.ReadOnly {
-		return nil, syscall.EPERM
-	}
 
 	fh, ok := fsys.fhTable[handle]
 	if !ok {
@@ -1307,8 +1295,9 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 		return nil
 
 	default:
-		panic(fmt.Sprintf("Invalid file kind %d", fh.fKind))
+		log.Panic(fmt.Sprintf("Invalid file kind %d", fh.fKind))
 	}
+	return nil
 }
 
 
@@ -1421,7 +1410,7 @@ func (fsys *Filesys) findWritableFileHandle(handle fuseops.HandleID) (*FileHandl
 		return nil, syscall.EPERM
 	}
 	if fh.fd == nil {
-		panic("file descriptor is empty")
+		log.Panic("file descriptor is empty")
 	}
 	return fh, nil
 }
@@ -1431,9 +1420,6 @@ func (fsys *Filesys) findWritableFileHandle(handle fuseops.HandleID) (*FileHandl
 // A file is created locally, and writes go to the local location. When
 // the file is closed, it becomes read only, and is then uploaded to the cloud.
 func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) error {
-	if fsys.options.ReadOnly {
-		return syscall.EPERM
-	}
 	fh,err := fsys.findWritableFileHandle(op.Handle)
 	if err != nil {
 		return err

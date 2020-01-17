@@ -1,5 +1,8 @@
 # Release Notes
 
+## v0.17
+- Fixed bugs having to do with manifest mode, used in conjunction with dxWDL.
+
 ## v0.16
 - Fixed bug when a file and a directory have the same name.
 - Improvements to prefetch. If a file-descriptor stops accessing data sequentially, the algorithm will

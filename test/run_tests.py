@@ -15,13 +15,13 @@ from dxpy.exceptions import DXJobFailureError
 # The list of instance types to test on. We don't want too many, because it will be expensive.
 # We are trying to take a representative from small, medium, and large instances.
 aws_ladder = {
-    "small" : ["mem1_ssd1_v2_x8"],
-    "large" : ["mem1_ssd1_v2_x8", "mem1_ssd1_v2_x16", "mem3_ssd1_v2_x32"]
+    "small" : ["mem1_ssd1_v2_x4"],
+    "large" : ["mem1_ssd1_v2_x4", "mem1_ssd1_v2_x16", "mem3_ssd1_v2_x32"]
 }
 
 azure_ladder = {
-    "small" : ["azure:mem1_ssd1_x8"],
-    "large" : ["azure:mem1_ssd1_x8", "azure:mem1_ssd1_x16", "azure:mem3_ssd1_x16"],
+    "small" : ["azure:mem1_ssd1_x4"],
+    "large" : ["azure:mem1_ssd1_x4", "azure:mem1_ssd1_x16", "azure:mem3_ssd1_x16"],
 }
 
 def lookup_applet(name, project, folder):
@@ -111,7 +111,20 @@ def run_benchmarks(dx_proj, instance_types, verbose):
     wait_for_completion(jobs)
     extract_results(jobs)
 
+def run_local_test():
+    try:
+        print("running local tests")
+        cmd = ["/bin/bash", "local/local.sh"]
+        subprocess.check_call(cmd, stderr=subprocess.STDOUT)
+    except subprocess.CalledProcessError as e:
+        msg = ""
+        if e and e.output:
+            msg = e.output.strip()
+        print("Failed to run local tests: {cmd}\n{msg}\n".format(cmd=str(cmd), msg=msg))
+        sys.exit(1)
+
 def run_correctness(dx_proj, itype, verbose):
+    run_local_test()
     correctness = lookup_applet("correctness", dx_proj, "/applets")
     bam_diff = lookup_applet("bam_diff", dx_proj, "/applets")
     correctness_downloads = lookup_applet("correctness_downloads", dx_proj, "/applets")

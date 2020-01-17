@@ -293,7 +293,7 @@ func (ops *DxOps) DxFileUploadPart(
 		fmt.Sprintf("%s/upload", fileId),
 		string(reqJson))
 	if err != nil {
-		ops.log("DxFileUploadPart", "error in dxapi call [%s/upload] %v",
+		ops.log("DxFileUploadPart: error in dxapi call [%s/upload] %v",
 			fileId, err.Error())
 		return err
 	}
@@ -307,7 +307,7 @@ func (ops *DxOps) DxFileUploadPart(
 	//delete(reply.Headers, "content-length")
 	_, err = dxda.DxHttpRequest(ctx, httpClient, NumRetriesDefault, "PUT", reply.Url, reply.Headers, data)
 	if err != nil {
-		ops.log("DxFileUploadPart", "failure in data upload")
+		ops.log("DxFileUploadPart: failure in data upload")
 		return err
 	}
 	return nil
@@ -380,7 +380,7 @@ func (ops *DxOps) DxMove(
 	destination string) error {
 
 	if ops.options.Verbose {
-		ops.log("dx_ops", "%s source folders=%v  -> %s", projId, folders, destination)
+		ops.log("%s source folders=%v  -> %s", projId, folders, destination)
 	}
 	var request RequestMove
 	request.Objects = objectIds
