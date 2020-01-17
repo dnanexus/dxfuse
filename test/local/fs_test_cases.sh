@@ -1,5 +1,3 @@
-#!/bin/bash -e
-
 ######################################################################
 ## constants
 
@@ -32,9 +30,6 @@ function teardown {
     fi
     teardown_complete=1
 
-    echo "syncing filesystem"
-    sync
-
     echo "unmounting dxfuse"
     cd $HOME
     sudo umount $mountpoint
@@ -42,12 +37,6 @@ function teardown {
     for d in ${writeable_dirs[@]}; do
         dx rm -r $projName:/$d >& /dev/null || true
     done
-
-    if [[ $DX_JOB_ID != "" && $verbose != "" ]]; then
-        mkdir -p out/filesystem_log
-        cp /var/log/dxfuse.log out/filesystem_log/
-        dx-upload-all-outputs
-    fi
 }
 
 # trap any errors and cleanup
@@ -549,22 +538,15 @@ function archived_files {
     fi
 }
 
-main() {
+function fs_test_cases() {
     # Get all the DX environment variables, so that dxfuse can use them
     echo "loading the dx environment"
 
-    # don't leak the token to stdout
-    if [[ $DX_JOB_ID == "" ]]; then
-        # local machine
-        rm -f ENV
-        dx env --bash > ENV
-        source ENV >& /dev/null
-        dxfuse="/go/bin/dxfuse"
-    else
-        # Running on a cloud worker
-        source environment >& /dev/null
-        dxfuse="dxfuse"
-    fi
+    # local machine
+    rm -f ENV
+    dx env --bash > ENV
+    source ENV >& /dev/null
+    dxfuse="/go/bin/dxfuse"
 
     # clean and make fresh directories
     mkdir -p $mountpoint
@@ -599,8 +581,8 @@ main() {
     echo "can write to a small file"
     check_file_write_content $mountpoint/$projName $target_dir
 
-    echo "can write several files to a directory"
-    write_files $mountpoint/$projName/$dxDirOnProject/large $mountpoint/$projName/$target_dir
+#    echo "can write several files to a directory"
+#    write_files $mountpoint/$projName/$dxDirOnProject/large $mountpoint/$projName/$target_dir
 
     echo "can't write to read-only project"
     write_to_read_only_project

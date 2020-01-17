@@ -111,7 +111,20 @@ def run_benchmarks(dx_proj, instance_types, verbose):
     wait_for_completion(jobs)
     extract_results(jobs)
 
+def run_local_test():
+    try:
+        print("running local tests")
+        cmd = ["/bin/bash", "local/local.sh"]
+        subprocess.check_call(cmd, stderr=subprocess.STDOUT)
+    except subprocess.CalledProcessError as e:
+        msg = ""
+        if e and e.output:
+            msg = e.output.strip()
+        print("Failed to run local tests: {cmd}\n{msg}\n".format(cmd=str(cmd), msg=msg))
+        sys.exit(1)
+
 def run_correctness(dx_proj, itype, verbose):
+    run_local_test()
     correctness = lookup_applet("correctness", dx_proj, "/applets")
     bam_diff = lookup_applet("bam_diff", dx_proj, "/applets")
     correctness_downloads = lookup_applet("correctness_downloads", dx_proj, "/applets")
