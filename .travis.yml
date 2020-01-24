@@ -42,7 +42,7 @@ install:
 
 script:
 # we need to login into dnanexus first
-- dx login --token $DX_API_TOKEN
+- dx login --staging --noprojects --token $DX_API_TOKEN
 
 # sanity test for dxfuse, see that we can run it in a trivial
 # way
