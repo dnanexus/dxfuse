@@ -38,8 +38,6 @@ branches:
 
 env:
   global:
-  # DX_API_TOKEN
-  - secure: MeW7t4z5Q5ABp6W29iyRAo0ZWh9LU3IMZTkcqQ/xJubAxH8EZ7wvg1Rct4/3lx74WR2dsV2jh8F+23z8LAeKN85m3nEdGbmaWENwH+PQD6slcSR25NZQ1x7sHr8SGe26eRtPEptA22TyKm2mmiJg9Rs5FFl8+2Og+/FLdwczPdWqoZRGNC/yqsTg+6lc4oxal3SXtkHK9I2vJ3vqdB5WCzFEVAQv9FDcwPzJLSO/X18GSf8NQaimb23vYt9suCrYlZmQpCgja+Tnys3zpJxyy0qRV9wmwU7KauEupMNRvgn7iehhvUeWT9hEYUiOgtrw0mIkQa0wrnJIH4rD/SS5Wwh49BAkzl+HeDV8jtH2lQaBE1QxW1dcpwl6/+Wb0fHRgP1r0HOD0GSJ4lG40UC/uFseBi1FOUXqkWYC8BWmoXSyotkct1DgtQ8np0HrG7QHwsnt3XiySQZn0jT0ZSsYxvVdxyS9iDUxHC1fpac76jjzClYK3bnmmkZHh+8NaRr5RQti+vhHQbIZrXUOGBUGNstVaZOe8AQSVtbdTJnwkPukS2bxN2I6fx7uOReBmo1ncClLRx75bwv2Gqbe6ZRsm3LpIm3q/uanf6e8Bf1SXBt4ukjc3Bc4LgNqQhg7w59JCeTb2uWtyS9Xu1hcNSfB23kBAy1n2Gck4I6cFCrWnwA=
   - DX_APISERVER_HOST="stagingapi.dnanexus.com"
   - GOPATH="$HOME/go"
 
@@ -50,11 +48,16 @@ install:
 - go get github.com/dnanexus/dxda
 - go get github.com/jacobsa/fuse
 - go get github.com/dnanexus/dxfuse
-- go build -o $GOPATH/bin/dxfuse-$TRAVIS_OS_NAME $GOPATH/src/github.com/dnanexus/dxfuse/cli/main.go
+- go build -o $GOPATH/bin/dxfuse $GOPATH/src/github.com/dnanexus/dxfuse/cli/main.go
+- cp $GOPATH/bin/dxfuse $GOPATH/bin/dxfuse-$TRAVIS_OS_NAME
 
 script:
+# initial test that stuff is working
 - dxfuse=$GOPATH/bin/dxfuse-$TRAVIS_OS_NAME
 - $dxfuse --help
+
+# run tests
+- $GOPATH/src/github.com/dnanexus/dxfuse/local/local.sh
 
 # make a mountpoint under the user's control
 - mountpoint=$HOME/MNT

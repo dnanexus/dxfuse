@@ -3,8 +3,9 @@ CRNT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 function manifest_test {
     local mountpoint=${HOME}/MNT
     mkdir -p $mountpoint
+    dxfuse="$GOPATH/bin/dxfuse"
 
-    sudo -E /go/bin/dxfuse -verbose 2 -uid $(id -u) -gid $(id -g) $mountpoint $CRNT_DIR/two_files.json
+    sudo -E $dxfuse -verbose 2 -uid $(id -u) -gid $(id -g) $mountpoint $CRNT_DIR/two_files.json
 
     tree $mountpoint
     full_path=/correctness/small/A.txt
