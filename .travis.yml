@@ -23,6 +23,7 @@ addons:
 
 before_install:
   - sudo -H pip3 install setuptools
+  - sudo -H pip3 install wheel
   - sudo -H pip3 install dxpy
 
 env:
