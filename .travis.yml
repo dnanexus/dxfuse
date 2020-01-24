@@ -57,7 +57,7 @@ script:
 - $dxfuse --help
 
 # run tests
-- $GOPATH/src/github.com/dnanexus/dxfuse/local/local.sh
+- $GOPATH/src/github.com/dnanexus/dxfuse/test/local/local.sh
 
 # make a mountpoint under the user's control
 - mountpoint=$HOME/MNT
