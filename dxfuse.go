@@ -92,10 +92,10 @@ func NewDxfuse(
 		fsys.httpClientPool <- httpClient
 	} ()
 
-/*	if options.ReadOnly || len(manifest.Directories) == 0 {
+	if options.ReadOnly {
 		// we don't need the file upload module
 		return fsys, nil
-	}*/
+	}
 
 	projId2Desc := make(map[string]DxDescribePrj)
 	for _, d := range manifest.Directories {
@@ -1123,12 +1123,18 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 	switch node.(type) {
 	case Dir:
 		// not allowed to open a directory
-		return syscall.EPERM
+		return syscall.EACCES
 	case File:
 		// cast to a File type
 		file = node.(File)
 	default:
 		log.Panic(fmt.Sprintf("bad type for node %v", node))
+	}
+
+	if file.ArchivalState != "live" {
+		fsys.log("File (%s,%s) is in state %s, it cannot be accessed",
+			file.Name, file.Id, file.ArchivalState)
+		return syscall.EACCES
 	}
 
 	var fh *FileHandle

@@ -169,6 +169,7 @@ type File struct {
 	Kind       int     // Kind of object this is
 	Id         string  // Required to build a download URL
 	ProjId     string  // Note: this could be a container
+	ArchivalState string
 	Name       string
 	Size       int64
 	Inode      int64

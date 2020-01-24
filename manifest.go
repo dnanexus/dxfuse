@@ -22,10 +22,11 @@ type ManifestFile struct {
 
 	// These may not be provided by the user. Then, we
 	// need to query DNAx for the information.
-	Fname   string       `json:"fname,omitempty"`
-	Size    int64        `json:"size,omitempty"`
-	CtimeSeconds int64  `json:"ctime,omitempty"`
-	MtimeSeconds int64  `json:"mtime,omitempty"`
+	ArchivalState string  `json:"archivalState,omitempty"`
+	Fname   string        `json:"fname,omitempty"`
+	Size    int64         `json:"size,omitempty"`
+	CtimeSeconds int64    `json:"ctime,omitempty"`
+	MtimeSeconds int64    `json:"mtime,omitempty"`
 }
 
 type ManifestDir struct {
@@ -324,6 +325,7 @@ func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnviron
 			if fl.Fname == "" {
 				fl.Fname = fDesc.Name
 			}
+			fl.ArchivalState = fDesc.ArchivalState
 			fl.Size = fDesc.Size
 			fl.CtimeSeconds = fDesc.CtimeSeconds
 			fl.MtimeSeconds = fDesc.MtimeSeconds

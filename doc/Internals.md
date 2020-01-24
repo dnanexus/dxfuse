@@ -28,8 +28,9 @@ download time to inform the system which project to check for
 ownership. It can safely be omitted, at the cost of additional work on
 the server side.
 
-The `archival\_state` is relevant only for files. It can have one of four states:
-`live`, `archival`, `archived`, `unarchiving`. A file can be accessed only in the `live` state.
+The `archival_state` is relevant for files only. It can have one of
+four values: `live`, `archival`, `archived`, `unarchiving`. A file can
+be accessed only when it is in the `live` state.
 
 The `namespace` table stores information on the directory structure.
 

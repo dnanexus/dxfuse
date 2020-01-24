@@ -108,13 +108,14 @@ func (mdb *MetadataDb) init2(txn *sql.Tx) error {
                 kind int,
 		id text,
 		proj_id text,
+                archival_state text,
                 inode bigint,
 		size bigint,
                 ctime bigint,
                 mtime bigint,
                 mode int,
                 nlink int,
-                inline_data  string,
+                inline_data text,
                 PRIMARY KEY (inode)
 	);
 	`
@@ -308,7 +309,7 @@ func (mdb *MetadataDb) lookupDataObjectById(oph *OpHandle, fId string) (int64, i
 func (mdb *MetadataDb) lookupDataObjectByInode(oph *OpHandle, oname string, inode int64) (File, bool, error) {
 	// point lookup in the files table
 	sqlStmt := fmt.Sprintf(`
- 		        SELECT kind,id,proj_id,size,ctime,mtime,mode,nlink,inline_data
+ 		        SELECT kind,id,proj_id,archival_state,size,ctime,mtime,mode,nlink,inline_data
                         FROM data_objects
 			WHERE inode = '%d';`,
 		inode)
@@ -328,7 +329,7 @@ func (mdb *MetadataDb) lookupDataObjectByInode(oph *OpHandle, oname string, inod
 	for rows.Next() {
 		var ctime int64
 		var mtime int64
-		rows.Scan(&f.Kind, &f.Id, &f.ProjId, &f.Size, &ctime, &mtime, &f.Mode, &f.Nlink, &f.InlineData)
+		rows.Scan(&f.Kind, &f.Id, &f.ProjId, &f.ArchivalState, &f.Size, &ctime, &mtime,	&f.Mode, &f.Nlink, &f.InlineData)
 		f.Ctime = SecondsToTime(ctime)
 		f.Mtime = SecondsToTime(mtime)
 		numRows++
@@ -546,7 +547,7 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 
 	// Extract information for all the files
 	sqlStmt = fmt.Sprintf(`
- 		        SELECT dos.kind, dos.id, dos.proj_id, dos.inode, dos.size, dos.ctime, dos.mtime, dos.mode, dos.nlink, dos.inline_data, namespace.name
+ 		        SELECT dos.kind, dos.id, dos.proj_id, dos.archival_state, dos.inode, dos.size, dos.ctime, dos.mtime, dos.mode, dos.nlink, dos.inline_data, namespace.name
                         FROM data_objects as dos
                         JOIN namespace
                         ON dos.inode = namespace.inode
@@ -566,7 +567,7 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 		var ctime int64
 		var mtime int64
 		var mode int
-		rows.Scan(&f.Kind,&f.Id, &f.ProjId, &f.Inode, &f.Size, &ctime, &mtime, &mode, &f.Nlink, &f.InlineData,&f.Name)
+		rows.Scan(&f.Kind,&f.Id, &f.ProjId, &f.ArchivalState, &f.Inode, &f.Size, &ctime, &mtime, &mode, &f.Nlink, &f.InlineData,&f.Name)
 		f.Ctime = SecondsToTime(ctime)
 		f.Mtime = SecondsToTime(mtime)
 		f.Mode = os.FileMode(mode)
@@ -594,6 +595,7 @@ func (mdb *MetadataDb) createDataObject(
 	flag int,
 	kind int,
 	projId string,
+	archivalState string,
 	objId string,
 	size int64,
 	ctime int64,
@@ -625,8 +627,8 @@ func (mdb *MetadataDb) createDataObject(
 		// Create an entry for the file
 		sqlStmt := fmt.Sprintf(`
  		        INSERT INTO data_objects
-			VALUES ('%d', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%d', '%s');`,
-			kind, objId, projId, inode, size, ctime, mtime, int(mode), 1, inlineData)
+			VALUES ('%d', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%d', '%s');`,
+			kind, objId, projId, archivalState, inode, size, ctime, mtime, int(mode), 1, inlineData)
 		if _, err := oph.txn.Exec(sqlStmt); err != nil {
 			mdb.log(err.Error())
 			mdb.log("Error inserting into data objects table")
@@ -839,6 +841,7 @@ func (mdb *MetadataDb) populateDir(
 			CDO_NEUTRAL,
 			kind,
 			o.ProjId,
+			o.ArchivalState,
 			o.Id,
 			o.Size,
 			o.CtimeSeconds,
@@ -1102,6 +1105,7 @@ func (mdb *MetadataDb) PopulateRoot(ctx context.Context, oph *OpHandle, manifest
 			CDO_NEUTRAL,
 			FK_Regular,
 			fl.ProjId,
+			fl.ArchivalState,
 			fl.FileId,
 			fl.Size,
 			fl.CtimeSeconds,
@@ -1161,6 +1165,7 @@ func (mdb *MetadataDb) CreateFile(
 		CDO_MUST_BE_NEW,
 		FK_Regular,
 		dir.ProjId,
+		"live",
 		fileId,
 		0,    /* the file is empty */
 		nowSeconds,
@@ -1179,6 +1184,7 @@ func (mdb *MetadataDb) CreateFile(
 		Kind: FK_Regular,
 		Id : fileId,
 		ProjId : dir.ProjId,
+		ArchivalState : "live",
 		Name : fname,
 		Size : 0,
 		Inode : inode,
@@ -1201,6 +1207,7 @@ func (mdb *MetadataDb) CreateLink(ctx context.Context, oph *OpHandle, srcFile Fi
 		CDO_ALREADY_EXISTS,
 		FK_Regular,
 		dstParent.ProjId,
+		srcFile.ArchivalState,
 		srcFile.Id,
 		srcFile.Size,
 		int64(srcFile.Ctime.Second()),
@@ -1219,6 +1226,7 @@ func (mdb *MetadataDb) CreateLink(ctx context.Context, oph *OpHandle, srcFile Fi
 		Kind: FK_Regular,
 		Id : srcFile.Id,
 		ProjId : dstParent.ProjId,
+		ArchivalState : srcFile.ArchivalState,
 		Name : name,
 		Size : srcFile.Size,
 		Inode : srcFile.Inode,
