@@ -22,7 +22,7 @@ addons:
     - fuse
 
 before_install:
-  - pip install dxpy
+  - sudo pip3 install dxpy
 
 env:
   global:
