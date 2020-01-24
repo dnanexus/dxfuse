@@ -148,11 +148,6 @@ func submit(
 				continue
 			}
 		}
-		if descRaw.ArchivalState != "live" {
-			log.Printf("File %s is not live, it is %s, dropping", descRaw.Id, descRaw.ArchivalState)
-			continue
-		}
-
 		symlinkUrl := ""
 		if descRaw.SymlinkPath != nil {
 			symlinkUrl = descRaw.SymlinkPath.Url

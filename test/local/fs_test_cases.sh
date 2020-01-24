@@ -530,11 +530,9 @@ function archived_files {
     local root_dir=$1
 
     num_files=$(ls -1 $root_dir | wc -l)
-    if [[ $num_files != 2 ]]; then
+    if [[ $num_files != 3 ]]; then
         echo "Should see two live files. Instead, can see $num_files files."
         exit 1
-    else
-        echo "correct, can see two live files"
     fi
 }
 
@@ -546,7 +544,7 @@ function fs_test_cases() {
     rm -f ENV
     dx env --bash > ENV
     source ENV >& /dev/null
-    dxfuse="/go/bin/dxfuse"
+    dxfuse="$GOPATH/bin/dxfuse"
 
     # clean and make fresh directories
     mkdir -p $mountpoint
@@ -587,7 +585,7 @@ function fs_test_cases() {
     echo "can't write to read-only project"
     write_to_read_only_project
 
-    echo "can't see archived files"
+    echo "archived files"
     archived_files $mountpoint/ArchivedStuff
 
     echo "create directory"

@@ -11,6 +11,7 @@ The `data_objects` table maintains information for files, applets, workflows, an
 | kind       | int  | type of file: regular, symbolic link, other |
 | id         | text | The DNAx object-id |
 | proj\_id   | text |	A project id for the file |
+| archival\_state | text | archival state of this file |
 | size       | bigint  | size of the file in bytes |
 | ctime      | bigint  | creation time |
 | mtime      | bigint  | modification time |
@@ -26,6 +27,10 @@ container, instead of a project. The container field is used at
 download time to inform the system which project to check for
 ownership. It can safely be omitted, at the cost of additional work on
 the server side.
+
+The `archival_state` is relevant for files only. It can have one of
+four values: `live`, `archival`, `archived`, `unarchiving`. A file can
+be accessed only when it is in the `live` state.
 
 The `namespace` table stores information on the directory structure.
 

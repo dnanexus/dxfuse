@@ -1,45 +1,33 @@
-matrix:
-  include:
-    - os: linux
-      language: go
-      go: 1.13
-      # Use the virtualized Trusty beta Travis is running in order to get
-      # support for installing fuse.
-      #
-      # Cf. Personal communication from support@travis-ci.com.
-      dist: trusty
-      sudo: required
-#    - os: osx
-      # Pin to macOS 10.12 (indirectly by using the Xcode 8.3 image).  We must
-      # do this to get the OSXFUSE kernel extension to work because there
-      # currently is no know way to programmatically grant permissions to load
-      # a kernel extension in macOS 10.13.
-      #
-      # See https://github.com/travis-ci/travis-ci/issues/10017 for details.
-#      osx_image: xcode8.3
-#      language: go
-#      go: 1.13
-
-# Install fuse before installing our code.
-before_install:
-  # For linux: install fuse.
-  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then
-      sudo apt-get install -qq fuse;
-    fi
-
-  # For macOS: update homebrew and then install osxfuse.
-  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew update; fi
-  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew cask install osxfuse; fi
+language: go
+go: 1.13
+dist: bionic
+sudo: required
 
 branches:
   only:
   - master
   - develop
 
+addons:
+  apt:
+    packages:
+    - apt-transport-https
+    - wget
+    - git
+    - openssh-server
+    - tree
+    - python3
+    - python3-pip
+    - python3-venv
+    - fuse
+
+before_install:
+  - sudo -H pip3 install setuptools
+  - sudo -H pip3 install wheel
+  - sudo -H pip3 install dxpy
+
 env:
   global:
-  # DX_API_TOKEN
-  - secure: MeW7t4z5Q5ABp6W29iyRAo0ZWh9LU3IMZTkcqQ/xJubAxH8EZ7wvg1Rct4/3lx74WR2dsV2jh8F+23z8LAeKN85m3nEdGbmaWENwH+PQD6slcSR25NZQ1x7sHr8SGe26eRtPEptA22TyKm2mmiJg9Rs5FFl8+2Og+/FLdwczPdWqoZRGNC/yqsTg+6lc4oxal3SXtkHK9I2vJ3vqdB5WCzFEVAQv9FDcwPzJLSO/X18GSf8NQaimb23vYt9suCrYlZmQpCgja+Tnys3zpJxyy0qRV9wmwU7KauEupMNRvgn7iehhvUeWT9hEYUiOgtrw0mIkQa0wrnJIH4rD/SS5Wwh49BAkzl+HeDV8jtH2lQaBE1QxW1dcpwl6/+Wb0fHRgP1r0HOD0GSJ4lG40UC/uFseBi1FOUXqkWYC8BWmoXSyotkct1DgtQ8np0HrG7QHwsnt3XiySQZn0jT0ZSsYxvVdxyS9iDUxHC1fpac76jjzClYK3bnmmkZHh+8NaRr5RQti+vhHQbIZrXUOGBUGNstVaZOe8AQSVtbdTJnwkPukS2bxN2I6fx7uOReBmo1ncClLRx75bwv2Gqbe6ZRsm3LpIm3q/uanf6e8Bf1SXBt4ukjc3Bc4LgNqQhg7w59JCeTb2uWtyS9Xu1hcNSfB23kBAy1n2Gck4I6cFCrWnwA=
   - DX_APISERVER_HOST="stagingapi.dnanexus.com"
   - GOPATH="$HOME/go"
 
@@ -50,29 +38,16 @@ install:
 - go get github.com/dnanexus/dxda
 - go get github.com/jacobsa/fuse
 - go get github.com/dnanexus/dxfuse
-- go build -o $GOPATH/bin/dxfuse-$TRAVIS_OS_NAME $GOPATH/src/github.com/dnanexus/dxfuse/cli/main.go
+- go build -o $GOPATH/bin/dxfuse $GOPATH/src/github.com/dnanexus/dxfuse/cli/main.go
 
 script:
-- dxfuse=$GOPATH/bin/dxfuse-$TRAVIS_OS_NAME
+# we need to login into dnanexus first
+- dx login --staging --noprojects --token $DX_API_TOKEN
+
+# sanity test for dxfuse, see that we can run it in a trivial
+# way
+- dxfuse=$GOPATH/bin/dxfuse
 - $dxfuse --help
 
-# make a mountpoint under the user's control
-- mountpoint=$HOME/MNT
-- mkdir -p $mountpoint
-
-# start the filesystem
-- sudo -E $dxfuse $mountpoint dxfuse_test_data
-- dxfuse_pid=$(ps aux | grep dxfuse | grep root  | awk '{ print($2) }')
-- sudo cat /var/log/dxfuse.log
-
-# tests go here
-- sudo ls -l $mountpoint/*
-#- tree $mountpoint
-
-# export the dxfuse binary
-- version=$($dxfuse --version)
-- mkdir -p $mountpoint/dxfuse_test_data/releases/$version
-- cp -f $dxfuse $mountpoint/dxfuse_test_data/releases/$version
-
-# shutdown the filesystem, and ensure the file is uploaded
-- sudo umount $mountpoint
+# run tests
+- $GOPATH/src/github.com/dnanexus/dxfuse/test/local/local.sh

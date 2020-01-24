@@ -1,5 +1,9 @@
 # Release Notes
 
+## v0.18
+- Showing archived files, where previously they were hidden. Trying to read or write to an archived
+file will cause an EACCES error.
+
 ## v0.17
 - Fixed bugs having to do with manifest mode, used in conjunction with dxWDL.
 
