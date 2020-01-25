@@ -89,8 +89,8 @@ type DxDescribeRaw struct {
 	CreatedMillisec  int64 `json:"created"`
 	ModifiedMillisec int64 `json:"modified"`
 	Size             int64 `json:"size"`
-	Tags             []string `json:"tags,omitempty"`
-	Properties       map[string]string `json:"tags,omitempty"`
+	Tags             []string `json:"tags"`
+	Properties       map[string]string `json:"properties"`
 	SymlinkPath     *DxSymLink `json:"symlinkPath,omitempty"`
 }
 

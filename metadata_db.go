@@ -183,8 +183,8 @@ func (mdb *MetadataDb) init2(txn *sql.Tx) error {
                 mtime bigint,
                 mode int,
                 nlink int,
-                properties text,
                 tags text,
+                properties text,
                 inline_data text,
                 PRIMARY KEY (inode)
 	);
@@ -379,7 +379,7 @@ func (mdb *MetadataDb) lookupDataObjectById(oph *OpHandle, fId string) (int64, i
 func (mdb *MetadataDb) lookupDataObjectByInode(oph *OpHandle, oname string, inode int64) (File, bool, error) {
 	// point lookup in the files table
 	sqlStmt := fmt.Sprintf(`
- 		        SELECT kind,id,proj_id,archival_state,size,ctime,mtime,mode,nlink,inline_data
+ 		        SELECT kind,id,proj_id,archival_state,size,ctime,mtime,mode,nlink,tags,properties,inline_data
                         FROM data_objects
 			WHERE inode = '%d';`,
 		inode)
@@ -399,9 +399,14 @@ func (mdb *MetadataDb) lookupDataObjectByInode(oph *OpHandle, oname string, inod
 	for rows.Next() {
 		var ctime int64
 		var mtime int64
-		rows.Scan(&f.Kind, &f.Id, &f.ProjId, &f.ArchivalState, &f.Size, &ctime, &mtime,	&f.Mode, &f.Nlink, &f.InlineData)
+		var props string
+		var tags string
+		rows.Scan(&f.Kind, &f.Id, &f.ProjId, &f.ArchivalState, &f.Size, &ctime, &mtime,	&f.Mode, &f.Nlink,
+			&tags, &props, &f.InlineData)
 		f.Ctime = SecondsToTime(ctime)
 		f.Mtime = SecondsToTime(mtime)
+		f.Tags = tagsUnmarshal(tags)
+		f.Properties = propertiesUnmarshal(props)
 		numRows++
 	}
 	rows.Close()
@@ -617,7 +622,7 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 
 	// Extract information for all the files
 	sqlStmt = fmt.Sprintf(`
- 		        SELECT dos.kind, dos.id, dos.proj_id, dos.archival_state, dos.inode, dos.size, dos.ctime, dos.mtime, dos.mode, dos.nlink, dos.inline_data, namespace.name
+ 		        SELECT dos.kind, dos.id, dos.proj_id, dos.archival_state, dos.inode, dos.size, dos.ctime, dos.mtime, dos.mode, dos.nlink, dos.tags, dos.properties, dos.inline_data, namespace.name
                         FROM data_objects as dos
                         JOIN namespace
                         ON dos.inode = namespace.inode
@@ -636,10 +641,15 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 
 		var ctime int64
 		var mtime int64
+		var tags string
+		var props string
 		var mode int
-		rows.Scan(&f.Kind,&f.Id, &f.ProjId, &f.ArchivalState, &f.Inode, &f.Size, &ctime, &mtime, &mode, &f.Nlink, &f.InlineData,&f.Name)
+		rows.Scan(&f.Kind,&f.Id, &f.ProjId, &f.ArchivalState, &f.Inode, &f.Size, &ctime, &mtime, &mode, &f.Nlink,
+			&tags, &props, &f.InlineData,&f.Name)
 		f.Ctime = SecondsToTime(ctime)
 		f.Mtime = SecondsToTime(mtime)
+		f.Tags = tagsUnmarshal(tags)
+		f.Properties = propertiesUnmarshal(props)
 		f.Mode = os.FileMode(mode)
 
 		files[f.Name] = f

@@ -1,7 +1,6 @@
 package dxfuse
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -1604,6 +1603,9 @@ func (fsys *Filesys) RemoveXattr(context.Context, *fuseops.RemoveXattrOp) error 
 func (fsys *Filesys) getXattrFill(op *fuseops.GetXattrOp, val_str string) error {
 	value := []byte(val_str)
 	op.BytesRead = len(value)
+	if len(op.Dst) == 0 {
+		return nil
+	}
 	if len(value) > len(op.Dst) {
 		return syscall.ERANGE
 	}
@@ -1646,8 +1648,7 @@ func (fsys *Filesys) GetXattr(ctx context.Context, op *fuseops.GetXattrOp) error
 	// If so, return an empty string
 	for _, tag := range file.Tags {
 		if tag == op.Name {
-			op.BytesRead = 0
-			return nil
+			return fsys.getXattrFill(op, "tag")
 		}
 	}
 
@@ -1706,30 +1707,35 @@ func (fsys *Filesys) ListXattr(ctx context.Context, op *fuseops.ListXattrOp) err
 	}
 
 	// collect all the properties into one array
-	var xattrNames []string
+	var xattrKeys []string
 	for _, tag := range file.Tags {
-		xattrNames = append(xattrNames, tag)
+		xattrKeys = append(xattrKeys, tag)
 	}
 	for key, _ := range file.Properties {
-		xattrNames = append(xattrNames, key)
+		xattrKeys = append(xattrKeys, key)
 	}
 	// Special attributes
 	for _, key := range []string{ "state", "archivalState", "id"} {
-		xattrNames = append(xattrNames, key)
+		xattrKeys = append(xattrKeys, key)
 	}
+	fsys.log("attribute keys: %v", xattrKeys)
+	fsys.log("output buffer len=%d", len(op.Dst))
 
 	// encode the names as a sequence of null-terminated strings
-	var buffer bytes.Buffer
-	for _, aName := range xattrNames {
-		buffer.Write([]byte(aName))
-		buffer.WriteByte(0)
+	dst := op.Dst[:]
+	for _, key := range xattrKeys {
+		keyLen := len(key) + 1
+
+		if len(dst) >= keyLen {
+			copy(dst, key)
+			dst[keyLen-1] = 0  // null terminate the string
+			dst = dst[keyLen:]
+		} else if len(op.Dst) != 0 {
+			return syscall.ERANGE
+		}
+		op.BytesRead += keyLen
 	}
 
-	op.BytesRead = buffer.Len()
-	if op.BytesRead > len(op.Dst) {
-		return syscall.ERANGE
-	}
-	op.BytesRead = copy(op.Dst, buffer.Bytes())
 	return nil
 }
 
