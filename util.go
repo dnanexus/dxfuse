@@ -169,7 +169,15 @@ type File struct {
 	Kind       int     // Kind of object this is
 	Id         string  // Required to build a download URL
 	ProjId     string  // Note: this could be a container
+
+	// One of {open, closing, closed}.
+	// Closed is the only state where the file can be read
+	State      string
+
+	// One of {live, archival, archived, unarchiving}.
+	// Live is the only state where the file can be read.
 	ArchivalState string
+
 	Name       string
 	Size       int64
 	Inode      int64
@@ -179,6 +187,10 @@ type File struct {
 	Nlink      int
 	Uid        uint32
 	Gid        uint32
+
+	// tags and properties
+	Tags       []string
+	Properties map[string]string
 
 	// for a symlink, it holds the path.
 	// For a regular file, a path to a local copy (if any).

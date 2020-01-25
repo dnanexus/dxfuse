@@ -3,6 +3,7 @@ package dxfuse
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"path/filepath"
@@ -98,6 +99,73 @@ func intToBool(x int) bool {
 	return false
 }
 
+// Marshal a DNAx object tags to/from a string that
+// is stored in a database table
+type MTags struct {
+	Elements []string `json:"elements"`
+}
+
+func tagsMarshal(tags []string) string {
+	if tags == nil || len(tags) == 0 {
+		return ""
+	}
+	payload, err := json.Marshal(MTags{
+		Elements : tags,
+	})
+	if err != nil {
+		log.Panicf("failed to marshal tags (%v), %s", tags, err.Error())
+		return ""
+	}
+	return string(payload)
+}
+
+func tagsUnmarshal(buf string) []string {
+	if buf == "" {
+		return nil
+	}
+	var coded MTags
+	err := json.Unmarshal([]byte(buf), &coded)
+	if err != nil {
+		log.Panicf("failed to unmarshal tags (%s), %s",	buf, err.Error())
+		return nil
+	}
+	return coded.Elements
+}
+
+
+// Marshal a DNAx object properties to/from a string that
+// is stored in a database table
+type MProperties struct {
+	Elements map[string]string `json:"elements"`
+}
+
+func propertiesMarshal(props map[string]string) string {
+	if props == nil || len(props) == 0 {
+		return ""
+	}
+	payload, err := json.Marshal(MProperties{
+		Elements : props,
+	})
+	if err != nil {
+		log.Panicf("failed to marshal properties (%v), %s", props, err.Error())
+		return ""
+	}
+	return string(payload)
+}
+
+func propertiesUnmarshal(buf string) map[string]string {
+	if buf == "" {
+		return nil
+	}
+	var coded MProperties
+	err := json.Unmarshal([]byte(buf), &coded)
+	if err != nil {
+		log.Panicf("failed to unmarshal properties (%s), %s", buf, err.Error())
+		return nil
+	}
+	return coded.Elements
+}
+
 func (mdb *MetadataDb) init2(txn *sql.Tx) error {
 	// Create table for files.
 	//
@@ -115,6 +183,8 @@ func (mdb *MetadataDb) init2(txn *sql.Tx) error {
                 mtime bigint,
                 mode int,
                 nlink int,
+                properties text,
+                tags text,
                 inline_data text,
                 PRIMARY KEY (inode)
 	);
@@ -600,6 +670,8 @@ func (mdb *MetadataDb) createDataObject(
 	size int64,
 	ctime int64,
 	mtime int64,
+	tags  []string,
+	properties map[string]string,
 	mode os.FileMode,
 	parentDir string,
 	fname string,
@@ -624,11 +696,17 @@ func (mdb *MetadataDb) createDataObject(
 		// NOte: it is on stable storage, and will not change.
 		inode = mdb.allocInodeNum()
 
+		// marshal tags and properties
+		mTags := tagsMarshal(tags)
+		mProps := propertiesMarshal(properties)
+
 		// Create an entry for the file
 		sqlStmt := fmt.Sprintf(`
  		        INSERT INTO data_objects
-			VALUES ('%d', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%d', '%s');`,
-			kind, objId, projId, archivalState, inode, size, ctime, mtime, int(mode), 1, inlineData)
+			VALUES ('%d', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%d', '%s', '%s', '%s');`,
+			kind, objId, projId, archivalState, inode, size, ctime, mtime, int(mode), 1,
+			mTags, mProps,
+			inlineData)
 		if _, err := oph.txn.Exec(sqlStmt); err != nil {
 			mdb.log(err.Error())
 			mdb.log("Error inserting into data objects table")
@@ -846,6 +924,8 @@ func (mdb *MetadataDb) populateDir(
 			o.Size,
 			o.CtimeSeconds,
 			o.MtimeSeconds,
+			o.Tags,
+			o.Properties,
 			fileReadOnlyMode,
 			dirPath,
 			o.Name,
@@ -1110,6 +1190,8 @@ func (mdb *MetadataDb) PopulateRoot(ctx context.Context, oph *OpHandle, manifest
 			fl.Size,
 			fl.CtimeSeconds,
 			fl.MtimeSeconds,
+			nil,
+			nil,
 			fileReadOnlyMode,
 			fl.Parent,
 			fl.Fname,
@@ -1170,6 +1252,8 @@ func (mdb *MetadataDb) CreateFile(
 		0,    /* the file is empty */
 		nowSeconds,
 		nowSeconds,
+		nil,  // A local file doesn't have tags or properties
+		nil,
 		mode,
 		dir.FullPath,
 		fname,
@@ -1212,6 +1296,8 @@ func (mdb *MetadataDb) CreateLink(ctx context.Context, oph *OpHandle, srcFile Fi
 		srcFile.Size,
 		int64(srcFile.Ctime.Second()),
 		int64(srcFile.Mtime.Second()),
+		nil,  // cloning does not copy the tags or properties
+		nil,
 		srcFile.Mode,
 		dstParent.FullPath,
 		name,

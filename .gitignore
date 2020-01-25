@@ -1,3 +1,4 @@
 main
 __pycache__
 ENV
+cmd_results.txt

@@ -28,6 +28,8 @@ type DxDescribeDataObject struct {
 	Size           int64
 	CtimeSeconds   int64
 	MtimeSeconds   int64
+	Tags           []string
+	Properties     map[string]string
 	SymlinkPath    string
 }
 
@@ -87,6 +89,8 @@ type DxDescribeRaw struct {
 	CreatedMillisec  int64 `json:"created"`
 	ModifiedMillisec int64 `json:"modified"`
 	Size             int64 `json:"size"`
+	Tags             []string `json:"tags,omitempty"`
+	Properties       map[string]string `json:"tags,omitempty"`
 	SymlinkPath     *DxSymLink `json:"symlinkPath,omitempty"`
 }
 
@@ -112,6 +116,8 @@ func submit(
 				"created" : true,
 				"modified" : true,
 				"size" : true,
+				"tags" : true,
+				"properties" : true,
 				"symlinkPath" : true,
 				"drive" : true,
 			},
@@ -142,12 +148,6 @@ func submit(
 	for _, descRawTop := range(reply.Results) {
 		descRaw := descRawTop.Describe
 
-		if closedFilesOnly {
-			if descRaw.State != "closed" {
-				log.Printf("File %s is not closed, it is %s, dropping", descRaw.Id, descRaw.State)
-				continue
-			}
-		}
 		symlinkUrl := ""
 		if descRaw.SymlinkPath != nil {
 			symlinkUrl = descRaw.SymlinkPath.Url
@@ -163,6 +163,8 @@ func submit(
 			Size : descRaw.Size,
 			CtimeSeconds : descRaw.CreatedMillisec / 1000,
 			MtimeSeconds : descRaw.ModifiedMillisec / 1000,
+			Tags : descRaw.Tags,
+			Properties : descRaw.Properties,
 			SymlinkPath : symlinkUrl,
 		}
 		//fmt.Printf("%v\n", desc)
