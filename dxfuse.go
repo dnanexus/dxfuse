@@ -1705,21 +1705,15 @@ func (fsys *Filesys) ListXattr(ctx context.Context, op *fuseops.ListXattrOp) err
 		return syscall.EINVAL
 	}
 
+	// collect all the properties into one array
 	var xattrNames []string
-
 	for _, tag := range file.Tags {
 		xattrNames = append(xattrNames, tag)
 	}
-
-	// Is it one of the properties?
-	// If so, return the value.
 	for key, _ := range file.Properties {
 		xattrNames = append(xattrNames, key)
 	}
-
-	// Is it one of {state, archivalState/archivedState, id}?
-	// There is no other way of reporting it, so we allow querying these
-	// attributes here.
+	// Special attributes
 	for _, key := range []string{ "state", "archivalState", "id"} {
 		xattrNames = append(xattrNames, key)
 	}
