@@ -1282,8 +1282,8 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 		log.Panic(fmt.Sprintf("bad type for node %v", node))
 	}
 
-	if file.State == "open" {
-		fsys.log("File (%s,%s) is in the open state, it cannot be accessed",
+	if file.State != "closed" {
+		fsys.log("File (%s,%s) is not closed, it cannot be accessed",
 			file.Name, file.Id)
 		return syscall.EACCES
 	}

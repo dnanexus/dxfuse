@@ -11,6 +11,7 @@ The `data_objects` table maintains information for files, applets, workflows, an
 | kind            | int      | type of file: regular, symbolic link, other |
 | id              | text     | The DNAx object-id |
 | proj\_id        | text     | A project id for the file |
+| state           | text     | the file state (open/closing/closed) |
 | archival\_state | text     | archival state of this file |
 | size            | bigint   | size of the file in bytes |
 | ctime           | bigint   | creation time |
