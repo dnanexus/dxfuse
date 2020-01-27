@@ -6,8 +6,8 @@ echo "current dir=$CRNT_DIR"
 source $CRNT_DIR/xattr_test.sh
 xattr_test
 
-source $CRNT_DIR/manifest_test.sh
-manifest_test
+#source $CRNT_DIR/manifest_test.sh
+#manifest_test
 
-source $CRNT_DIR/fs_test_cases.sh
-fs_test_cases
+#source $CRNT_DIR/fs_test_cases.sh
+#fs_test_cases

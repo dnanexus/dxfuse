@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -22,6 +23,13 @@ import (
 
 	// for the sqlite driver
 	_ "github.com/mattn/go-sqlite3"
+)
+
+const (
+	// namespace for xattrs
+	XATTR_TAG = "tag."
+	XATTR_PROPS = "props."
+	XATTR_BASE = "base."
 )
 
 func NewDxfuse(
@@ -1646,30 +1654,39 @@ func (fsys *Filesys) GetXattr(ctx context.Context, op *fuseops.GetXattrOp) error
 
 	// Is it one of the tags?
 	// If so, return an empty string
-	for _, tag := range file.Tags {
-		if tag == op.Name {
-			return fsys.getXattrFill(op, "tag")
+	if strings.HasPrefix(op.Name, XATTR_TAG) {
+		pName := op.Name[len(XATTR_TAG) : ]
+		for _, tag := range file.Tags {
+			if tag == pName {
+				return fsys.getXattrFill(op, "")
+			}
 		}
 	}
 
 	// Is it one of the properties?
 	// If so, return the value.
-	for key, value := range file.Properties {
-		if key == op.Name {
-			return fsys.getXattrFill(op, value)
+	if strings.HasPrefix(op.Name, XATTR_PROPS) {
+		pName := op.Name[len(XATTR_PROPS) : ]
+		for key, value := range file.Properties {
+			if key == pName {
+				return fsys.getXattrFill(op, value)
+			}
 		}
 	}
 
 	// Is it one of {state, archivalState/archivedState, id}?
 	// There is no other way of reporting it, so we allow querying these
 	// attributes here.
-	switch op.Name {
-	case "state":
-		return fsys.getXattrFill(op, file.State)
-	case "archivalState":
-		return fsys.getXattrFill(op, file.ArchivalState)
-	case "id" :
-		return fsys.getXattrFill(op, file.Id)
+	if strings.HasPrefix(op.Name, XATTR_BASE) {
+		pName := op.Name[len(XATTR_BASE) : ]
+		switch pName {
+		case "state":
+			return fsys.getXattrFill(op, file.State)
+		case "archivalState":
+			return fsys.getXattrFill(op, file.ArchivalState)
+		case "id" :
+			return fsys.getXattrFill(op, file.Id)
+		}
 	}
 
 	// There is no such attribute
@@ -1709,17 +1726,19 @@ func (fsys *Filesys) ListXattr(ctx context.Context, op *fuseops.ListXattrOp) err
 	// collect all the properties into one array
 	var xattrKeys []string
 	for _, tag := range file.Tags {
-		xattrKeys = append(xattrKeys, tag)
+		xattrKeys = append(xattrKeys, XATTR_TAG + tag)
 	}
 	for key, _ := range file.Properties {
-		xattrKeys = append(xattrKeys, key)
+		xattrKeys = append(xattrKeys, XATTR_PROPS + key)
 	}
 	// Special attributes
 	for _, key := range []string{ "state", "archivalState", "id"} {
-		xattrKeys = append(xattrKeys, key)
+		xattrKeys = append(xattrKeys, XATTR_BASE + key)
 	}
-	fsys.log("attribute keys: %v", xattrKeys)
-	fsys.log("output buffer len=%d", len(op.Dst))
+	if fsys.options.Verbose {
+		fsys.log("attribute keys: %v", xattrKeys)
+		fsys.log("output buffer len=%d", len(op.Dst))
+	}
 
 	// encode the names as a sequence of null-terminated strings
 	dst := op.Dst[:]

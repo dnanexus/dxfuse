@@ -35,15 +35,42 @@ function xattr_test {
 
     sudo -E $dxfuse -verbose 2 -uid $(id -u) -gid $(id -g) $mountpoint $projName
 
+    # This seems to be needed on MacOS
+    sleep 1
+
     local baseDir=$mountpoint/$projName/xattrs
     tree $baseDir
 
     # Get a list of all the attributes
     cd $baseDir
-    getfattr -d -m - HoneyBadger.txt
-    getfattr -d -m - whale.txt
-    getfattr -d -m - bat.txt
-    cd $HOME
 
+    local bat_all_attrs=$(xattr bat.txt | sort | tr '\n' ' ')
+    local bat_all_expected="base.archivalState base.id base.state props.eat props.family props.fly "
+    if [[ $bat_all_attrs != $bat_all_expected ]]; then
+       echo "bat attributes are incorrect"
+       echo "   got:       $bat_all_attrs"
+       echo "   expecting: $bat_all_expected"
+       exit 1
+    fi
+
+    local bat_family=$(xattr -p props.family bat.txt)
+    local bat_family_expected="mammal"
+    if [[ $bat_family != $bat_family_expected ]]; then
+        echo "bat family is wrong"
+        echo "   got:       $bat_family"
+        echo "   expecting: $bat_family_expected"
+        exit 1
+    fi
+
+    local whale_all_attrs=$(xattr whale.txt | sort | tr '\n' ' ')
+    local whale_all_expected="base.archivalState base.id base.state "
+    if [[ $whale_all_attrs != $whale_all_expected ]]; then
+       echo "whale attributes are incorrect"
+       echo "   got:       $whale_all_attrs"
+       echo "   expecting: $whale_all_expected"
+       exit 1
+    fi
+
+    cd $HOME
     teardown
 }
