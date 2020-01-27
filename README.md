@@ -4,7 +4,7 @@ A filesystem that allows users access to the DNAnexus storage system.
 
 [![Build Status](https://travis-ci.org/dnanexus/dxfuse.svg?branch=master)](https://travis-ci.org/dnanexus/dxfuse)
 
-**NOTE: This is a project in its early stage. We are using it in carefully controlled situations on the cloud, however, it may be run from any machine with a network connection.**
+**NOTE: This is a project in its beta stage. We are using it on cloud workers, however, it may be run from any machine with a network connection and a DNAx account.**
 
 The code uses the [FUSE](https://bazil.org/fuse/)
 library, implemented in [golang](https://golang.org). The DNAnexus
