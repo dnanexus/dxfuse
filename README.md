@@ -135,6 +135,21 @@ To stop the dxfuse process do:
 sudo umount MOUNT-POINT
 ```
 
+## Extended attributes (xattrs)
+
+DNXa data objects have properties and tags, these are exposed as POSIX extended attributes. To list all attributes for a file you can do:
+
+```
+$ getfattr -d -m - FILENAME
+```
+
+The `getattr` utility is part of the ubuntu attr apt package. It can be installed with:
+```
+$ sudo apt-get install attr
+```
+
+Currently, read-only access is provided for tags and attributes; they cannot be set. The `state`, `archivalState`, and `id` are also exposed as xattrs.
+
 ## Mac OS (OSX)
 
 For OSX you will need to install [OSXFUSE](http://osxfuse.github.com/).
@@ -143,10 +158,6 @@ For OSX you will need to install [OSXFUSE](http://osxfuse.github.com/).
 
 If a project appears empty, or is missing files, it could be that the dnanexus token does not have permissions for it. Try to see if you can do `dx ls YOUR_PROJECT:`.
 
-If you do not set the `uid` and `gid` options then creating hard links
-will fail on Linux. This is because it will fail the kernel's
-permissions check.
+If you do not set the `uid` and `gid` options then creating hard links will fail on Linux. This is because it will fail the kernel's permissions check.
 
-# Known filesystem issues
-
-* There is no natural match for DNAnexus applets and workflows, so they are presented as block devices. They do not behave like block devices, but the shell colors them differently from files and directories.
+There is no natural match for DNAnexus applets and workflows, so they are presented as block devices. They do not behave like block devices, but the shell colors them differently from files and directories.
