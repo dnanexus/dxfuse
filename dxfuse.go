@@ -1054,386 +1054,9 @@ func (fsys *Filesys) Unlink(ctx context.Context, op *fuseops.UnlinkOp) error {
 	return nil
 }
 
-func (fsys *Filesys) openRegularFile(ctx context.Context, oph *OpHandle, op *fuseops.OpenFileOp, f File) (*FileHandle, error) {
-	if f.InlineData != "" {
-		// a regular file that has a local copy
-		reader, err := os.Open(f.InlineData)
-		if err != nil {
-			fsys.log("Could not open local file %s, err=%s", f.InlineData, err.Error())
-			return nil, err
-		}
-		fh := &FileHandle{
-			fKind: RO_LocalCopy,
-			f : f,
-			url: nil,
-			localPath : &f.InlineData,
-			fd : reader,
-		}
-
-		return fh, nil
-	}
-
-	// A remote (immutable) file.
-	// create a download URL for this file.
-	const secondsInYear int = 60 * 60 * 24 * 365
-	payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
-		f.ProjId, secondsInYear)
-
-	body, err := dxda.DxAPI(ctx, oph.httpClient, NumRetriesDefault, &fsys.dxEnv, fmt.Sprintf("%s/download", f.Id), payload)
-	if err != nil {
-		oph.RecordError(err)
-		return nil, err
-	}
-	var u DxDownloadURL
-	json.Unmarshal(body, &u)
-
-	fh := &FileHandle{
-		fKind: RO_Remote,
-		f : f,
-		url: &u,
-		localPath : nil,
-		fd : nil,
-	}
-
-	return fh, nil
-}
-
-func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error {
-	fsys.mutex.Lock()
-	defer fsys.mutex.Unlock()
-	oph := fsys.OpOpen()
-	defer fsys.OpClose(oph)
-
-	if fsys.options.Verbose {
-		fsys.log("OpenFile inode=%d", op.Inode)
-	}
-
-	// find the file by its inode
-	node, ok, err := fsys.mdb.LookupByInode(ctx, oph, int64(op.Inode))
-	if err != nil {
-		fsys.log("database error in OpenFile %s", err.Error())
-		return fuse.EIO
-	}
-	if !ok {
-		// file doesn't exist
-		return fuse.ENOENT
-	}
-
-	var file File
-	switch node.(type) {
-	case Dir:
-		// not allowed to open a directory
-		return syscall.EACCES
-	case File:
-		// cast to a File type
-		file = node.(File)
-	default:
-		log.Panic(fmt.Sprintf("bad type for node %v", node))
-	}
-
-	if file.ArchivalState != "live" {
-		fsys.log("File (%s,%s) is in state %s, it cannot be accessed",
-			file.Name, file.Id, file.ArchivalState)
-		return syscall.EACCES
-	}
-
-	var fh *FileHandle
-	switch file.Kind {
-	case FK_Regular:
-		fh, err = fsys.openRegularFile(ctx, oph, op, file)
-		if err != nil {
-			return err
-		}
-	case FK_Symlink:
-		// A symbolic link can use the remote URL address
-		// directly. There is no need to generate a preauthenticated
-		// URL.
-		fh = &FileHandle{
-			fKind : RO_Remote,
-			f : file,
-			url : &DxDownloadURL{
-				URL : file.InlineData,
-				Headers : nil,
-			},
-			localPath : nil,
-			fd : nil,
-		}
-	default:
-		// can't open an applet/workflow/etc.
-		return fuse.ENOSYS
-	}
-
-	// add to the open-file table, so we can recognize future accesses to
-	// the same handle.
-	op.Handle = fsys.insertIntoFileHandleTable(fh)
-	op.KeepPageCache = true
-	op.UseDirectIO = true
-
-	if fh.fKind == RO_Remote {
-		// Create an entry in the prefetch table, if the file is eligable
-		fsys.pgs.CreateStreamEntry(fh.hid, fh.f, *fh.url)
-	}
-	return nil
-}
-
-
-func (fsys *Filesys) getWritableFD(ctx context.Context, handle fuseops.HandleID) (*os.File, error) {
-	fsys.mutex.Lock()
-	defer fsys.mutex.Unlock()
-
-	fh, ok := fsys.fhTable[handle]
-	if !ok {
-		// File handle doesn't exist
-		return nil, fuse.EINVAL
-	}
-
-	if fh.fKind != RW_File {
-		// This isn't a writeable file, there is no dirty data to flush
-		return nil, nil
-	}
-	if fh.fd == nil {
-		return nil, nil
-	}
-	return fh.fd, nil
-}
-
-
-func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) error {
-	if fsys.options.Verbose {
-		fsys.log("Flush inode %d", op.Inode)
-	}
-
-	fd, err := fsys.getWritableFD(ctx, op.Handle)
-	if err != nil {
-		return err
-	}
-	if fd == nil {
-		return nil
-	}
-
-	// we aren't holding the filesystem lock at this point
-	return fd.Sync()
-}
-
-func (fsys *Filesys) SyncFile(ctx context.Context, op *fuseops.SyncFileOp) error {
-	if fsys.options.Verbose {
-		fsys.log("Sync inode %d", op.Inode)
-	}
-
-	fd, err := fsys.getWritableFD(ctx, op.Handle)
-	if err != nil {
-		return err
-	}
-	if fd == nil {
-		return nil
-	}
-
-	// we aren't holding the filesystem lock at this point
-	return fd.Sync()
-}
-
-func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseFileHandleOp) error {
-	fsys.mutex.Lock()
-	defer fsys.mutex.Unlock()
-	oph := fsys.OpOpen()
-	defer fsys.OpClose(oph)
-
-	fh, ok := fsys.fhTable[op.Handle]
-	if !ok {
-		// File handle doesn't exist
-		return nil
-	}
-
-	// release the file handle itself
-	delete(fsys.fhTable, op.Handle)
-
-	// Clear the state involved with this open file descriptor
-	switch fh.fKind {
-	case RO_Remote:
-		// Read-only file that is accessed remotely
-		fsys.pgs.RemoveStreamEntry(fh.hid)
-		return nil
-
-	case RW_File:
-		// A new file created locally. We need to upload it
-		// to the platform.
-		if fsys.options.Verbose {
-			fsys.log("Close new file(%s)", fh.f.Name)
-		}
-
-		// flush and close the local file
-		// We leave the local file in place. This allows reading from
-		// it, without accessing the network.
-		if err := fh.fd.Sync(); err != nil {
-			return err
-		}
-		if err := fh.fd.Close(); err != nil {
-			return err
-		}
-		fh.fd = nil
-
-		// make this file read only
-		if err := os.Chmod(*fh.localPath, fileReadOnlyMode); err != nil {
-			return err
-		}
-
-		fInfo, err := os.Lstat(*fh.localPath)
-		if err != nil {
-			return err
-		}
-		fileSize := fInfo.Size()
-		modTime := fInfo.ModTime()
-
-		// update database entry
-		if err := fsys.mdb.UpdateFile(ctx, oph, fh.f, fileSize, modTime, fileReadOnlyMode); err != nil {
-			fsys.log("database error in OpenFile %s", err.Error())
-			return fuse.EIO
-		}
-
-		// initiate a background request to upload the file to the cloud
-		return fsys.fugs.UploadFile(fh.f, fileSize)
-
-	case RO_LocalCopy:
-		// Read-only file with a local copy
-		if fh.fd != nil {
-			fh.fd.Close()
-		}
-		return nil
-
-	default:
-		log.Panic(fmt.Sprintf("Invalid file kind %d", fh.fKind))
-	}
-	return nil
-}
-
-
-func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp, fh *FileHandle) error {
-	// This is a regular file
-	reqSize := int64(len(op.Dst))
-	if fh.f.Size == 0 || reqSize == 0 {
-		// The file is empty
-		return nil
-	}
-	if fh.f.Size <= op.Offset {
-		// request is beyond the size of the file
-		return nil
-	}
-	endOfs := op.Offset + reqSize - 1
-
-	// make sure we don't go over the file size
-	lastByteInFile := fh.f.Size - 1
-	endOfs = MinInt64(lastByteInFile, endOfs)
-
-	// See if the data has already been prefetched.
-	// This call will wait, if a prefetch IO is in progress.
-	len := fsys.pgs.CacheLookup(fh.hid, op.Offset, endOfs, op.Dst)
-	if len > 0 {
-		op.BytesRead = len
-		return nil
-	}
-
-	// The data has not been prefetched. Get the data from DNAx with an
-	// http request.
-	headers := make(map[string]string)
-
-	// Copy the immutable headers
-	for key, value := range fh.url.Headers {
-		headers[key] = value
-	}
-
-	// add an extent in the file that we want to read
-	headers["Range"] = fmt.Sprintf("bytes=%d-%d", op.Offset, endOfs)
-	if fsys.options.Verbose {
-		fsys.log("network read  (%s %d) ofs=%d len=%d endOfs=%d lastByteInFile=%d",
-			fh.f.Name, fh.f.Inode, op.Offset, reqSize, endOfs, lastByteInFile)
-	}
-
-	// Take an http client from the pool. Return it when done.
-	httpClient := <- fsys.httpClientPool
-	body,err := dxda.DxHttpRequest(ctx, httpClient, NumRetriesDefault, "GET", fh.url.URL, headers, []byte("{}"))
-	fsys.httpClientPool <- httpClient
-	if err != nil {
-		return err
-	}
-
-	op.BytesRead = copy(op.Dst, body)
-	return nil
-}
-
-func (fsys *Filesys) ReadFile(ctx context.Context, op *fuseops.ReadFileOp) error {
-	// Here, we start from the file handle
-	fsys.mutex.Lock()
-	fh,ok := fsys.fhTable[op.Handle]
-	if !ok {
-		// invalid file handle. It doesn't exist in the table
-		fsys.mutex.Unlock()
-		return fuse.EINVAL
-	}
-	fsys.mutex.Unlock()
-
-	// TODO: is there a scenario where two threads will run into a conflict
-	// because one is holding the handle, and the other is mutating it?
-
-	switch fh.f.Kind {
-	case FK_Regular:
-		if fh.fKind == RO_Remote {
-			return fsys.readRemoteFile(ctx, op, fh)
-		} else {
-			// the file has a local copy
-			n, err := fh.fd.ReadAt(op.Dst, op.Offset)
-			if err == io.ErrUnexpectedEOF || err == io.EOF {
-				// we don't report EOF to FUSE, it notices
-				// it because the number of bytes read is smaller
-				// than requested.
-				err = nil
-			}
-			op.BytesRead = n
-			return err
-		}
-
-	case FK_Symlink:
-		return fsys.readRemoteFile(ctx, op, fh)
-
-	default:
-		// can only read files
-		return syscall.EPERM
-	}
-}
-
-
-func (fsys *Filesys) findWritableFileHandle(handle fuseops.HandleID) (*FileHandle, error) {
-	fsys.mutex.Lock()
-	defer fsys.mutex.Unlock()
-
-	// Here, we start from the file handle
-	fh,ok := fsys.fhTable[handle]
-	if !ok {
-		// invalid file handle. It doesn't exist in the table
-		return nil, fuse.EINVAL
-	}
-	if fh.fKind != RW_File {
-		// This file isn't open for writing
-		return nil, syscall.EPERM
-	}
-	if fh.fd == nil {
-		log.Panic("file descriptor is empty")
-	}
-	return fh, nil
-}
-
-// Writes to files.
+// ===
+// Directory handling
 //
-// A file is created locally, and writes go to the local location. When
-// the file is closed, it becomes read only, and is then uploaded to the cloud.
-func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) error {
-	fh,err := fsys.findWritableFileHandle(op.Handle)
-	if err != nil {
-		return err
-	}
-	// we are not holding the global lock while we are doing IO
-	_, err = fh.fd.WriteAt(op.Data, op.Offset)
-	return err
-}
 
 func (fsys *Filesys) readEntireDir(ctx context.Context, oph *OpHandle, dir Dir) ([]fuseutil.Dirent, error) {
 	// normalize the filename. For example, we can get "//" when reading
@@ -1576,4 +1199,547 @@ func (fsys *Filesys) ReleaseDirHandle(ctx context.Context, op *fuseops.ReleaseDi
 
 	delete(fsys.dhTable, op.Handle)
 	return nil
+}
+
+
+// ===
+// File handling
+//
+func (fsys *Filesys) openRegularFile(ctx context.Context, oph *OpHandle, op *fuseops.OpenFileOp, f File) (*FileHandle, error) {
+	if f.InlineData != "" {
+		// a regular file that has a local copy
+		reader, err := os.Open(f.InlineData)
+		if err != nil {
+			fsys.log("Could not open local file %s, err=%s", f.InlineData, err.Error())
+			return nil, err
+		}
+		fh := &FileHandle{
+			fKind: RO_LocalCopy,
+			f : f,
+			url: nil,
+			localPath : &f.InlineData,
+			fd : reader,
+		}
+
+		return fh, nil
+	}
+
+	// A remote (immutable) file.
+	// create a download URL for this file.
+	const secondsInYear int = 60 * 60 * 24 * 365
+	payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
+		f.ProjId, secondsInYear)
+
+	body, err := dxda.DxAPI(ctx, oph.httpClient, NumRetriesDefault, &fsys.dxEnv, fmt.Sprintf("%s/download", f.Id), payload)
+	if err != nil {
+		oph.RecordError(err)
+		return nil, err
+	}
+	var u DxDownloadURL
+	json.Unmarshal(body, &u)
+
+	fh := &FileHandle{
+		fKind: RO_Remote,
+		f : f,
+		url: &u,
+		localPath : nil,
+		fd : nil,
+	}
+
+	return fh, nil
+}
+
+func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error {
+	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
+	oph := fsys.OpOpen()
+	defer fsys.OpClose(oph)
+
+	if fsys.options.Verbose {
+		fsys.log("OpenFile inode=%d", op.Inode)
+	}
+
+	// find the file by its inode
+	node, ok, err := fsys.mdb.LookupByInode(ctx, oph, int64(op.Inode))
+	if err != nil {
+		fsys.log("database error in OpenFile %s", err.Error())
+		return fuse.EIO
+	}
+	if !ok {
+		// file doesn't exist
+		return fuse.ENOENT
+	}
+
+	var file File
+	switch node.(type) {
+	case Dir:
+		// not allowed to open a directory
+		return syscall.EACCES
+	case File:
+		// cast to a File type
+		file = node.(File)
+	default:
+		log.Panic(fmt.Sprintf("bad type for node %v", node))
+	}
+
+	if file.State != "closed" {
+		fsys.log("File (%s,%s) is not closed, it cannot be accessed",
+			file.Name, file.Id)
+		return syscall.EACCES
+	}
+	if file.ArchivalState != "live" {
+		fsys.log("File (%s,%s) is in state %s, it cannot be accessed",
+			file.Name, file.Id, file.ArchivalState)
+		return syscall.EACCES
+	}
+
+	var fh *FileHandle
+	switch file.Kind {
+	case FK_Regular:
+		fh, err = fsys.openRegularFile(ctx, oph, op, file)
+		if err != nil {
+			return err
+		}
+	case FK_Symlink:
+		// A symbolic link can use the remote URL address
+		// directly. There is no need to generate a preauthenticated
+		// URL.
+		fh = &FileHandle{
+			fKind : RO_Remote,
+			f : file,
+			url : &DxDownloadURL{
+				URL : file.InlineData,
+				Headers : nil,
+			},
+			localPath : nil,
+			fd : nil,
+		}
+	default:
+		// can't open an applet/workflow/etc.
+		return fuse.ENOSYS
+	}
+
+	// add to the open-file table, so we can recognize future accesses to
+	// the same handle.
+	op.Handle = fsys.insertIntoFileHandleTable(fh)
+	op.KeepPageCache = true
+	op.UseDirectIO = true
+
+	if fh.fKind == RO_Remote {
+		// Create an entry in the prefetch table, if the file is eligable
+		fsys.pgs.CreateStreamEntry(fh.hid, fh.f, *fh.url)
+	}
+	return nil
+}
+
+
+func (fsys *Filesys) getWritableFD(ctx context.Context, handle fuseops.HandleID) (*os.File, error) {
+	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
+
+	fh, ok := fsys.fhTable[handle]
+	if !ok {
+		// File handle doesn't exist
+		return nil, fuse.EINVAL
+	}
+
+	if fh.fKind != RW_File {
+		// This isn't a writeable file, there is no dirty data to flush
+		return nil, nil
+	}
+	if fh.fd == nil {
+		return nil, nil
+	}
+	return fh.fd, nil
+}
+
+
+func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp, fh *FileHandle) error {
+	// This is a regular file
+	reqSize := int64(len(op.Dst))
+	if fh.f.Size == 0 || reqSize == 0 {
+		// The file is empty
+		return nil
+	}
+	if fh.f.Size <= op.Offset {
+		// request is beyond the size of the file
+		return nil
+	}
+	endOfs := op.Offset + reqSize - 1
+
+	// make sure we don't go over the file size
+	lastByteInFile := fh.f.Size - 1
+	endOfs = MinInt64(lastByteInFile, endOfs)
+
+	// See if the data has already been prefetched.
+	// This call will wait, if a prefetch IO is in progress.
+	len := fsys.pgs.CacheLookup(fh.hid, op.Offset, endOfs, op.Dst)
+	if len > 0 {
+		op.BytesRead = len
+		return nil
+	}
+
+	// The data has not been prefetched. Get the data from DNAx with an
+	// http request.
+	headers := make(map[string]string)
+
+	// Copy the immutable headers
+	for key, value := range fh.url.Headers {
+		headers[key] = value
+	}
+
+	// add an extent in the file that we want to read
+	headers["Range"] = fmt.Sprintf("bytes=%d-%d", op.Offset, endOfs)
+	if fsys.options.Verbose {
+		fsys.log("network read  (%s %d) ofs=%d len=%d endOfs=%d lastByteInFile=%d",
+			fh.f.Name, fh.f.Inode, op.Offset, reqSize, endOfs, lastByteInFile)
+	}
+
+	// Take an http client from the pool. Return it when done.
+	httpClient := <- fsys.httpClientPool
+	body,err := dxda.DxHttpRequest(ctx, httpClient, NumRetriesDefault, "GET", fh.url.URL, headers, []byte("{}"))
+	fsys.httpClientPool <- httpClient
+	if err != nil {
+		return err
+	}
+
+	op.BytesRead = copy(op.Dst, body)
+	return nil
+}
+
+func (fsys *Filesys) ReadFile(ctx context.Context, op *fuseops.ReadFileOp) error {
+	// Here, we start from the file handle
+	fsys.mutex.Lock()
+	fh,ok := fsys.fhTable[op.Handle]
+	if !ok {
+		// invalid file handle. It doesn't exist in the table
+		fsys.mutex.Unlock()
+		return fuse.EINVAL
+	}
+	fsys.mutex.Unlock()
+
+	// TODO: is there a scenario where two threads will run into a conflict
+	// because one is holding the handle, and the other is mutating it?
+
+	switch fh.f.Kind {
+	case FK_Regular:
+		if fh.fKind == RO_Remote {
+			return fsys.readRemoteFile(ctx, op, fh)
+		} else {
+			// the file has a local copy
+			n, err := fh.fd.ReadAt(op.Dst, op.Offset)
+			if err == io.ErrUnexpectedEOF || err == io.EOF {
+				// we don't report EOF to FUSE, it notices
+				// it because the number of bytes read is smaller
+				// than requested.
+				err = nil
+			}
+			op.BytesRead = n
+			return err
+		}
+
+	case FK_Symlink:
+		return fsys.readRemoteFile(ctx, op, fh)
+
+	default:
+		// can only read files
+		return syscall.EPERM
+	}
+}
+
+
+func (fsys *Filesys) findWritableFileHandle(handle fuseops.HandleID) (*FileHandle, error) {
+	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
+
+	// Here, we start from the file handle
+	fh,ok := fsys.fhTable[handle]
+	if !ok {
+		// invalid file handle. It doesn't exist in the table
+		return nil, fuse.EINVAL
+	}
+	if fh.fKind != RW_File {
+		// This file isn't open for writing
+		return nil, syscall.EPERM
+	}
+	if fh.fd == nil {
+		log.Panic("file descriptor is empty")
+	}
+	return fh, nil
+}
+
+// Writes to files.
+//
+// A file is created locally, and writes go to the local location. When
+// the file is closed, it becomes read only, and is then uploaded to the cloud.
+func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) error {
+	fh,err := fsys.findWritableFileHandle(op.Handle)
+	if err != nil {
+		return err
+	}
+	// we are not holding the global lock while we are doing IO
+	_, err = fh.fd.WriteAt(op.Data, op.Offset)
+	return err
+}
+
+func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) error {
+	if fsys.options.Verbose {
+		fsys.log("Flush inode %d", op.Inode)
+	}
+
+	fd, err := fsys.getWritableFD(ctx, op.Handle)
+	if err != nil {
+		return err
+	}
+	if fd == nil {
+		return nil
+	}
+
+	// we aren't holding the filesystem lock at this point
+	return fd.Sync()
+}
+
+func (fsys *Filesys) SyncFile(ctx context.Context, op *fuseops.SyncFileOp) error {
+	if fsys.options.Verbose {
+		fsys.log("Sync inode %d", op.Inode)
+	}
+
+	fd, err := fsys.getWritableFD(ctx, op.Handle)
+	if err != nil {
+		return err
+	}
+	if fd == nil {
+		return nil
+	}
+
+	// we aren't holding the filesystem lock at this point
+	return fd.Sync()
+}
+
+func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseFileHandleOp) error {
+	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
+	oph := fsys.OpOpen()
+	defer fsys.OpClose(oph)
+
+	fh, ok := fsys.fhTable[op.Handle]
+	if !ok {
+		// File handle doesn't exist
+		return nil
+	}
+
+	// release the file handle itself
+	delete(fsys.fhTable, op.Handle)
+
+	// Clear the state involved with this open file descriptor
+	switch fh.fKind {
+	case RO_Remote:
+		// Read-only file that is accessed remotely
+		fsys.pgs.RemoveStreamEntry(fh.hid)
+		return nil
+
+	case RW_File:
+		// A new file created locally. We need to upload it
+		// to the platform.
+		if fsys.options.Verbose {
+			fsys.log("Close new file(%s)", fh.f.Name)
+		}
+
+		// flush and close the local file
+		// We leave the local file in place. This allows reading from
+		// it, without accessing the network.
+		if err := fh.fd.Sync(); err != nil {
+			return err
+		}
+		if err := fh.fd.Close(); err != nil {
+			return err
+		}
+		fh.fd = nil
+
+		// make this file read only
+		if err := os.Chmod(*fh.localPath, fileReadOnlyMode); err != nil {
+			return err
+		}
+
+		fInfo, err := os.Lstat(*fh.localPath)
+		if err != nil {
+			return err
+		}
+		fileSize := fInfo.Size()
+		modTime := fInfo.ModTime()
+
+		// update database entry
+		if err := fsys.mdb.UpdateFile(ctx, oph, fh.f, fileSize, modTime, fileReadOnlyMode); err != nil {
+			fsys.log("database error in OpenFile %s", err.Error())
+			return fuse.EIO
+		}
+
+		// initiate a background request to upload the file to the cloud
+		return fsys.fugs.UploadFile(fh.f, fileSize)
+
+	case RO_LocalCopy:
+		// Read-only file with a local copy
+		if fh.fd != nil {
+			fh.fd.Close()
+		}
+		return nil
+
+	default:
+		log.Panicf("Invalid file kind %d", fh.fKind)
+	}
+	return nil
+}
+
+// ===
+// Extended attributes (xattrs)
+//
+
+func (fsys *Filesys) RemoveXattr(context.Context, *fuseops.RemoveXattrOp) error {
+	// not supported right now
+	return syscall.EPERM
+}
+
+
+func (fsys *Filesys) getXattrFill(op *fuseops.GetXattrOp, val_str string) error {
+	value := []byte(val_str)
+	op.BytesRead = len(value)
+	if len(op.Dst) == 0 {
+		return nil
+	}
+	if len(value) > len(op.Dst) {
+		return syscall.ERANGE
+	}
+	op.BytesRead = copy(op.Dst, value)
+	return nil
+}
+
+func (fsys *Filesys) GetXattr(ctx context.Context, op *fuseops.GetXattrOp) error {
+	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
+	oph := fsys.OpOpen()
+	defer fsys.OpClose(oph)
+
+	if fsys.options.Verbose {
+		fsys.log("GetXattr %d", op.Inode)
+	}
+
+	// Grab the inode.
+	node, ok, err := fsys.mdb.LookupByInode(ctx, oph, int64(op.Inode))
+	if err != nil {
+		fsys.log("database error in GetXattr: %s", err.Error())
+		return fuse.EIO
+	}
+	if !ok {
+		return fuse.ENOENT
+	}
+
+	var file File
+	switch node.(type) {
+	case File:
+		file = node.(File)
+	case Dir:
+		// directories do not have attributes
+		return syscall.EINVAL
+	}
+
+	// look for the attribute
+
+	// Is it one of the tags?
+	// If so, return an empty string
+	for _, tag := range file.Tags {
+		if tag == op.Name {
+			return fsys.getXattrFill(op, "tag")
+		}
+	}
+
+	// Is it one of the properties?
+	// If so, return the value.
+	for key, value := range file.Properties {
+		if key == op.Name {
+			return fsys.getXattrFill(op, value)
+		}
+	}
+
+	// Is it one of {state, archivalState/archivedState, id}?
+	// There is no other way of reporting it, so we allow querying these
+	// attributes here.
+	switch op.Name {
+	case "state":
+		return fsys.getXattrFill(op, file.State)
+	case "archivalState":
+		return fsys.getXattrFill(op, file.ArchivalState)
+	case "id" :
+		return fsys.getXattrFill(op, file.Id)
+	}
+
+	// There is no such attribute
+	return fuse.ENOATTR
+}
+
+// Make a list of all the extended attributes
+func (fsys *Filesys) ListXattr(ctx context.Context, op *fuseops.ListXattrOp) error {
+	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
+	oph := fsys.OpOpen()
+	defer fsys.OpClose(oph)
+
+	if fsys.options.Verbose {
+		fsys.log("ListXattr %d", op.Inode)
+	}
+
+	// Grab the inode.
+	node, ok, err := fsys.mdb.LookupByInode(ctx, oph, int64(op.Inode))
+	if err != nil {
+		fsys.log("database error in GetXattr: %s", err.Error())
+		return fuse.EIO
+	}
+	if !ok {
+		return fuse.ENOENT
+	}
+
+	var file File
+	switch node.(type) {
+	case File:
+		file = node.(File)
+	case Dir:
+		// directories do not have attributes
+		return syscall.EINVAL
+	}
+
+	// collect all the properties into one array
+	var xattrKeys []string
+	for _, tag := range file.Tags {
+		xattrKeys = append(xattrKeys, tag)
+	}
+	for key, _ := range file.Properties {
+		xattrKeys = append(xattrKeys, key)
+	}
+	// Special attributes
+	for _, key := range []string{ "state", "archivalState", "id"} {
+		xattrKeys = append(xattrKeys, key)
+	}
+	fsys.log("attribute keys: %v", xattrKeys)
+	fsys.log("output buffer len=%d", len(op.Dst))
+
+	// encode the names as a sequence of null-terminated strings
+	dst := op.Dst[:]
+	for _, key := range xattrKeys {
+		keyLen := len(key) + 1
+
+		if len(dst) >= keyLen {
+			copy(dst, key)
+			dst[keyLen-1] = 0  // null terminate the string
+			dst = dst[keyLen:]
+		} else if len(op.Dst) != 0 {
+			return syscall.ERANGE
+		}
+		op.BytesRead += keyLen
+	}
+
+	return nil
+}
+
+func (fsys *Filesys) SetXattr(context.Context, *fuseops.SetXattrOp) error {
+	// not supported right now
+	return syscall.EPERM
 }

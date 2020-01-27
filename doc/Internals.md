@@ -5,19 +5,22 @@ discovered by querying DNAnexus.
 
 The `data_objects` table maintains information for files, applets, workflows, and other data objects.
 
-| field name | SQL type |  description |
-| ---        | ---  |  --          |
-| inode      | bigint  | local filesystem i-node, cannot change |
-| kind       | int  | type of file: regular, symbolic link, other |
-| id         | text | The DNAx object-id |
-| proj\_id   | text |	A project id for the file |
-| archival\_state | text | archival state of this file |
-| size       | bigint  | size of the file in bytes |
-| ctime      | bigint  | creation time |
-| mtime      | bigint  | modification time |
-| mode       | int     | Unix permission bits |
-| nlink      | int     | number of hard links to this file |
-| inline\_data | string | holds the path for a symlink, if it has a local copy, this is the path |
+| field name      | SQL type | description |
+| ---             | ---      | --          |
+| inode           | bigint   | local filesystem i-node, cannot change |
+| kind            | int      | type of file: regular, symbolic link, other |
+| id              | text     | The DNAx object-id |
+| proj\_id        | text     | A project id for the file |
+| state           | text     | the file state (open/closing/closed) |
+| archival\_state | text     | archival state of this file |
+| size            | bigint   | size of the file in bytes |
+| ctime           | bigint   | creation time |
+| mtime           | bigint   | modification time |
+| mode            | int      | Unix permission bits |
+| nlink           | int      | number of hard links to this file |
+| tags            | text     | DNAx tags for this object, encoded as a JSON array |
+| properties      | text     | DNAx properties for this object, encoded as JSON  |
+| inline\_data    | text     | holds the path for a symlink, if it has a local copy, this is the path |
 
 It stores `stat` information on a data object, and maps it to an
 inode.  The inode is the primary key, and it cannot change once

@@ -24,6 +24,9 @@ azure_ladder = {
     "large" : ["azure:mem1_ssd1_x4", "azure:mem1_ssd1_x16", "azure:mem3_ssd1_x16"],
 }
 
+def get_script_path():
+    return os.path.dirname(os.path.realpath(sys.argv[0]))
+
 def lookup_applet(name, project, folder):
     wfgen = dxpy.bindings.search.find_data_objects(name= name,
                                                    folder= folder,
@@ -114,7 +117,8 @@ def run_benchmarks(dx_proj, instance_types, verbose):
 def run_local_test():
     try:
         print("running local tests")
-        cmd = ["/bin/bash", "local/local.sh"]
+        p = get_script_path()
+        cmd = ["/bin/bash", p + "/local/local.sh"]
         subprocess.check_call(cmd, stderr=subprocess.STDOUT)
     except subprocess.CalledProcessError as e:
         msg = ""

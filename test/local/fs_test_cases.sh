@@ -30,6 +30,8 @@ function teardown {
     fi
     teardown_complete=1
 
+    rm -f cmd_results.txt
+
     echo "unmounting dxfuse"
     cd $HOME
     sudo umount $mountpoint
@@ -544,6 +546,7 @@ function fs_test_cases() {
     rm -f ENV
     dx env --bash > ENV
     source ENV >& /dev/null
+    rm -f ENV
     dxfuse="$GOPATH/bin/dxfuse"
 
     # clean and make fresh directories

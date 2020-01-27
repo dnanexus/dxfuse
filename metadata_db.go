@@ -3,6 +3,7 @@ package dxfuse
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"path/filepath"
@@ -98,6 +99,73 @@ func intToBool(x int) bool {
 	return false
 }
 
+// Marshal a DNAx object tags to/from a string that
+// is stored in a database table
+type MTags struct {
+	Elements []string `json:"elements"`
+}
+
+func tagsMarshal(tags []string) string {
+	if tags == nil || len(tags) == 0 {
+		return ""
+	}
+	payload, err := json.Marshal(MTags{
+		Elements : tags,
+	})
+	if err != nil {
+		log.Panicf("failed to marshal tags (%v), %s", tags, err.Error())
+		return ""
+	}
+	return string(payload)
+}
+
+func tagsUnmarshal(buf string) []string {
+	if buf == "" {
+		return nil
+	}
+	var coded MTags
+	err := json.Unmarshal([]byte(buf), &coded)
+	if err != nil {
+		log.Panicf("failed to unmarshal tags (%s), %s",	buf, err.Error())
+		return nil
+	}
+	return coded.Elements
+}
+
+
+// Marshal a DNAx object properties to/from a string that
+// is stored in a database table
+type MProperties struct {
+	Elements map[string]string `json:"elements"`
+}
+
+func propertiesMarshal(props map[string]string) string {
+	if props == nil || len(props) == 0 {
+		return ""
+	}
+	payload, err := json.Marshal(MProperties{
+		Elements : props,
+	})
+	if err != nil {
+		log.Panicf("failed to marshal properties (%v), %s", props, err.Error())
+		return ""
+	}
+	return string(payload)
+}
+
+func propertiesUnmarshal(buf string) map[string]string {
+	if buf == "" {
+		return nil
+	}
+	var coded MProperties
+	err := json.Unmarshal([]byte(buf), &coded)
+	if err != nil {
+		log.Panicf("failed to unmarshal properties (%s), %s", buf, err.Error())
+		return nil
+	}
+	return coded.Elements
+}
+
 func (mdb *MetadataDb) init2(txn *sql.Tx) error {
 	// Create table for files.
 	//
@@ -108,6 +176,7 @@ func (mdb *MetadataDb) init2(txn *sql.Tx) error {
                 kind int,
 		id text,
 		proj_id text,
+                state text,
                 archival_state text,
                 inode bigint,
 		size bigint,
@@ -115,6 +184,8 @@ func (mdb *MetadataDb) init2(txn *sql.Tx) error {
                 mtime bigint,
                 mode int,
                 nlink int,
+                tags text,
+                properties text,
                 inline_data text,
                 PRIMARY KEY (inode)
 	);
@@ -309,7 +380,7 @@ func (mdb *MetadataDb) lookupDataObjectById(oph *OpHandle, fId string) (int64, i
 func (mdb *MetadataDb) lookupDataObjectByInode(oph *OpHandle, oname string, inode int64) (File, bool, error) {
 	// point lookup in the files table
 	sqlStmt := fmt.Sprintf(`
- 		        SELECT kind,id,proj_id,archival_state,size,ctime,mtime,mode,nlink,inline_data
+ 		        SELECT kind,id,proj_id,state,archival_state,size,ctime,mtime,mode,nlink,tags,properties,inline_data
                         FROM data_objects
 			WHERE inode = '%d';`,
 		inode)
@@ -329,9 +400,14 @@ func (mdb *MetadataDb) lookupDataObjectByInode(oph *OpHandle, oname string, inod
 	for rows.Next() {
 		var ctime int64
 		var mtime int64
-		rows.Scan(&f.Kind, &f.Id, &f.ProjId, &f.ArchivalState, &f.Size, &ctime, &mtime,	&f.Mode, &f.Nlink, &f.InlineData)
+		var props string
+		var tags string
+		rows.Scan(&f.Kind, &f.Id, &f.ProjId, &f.State, &f.ArchivalState, &f.Size, &ctime, &mtime, &f.Mode, &f.Nlink,
+			&tags, &props, &f.InlineData)
 		f.Ctime = SecondsToTime(ctime)
 		f.Mtime = SecondsToTime(mtime)
+		f.Tags = tagsUnmarshal(tags)
+		f.Properties = propertiesUnmarshal(props)
 		numRows++
 	}
 	rows.Close()
@@ -547,7 +623,7 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 
 	// Extract information for all the files
 	sqlStmt = fmt.Sprintf(`
- 		        SELECT dos.kind, dos.id, dos.proj_id, dos.archival_state, dos.inode, dos.size, dos.ctime, dos.mtime, dos.mode, dos.nlink, dos.inline_data, namespace.name
+ 		        SELECT dos.kind, dos.id, dos.proj_id, dos.state, dos.archival_state, dos.inode, dos.size, dos.ctime, dos.mtime, dos.mode, dos.nlink, dos.tags, dos.properties, dos.inline_data, namespace.name
                         FROM data_objects as dos
                         JOIN namespace
                         ON dos.inode = namespace.inode
@@ -566,10 +642,15 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 
 		var ctime int64
 		var mtime int64
+		var tags string
+		var props string
 		var mode int
-		rows.Scan(&f.Kind,&f.Id, &f.ProjId, &f.ArchivalState, &f.Inode, &f.Size, &ctime, &mtime, &mode, &f.Nlink, &f.InlineData,&f.Name)
+		rows.Scan(&f.Kind,&f.Id, &f.ProjId, &f.State, &f.ArchivalState, &f.Inode, &f.Size, &ctime, &mtime, &mode, &f.Nlink,
+			&tags, &props, &f.InlineData,&f.Name)
 		f.Ctime = SecondsToTime(ctime)
 		f.Mtime = SecondsToTime(mtime)
+		f.Tags = tagsUnmarshal(tags)
+		f.Properties = propertiesUnmarshal(props)
 		f.Mode = os.FileMode(mode)
 
 		files[f.Name] = f
@@ -595,11 +676,14 @@ func (mdb *MetadataDb) createDataObject(
 	flag int,
 	kind int,
 	projId string,
+	state string,
 	archivalState string,
 	objId string,
 	size int64,
 	ctime int64,
 	mtime int64,
+	tags  []string,
+	properties map[string]string,
 	mode os.FileMode,
 	parentDir string,
 	fname string,
@@ -624,11 +708,17 @@ func (mdb *MetadataDb) createDataObject(
 		// NOte: it is on stable storage, and will not change.
 		inode = mdb.allocInodeNum()
 
+		// marshal tags and properties
+		mTags := tagsMarshal(tags)
+		mProps := propertiesMarshal(properties)
+
 		// Create an entry for the file
 		sqlStmt := fmt.Sprintf(`
  		        INSERT INTO data_objects
-			VALUES ('%d', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%d', '%s');`,
-			kind, objId, projId, archivalState, inode, size, ctime, mtime, int(mode), 1, inlineData)
+			VALUES ('%d', '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%d', '%s', '%s', '%s');`,
+			kind, objId, projId, state, archivalState, inode, size, ctime, mtime, int(mode), 1,
+			mTags, mProps,
+			inlineData)
 		if _, err := oph.txn.Exec(sqlStmt); err != nil {
 			mdb.log(err.Error())
 			mdb.log("Error inserting into data objects table")
@@ -841,11 +931,14 @@ func (mdb *MetadataDb) populateDir(
 			CDO_NEUTRAL,
 			kind,
 			o.ProjId,
+			o.State,
 			o.ArchivalState,
 			o.Id,
 			o.Size,
 			o.CtimeSeconds,
 			o.MtimeSeconds,
+			o.Tags,
+			o.Properties,
 			fileReadOnlyMode,
 			dirPath,
 			o.Name,
@@ -1105,11 +1198,14 @@ func (mdb *MetadataDb) PopulateRoot(ctx context.Context, oph *OpHandle, manifest
 			CDO_NEUTRAL,
 			FK_Regular,
 			fl.ProjId,
+			"closed",
 			fl.ArchivalState,
 			fl.FileId,
 			fl.Size,
 			fl.CtimeSeconds,
 			fl.MtimeSeconds,
+			nil,
+			nil,
 			fileReadOnlyMode,
 			fl.Parent,
 			fl.Fname,
@@ -1165,11 +1261,14 @@ func (mdb *MetadataDb) CreateFile(
 		CDO_MUST_BE_NEW,
 		FK_Regular,
 		dir.ProjId,
+		"closed",
 		"live",
 		fileId,
 		0,    /* the file is empty */
 		nowSeconds,
 		nowSeconds,
+		nil,  // A local file doesn't have tags or properties
+		nil,
 		mode,
 		dir.FullPath,
 		fname,
@@ -1207,11 +1306,14 @@ func (mdb *MetadataDb) CreateLink(ctx context.Context, oph *OpHandle, srcFile Fi
 		CDO_ALREADY_EXISTS,
 		FK_Regular,
 		dstParent.ProjId,
+		srcFile.State,
 		srcFile.ArchivalState,
 		srcFile.Id,
 		srcFile.Size,
 		int64(srcFile.Ctime.Second()),
 		int64(srcFile.Mtime.Second()),
+		nil,  // cloning does not copy the tags or properties
+		nil,
 		srcFile.Mode,
 		dstParent.FullPath,
 		name,
