@@ -42,9 +42,7 @@ function xattr_test {
     tree $baseDir
 
     # Get a list of all the attributes
-    cd $baseDir
-
-    local bat_all_attrs=$(xattr bat.txt | sort | tr '\n' ' ')
+    local bat_all_attrs=$(xattr $baseDir/bat.txt | sort | tr '\n' ' ')
     local bat_all_expected="base.archivalState base.id base.state props.eat props.family props.fly "
     if [[ $bat_all_attrs != $bat_all_expected ]]; then
        echo "bat attributes are incorrect"
@@ -53,7 +51,7 @@ function xattr_test {
        exit 1
     fi
 
-    local bat_family=$(xattr -p props.family bat.txt)
+    local bat_family=$(xattr -p props.family $baseDir/bat.txt)
     local bat_family_expected="mammal"
     if [[ $bat_family != $bat_family_expected ]]; then
         echo "bat family is wrong"
@@ -62,7 +60,7 @@ function xattr_test {
         exit 1
     fi
 
-    local whale_all_attrs=$(xattr whale.txt | sort | tr '\n' ' ')
+    local whale_all_attrs=$(xattr $baseDir/whale.txt | sort | tr '\n' ' ')
     local whale_all_expected="base.archivalState base.id base.state "
     if [[ $whale_all_attrs != $whale_all_expected ]]; then
        echo "whale attributes are incorrect"
@@ -71,6 +69,5 @@ function xattr_test {
        exit 1
     fi
 
-    cd $HOME
     teardown
 }
