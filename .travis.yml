@@ -20,6 +20,7 @@ addons:
     - python3-pip
     - python3-venv
     - fuse
+    - attr
 
 before_install:
   - sudo -H pip3 install setuptools
