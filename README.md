@@ -166,20 +166,6 @@ $ xattr -d prop.family zebra.txt
 
 You cannot modify any base.* attribute, these are read-only. Currently, setting and deleting xattrs can be done only for files that are closed on DNAx.
 
-## v0.18
-- Showing archived and open files; these were previously hidden. Trying to read or write from an archived
-or non-closed file will cause an EACCES error.
-- Presenting file properties and tags as extended attributes. To list all attributes for a file you can do:
-```
-$ getfattr -d -m - FILENAME
-```
-
-The `getattr` utility is part of the ubuntu attr apt package. It can be installed with:
-```
-$ sudo apt-get install attr
-```
-
-
 ## Mac OS (OSX)
 
 For OSX you will need to install [OSXFUSE](http://osxfuse.github.com/).
