@@ -139,7 +139,7 @@ sudo umount MOUNT-POINT
 
 DNXa data objects have properties and tags, these are exposed as POSIX extended attributes. The package we use for testing is `xattr` which is native on MacOS (OSX), and can be installed with `sudo apt-get install xattr` on Linux. Xattrs can be written and removed. The examples here use `xattr`, although other tools will work just as well.
 
-DNAx tags and properties are prefixed. For example, if `zebra.txt` is a text file then `xattr -l` will print out all the tags, properties, and attributes that have no POSIX equivalent. These are split into three prefixes _base_, _prop_, and _tag_, all under the `user.` Linux namespace.
+DNAx tags and properties are prefixed. For example, if `zebra.txt` is a file then `xattr -l zebra.txt` will print out all the tags, properties, and attributes that have no POSIX equivalent. These are split into three correspnding prefixes _tag_, _prop_, and _base_ all under the `user` Linux namespace.
 
 Here `zebra.txt` has no properties or tags.
 ```
