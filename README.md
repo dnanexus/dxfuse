@@ -137,7 +137,7 @@ sudo umount MOUNT-POINT
 
 ## Extended attributes (xattrs)
 
-DNXa data objects have properties and tags, these are exposed as POSIX extended attributes. The package we use for testing is `xattr` which is native on MacOS (OSX), and can be installed with `sudo apt-get install xattr` on Linux. Xattrs can be written and removed, with the current limitation that this works only for closed files. The examples here use `xattr`, although other tools will work just as well.
+DNXa data objects have properties and tags, these are exposed as POSIX extended attributes. The package we use for testing is `xattr` which is native on MacOS (OSX), and can be installed with `sudo apt-get install xattr` on Linux. Xattrs can be written and removed. The examples here use `xattr`, although other tools will work just as well.
 
 Tags and properties are namespaced. For example, if `zebra.txt` is a normal text file with no DNAx tags or properties then `xattr -l` will print out all the tags, properties, and extra attributes that have no POSIX equivalent. This is split into three namespaces: _base_, _prop_, and _tag_.
 
@@ -164,7 +164,7 @@ Remove the `family` property:
 $ xattr -d prop.family zebra.txt
 ```
 
-You cannot modify any base.* attribute, these are read-only.
+You cannot modify any base.* attribute, these are read-only. Currently, setting and deleting xattrs can be done only for files that are closed on DNAx.
 
 ## v0.18
 - Showing archived and open files; these were previously hidden. Trying to read or write from an archived
