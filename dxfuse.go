@@ -1602,6 +1602,27 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 // Extended attributes (xattrs)
 //
 
+func (fsys *Filesys) lookupFileByInode(ctx context.Context, oph *OpHandle, inode int64) (File, bool, error) {
+	node, ok, err := fsys.mdb.LookupByInode(ctx, oph, inode)
+	if err != nil {
+		fsys.log("database error in xattr op: %s", err.Error())
+		return File{}, false, fuse.EIO
+	}
+	if !ok {
+		return File{}, false, fuse.ENOENT
+	}
+
+	var file File
+	switch node.(type) {
+	case File:
+		file = node.(File)
+	case Dir:
+		// directories do not have attributes
+		return File{}, true, syscall.EINVAL
+	}
+	return file, false, nil
+}
+
 func (fsys *Filesys) xattrParseName(name string) (string, string, error) {
 	prefixLen := strings.Index(name, ".")
 	if prefixLen == -1 {
@@ -1625,22 +1646,9 @@ func (fsys *Filesys) RemoveXattr(ctx context.Context, op *fuseops.RemoveXattrOp)
 	}
 
 	// Grab the inode.
-	node, ok, err := fsys.mdb.LookupByInode(ctx, oph, int64(op.Inode))
+	file, _, err := fsys.lookupFileByInode(ctx, oph, int64(op.Inode))
 	if err != nil {
-		fsys.log("database error in RemoveXattr: %s", err.Error())
-		return fuse.EIO
-	}
-	if !ok {
-		return fuse.ENOENT
-	}
-
-	var file File
-	switch node.(type) {
-	case File:
-		file = node.(File)
-	case Dir:
-		// directories do not have attributes
-		return syscall.EINVAL
+		return err
 	}
 
 	// look for the attribute
@@ -1667,7 +1675,7 @@ func (fsys *Filesys) RemoveXattr(ctx context.Context, op *fuseops.RemoveXattrOp)
 				break
 			}
 		}
-	default:
+	case XATTR_BASE:
 		fsys.log("property must start with one of {%s ,%s}", XATTR_TAG, XATTR_PROP)
 		return fuse.EINVAL
 	}
@@ -1736,22 +1744,12 @@ func (fsys *Filesys) GetXattr(ctx context.Context, op *fuseops.GetXattrOp) error
 	}
 
 	// Grab the inode.
-	node, ok, err := fsys.mdb.LookupByInode(ctx, oph, int64(op.Inode))
+	file, isDir, err := fsys.lookupFileByInode(ctx, oph, int64(op.Inode))
+	if isDir {
+		return fuse.ENOATTR
+	}
 	if err != nil {
-		fsys.log("database error in GetXattr: %s", err.Error())
-		return fuse.EIO
-	}
-	if !ok {
-		return fuse.ENOENT
-	}
-
-	var file File
-	switch node.(type) {
-	case File:
-		file = node.(File)
-	case Dir:
-		// directories do not have attributes
-		return syscall.EINVAL
+		return err
 	}
 
 	// look for the attribute
@@ -1807,22 +1805,9 @@ func (fsys *Filesys) ListXattr(ctx context.Context, op *fuseops.ListXattrOp) err
 	}
 
 	// Grab the inode.
-	node, ok, err := fsys.mdb.LookupByInode(ctx, oph, int64(op.Inode))
+	file, _, err := fsys.lookupFileByInode(ctx, oph, int64(op.Inode))
 	if err != nil {
-		fsys.log("database error in GetXattr: %s", err.Error())
-		return fuse.EIO
-	}
-	if !ok {
-		return fuse.ENOENT
-	}
-
-	var file File
-	switch node.(type) {
-	case File:
-		file = node.(File)
-	case Dir:
-		// directories do not have attributes
-		return syscall.EINVAL
+		return err
 	}
 
 	// collect all the properties into one array
