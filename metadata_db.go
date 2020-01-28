@@ -155,7 +155,7 @@ func propertiesMarshal(props map[string]string) string {
 
 func propertiesUnmarshal(buf string) map[string]string {
 	if buf == "" {
-		return nil
+		return make(map[string]string)
 	}
 	var coded MProperties
 	err := json.Unmarshal([]byte(buf), &coded)

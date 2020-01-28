@@ -1958,7 +1958,7 @@ func (fsys *Filesys) SetXattr(ctx context.Context, op *fuseops.SetXattrOp) error
 
 	// update the database
 	if err := fsys.mdb.UpdateFileTagsAndProperties(ctx, oph, file); err != nil {
-		fsys.log("database error in OpenFile %s", err.Error())
+		fsys.log("database error in SetXattr %s", err.Error())
 		return fuse.EIO
 	}
 

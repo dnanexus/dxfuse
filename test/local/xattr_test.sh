@@ -73,12 +73,40 @@ function check_whale {
 function check_new {
     local base_dir=$1
     local f=$base_dir/Mountains.txt
-    echo "K2, Kilimanjaro, Everest, Mckinly" > $f
 
-    xattr -w prop.family mountains $f
-    xattr -w tag.mountain $f
+    xattr -w prop.family geography $f
+    xattr -w tag.high X $f
 
-    xattr -l $f
+    local family=$(xattr -p prop.family $f)
+    local expected="geography"
+    if [[ $family != $expected ]]; then
+        echo "$f family property is wrong"
+        echo "   got:       $family"
+        echo "   expecting: $expected"
+        exit 1
+    fi
+
+    local all_attrs=$(xattr $f | sort | tr '\n' ' ')
+    local all_expected="base.archivalState base.id base.state prop.family tag.high "
+    if [[ $all_attrs != $all_expected ]]; then
+        echo "$f attributes are incorrect"
+        echo "   got:       $all_attrs"
+        echo "   expecting: $all_expected"
+        exit 1
+    fi
+
+    xattr -d prop.family $f
+    xattr -d tag.high $f
+    xattr  $f
+
+    local all_attrs2=$(xattr $f | sort | tr '\n' ' ')
+    local all_expected2="base.archivalState base.id base.state "
+    if [[ $all_attrs2 != $all_expected2 ]]; then
+        echo "$f attributes are incorrect"
+        echo "   got:       $all_attrs2"
+        echo "   expecting: $all_expected2"
+        exit 1
+    fi
 }
 
 function xattr_test {
@@ -95,5 +123,6 @@ function xattr_test {
     check_bat $base_dir
     check_whale $base_dir
     check_new $base_dir
+
     teardown
 }
