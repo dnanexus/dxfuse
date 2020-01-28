@@ -148,7 +148,41 @@ The `getattr` utility is part of the ubuntu attr apt package. It can be installe
 $ sudo apt-get install attr
 ```
 
-Currently, read-only access is provided for tags and attributes; they cannot be set. The `state`, `archivalState`, and `id` are also exposed as xattrs.
+An alternative package is `xattr` which is native on MacOS (OSX), and can be installed with `sudo apt-get install xattr` on Linux. Xattrs can be written and removed, with the current limitation that this works only for closed files.
+
+ags and properties are namespaced. For example, if `zebra.txt` is a normal text file with no DNAx tags or properties then `xattr -l` will print out all the tags, properties, and extra attributes that have no POSIX equivalent. This is split into three namespaces: _base_, _prop_, and _tag_.
+
+```
+$ xattr -l zebra.txt
+
+base.state: closed
+base.archivalState: live
+base.id: file-Fjj89YQ04J96Yg3K51FKf9f7
+```
+
+Add a property named `family` with value `mammal`
+```
+$ xattr -w prop.family mammal zebra.txt
+```
+
+Add a tag `africa`
+```
+$ xattr -w tag.africa XXX zebra.txt
+```
+
+## v0.18
+- Showing archived and open files; these were previously hidden. Trying to read or write from an archived
+or non-closed file will cause an EACCES error.
+- Presenting file properties and tags as extended attributes. To list all attributes for a file you can do:
+```
+$ getfattr -d -m - FILENAME
+```
+
+The `getattr` utility is part of the ubuntu attr apt package. It can be installed with:
+```
+$ sudo apt-get install attr
+```
+
 
 ## Mac OS (OSX)
 
