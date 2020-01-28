@@ -508,3 +508,90 @@ func (ops *DxOps) DxClone(
 
 	return true, nil
 }
+
+type RequestSetProperties struct {
+	ProjId     string               `json:"project"`
+	Properties map[string](*string) `json:"properties"`
+}
+
+type ReplySetProperties struct {
+	Id  string `json:"id"`
+}
+
+func (ops *DxOps) DxSetProperty(
+	ctx context.Context,
+	httpClient *retryablehttp.Client,
+	projId string,
+	objId string,
+	key string,
+	value *string) error {
+
+	var request RequestSetProperties
+	request.ProjId = projId
+	props := make(map[string](*string))
+	props[key] = value
+	request.Properties = props
+
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return err
+	}
+
+	repJs, err := dxda.DxAPI(
+		ctx, httpClient, NumRetriesDefault, &ops.dxEnv,
+		fmt.Sprintf("%s/setProperties", objId),
+		string(payload))
+	if err != nil {
+		return err
+	}
+
+	var reply ReplySetProperties
+	if err := json.Unmarshal(repJs, &reply); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+type RequestAddTags struct {
+	ProjId    string  `json:"project"`
+	Tags    []string  `json:"tags"`
+}
+
+type ReplyAddTags struct {
+	Id  string `json:"id"`
+}
+
+func (ops *DxOps) DxAddTag(
+	ctx context.Context,
+	httpClient *retryablehttp.Client,
+	projId string,
+	objId string,
+	key string) error {
+
+	var request RequestAddTags
+	request.ProjId = projId
+	tags := make([]string, 1)
+	tags[0] = key
+	request.Tags = tags
+
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return err
+	}
+
+	repJs, err := dxda.DxAPI(
+		ctx, httpClient, NumRetriesDefault, &ops.dxEnv,
+		fmt.Sprintf("%s/addTags", objId),
+		string(payload))
+	if err != nil {
+		return err
+	}
+
+	var reply ReplyAddTags
+	if err := json.Unmarshal(repJs, &reply); err != nil {
+		return err
+	}
+
+	return nil
+}

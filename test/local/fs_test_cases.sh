@@ -578,6 +578,7 @@ function fs_test_cases() {
         flags="-verbose 2"
     fi
     sudo -E $dxfuse -uid $(id -u) -gid $(id -g) $flags $mountpoint dxfuse_test_data dxfuse_test_read_only ArchivedStuff
+    sleep 1
 
     echo "can write to a small file"
     check_file_write_content $mountpoint/$projName $target_dir

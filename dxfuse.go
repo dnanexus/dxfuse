@@ -27,9 +27,9 @@ import (
 
 const (
 	// namespace for xattrs
-	XATTR_TAG = "tag."
-	XATTR_PROPS = "props."
-	XATTR_BASE = "base."
+	XATTR_TAG = "tag"
+	XATTR_PROP = "prop"
+	XATTR_BASE = "base"
 )
 
 func NewDxfuse(
@@ -1602,6 +1602,18 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 // Extended attributes (xattrs)
 //
 
+func (fsys *Filesys) xattrParseName(name string) (string, string, error) {
+	prefixLen := strings.Index(name, ".")
+	if prefixLen == -1 {
+		fsys.log("property must start with one of {%s ,%s, %s}",
+			XATTR_TAG, XATTR_PROP, XATTR_BASE)
+		return "", "", fuse.EINVAL
+	}
+	namespace := name[:prefixLen]
+	attrName := name[len(namespace) + 1 : ]
+	return namespace, attrName, nil
+}
+
 func (fsys *Filesys) RemoveXattr(context.Context, *fuseops.RemoveXattrOp) error {
 	// not supported right now
 	return syscall.EPERM
@@ -1651,35 +1663,33 @@ func (fsys *Filesys) GetXattr(ctx context.Context, op *fuseops.GetXattrOp) error
 	}
 
 	// look for the attribute
+	namespace, attrName, err := fsys.xattrParseName(op.Name)
+	if err != nil {
+		return err
+	}
 
-	// Is it one of the tags?
-	// If so, return an empty string
-	if strings.HasPrefix(op.Name, XATTR_TAG) {
-		pName := op.Name[len(XATTR_TAG) : ]
+	switch namespace {
+	case XATTR_TAG:
+		// Is it one of the tags?
+		// If so, return an empty string
 		for _, tag := range file.Tags {
-			if tag == pName {
+			if tag == attrName {
 				return fsys.getXattrFill(op, "")
 			}
 		}
-	}
-
-	// Is it one of the properties?
-	// If so, return the value.
-	if strings.HasPrefix(op.Name, XATTR_PROPS) {
-		pName := op.Name[len(XATTR_PROPS) : ]
+	case XATTR_PROP:
+		// Is it one of the properties?
+		// If so, return the value.
 		for key, value := range file.Properties {
-			if key == pName {
+			if key == attrName {
 				return fsys.getXattrFill(op, value)
 			}
 		}
-	}
-
-	// Is it one of {state, archivalState/archivedState, id}?
-	// There is no other way of reporting it, so we allow querying these
-	// attributes here.
-	if strings.HasPrefix(op.Name, XATTR_BASE) {
-		pName := op.Name[len(XATTR_BASE) : ]
-		switch pName {
+	case XATTR_BASE:
+		// Is it one of {state, archivalState/archivedState, id}?
+		// There is no other way of reporting it, so we allow querying these
+		// attributes here.
+		switch attrName {
 		case "state":
 			return fsys.getXattrFill(op, file.State)
 		case "archivalState":
@@ -1726,14 +1736,14 @@ func (fsys *Filesys) ListXattr(ctx context.Context, op *fuseops.ListXattrOp) err
 	// collect all the properties into one array
 	var xattrKeys []string
 	for _, tag := range file.Tags {
-		xattrKeys = append(xattrKeys, XATTR_TAG + tag)
+		xattrKeys = append(xattrKeys, XATTR_TAG + "." + tag)
 	}
 	for key, _ := range file.Properties {
-		xattrKeys = append(xattrKeys, XATTR_PROPS + key)
+		xattrKeys = append(xattrKeys, XATTR_PROP + "." + key)
 	}
 	// Special attributes
 	for _, key := range []string{ "state", "archivalState", "id"} {
-		xattrKeys = append(xattrKeys, XATTR_BASE + key)
+		xattrKeys = append(xattrKeys, XATTR_BASE + "." + key)
 	}
 	if fsys.options.Verbose {
 		fsys.log("attribute keys: %v", xattrKeys)
@@ -1758,7 +1768,122 @@ func (fsys *Filesys) ListXattr(ctx context.Context, op *fuseops.ListXattrOp) err
 	return nil
 }
 
-func (fsys *Filesys) SetXattr(context.Context, *fuseops.SetXattrOp) error {
-	// not supported right now
-	return syscall.EPERM
+func (fsys *Filesys) SetXattr(ctx context.Context, op *fuseops.SetXattrOp) error {
+	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
+	oph := fsys.OpOpen()
+	defer fsys.OpClose(oph)
+
+	if fsys.options.Verbose {
+		fsys.log("SetXattr %d", op.Inode)
+	}
+
+	// Grab the inode.
+	node, ok, err := fsys.mdb.LookupByInode(ctx, oph, int64(op.Inode))
+	if err != nil {
+		fsys.log("database error in SetXattr: %s", err.Error())
+		return fuse.EIO
+	}
+	if !ok {
+		return fuse.ENOENT
+	}
+
+	var file File
+	switch node.(type) {
+	case File:
+		file = node.(File)
+	case Dir:
+		// directories do not have attributes
+		return syscall.EINVAL
+	}
+
+	// Check if the property already exists
+	// convert
+	//   "tag.foo" ->  namespace=TAGS  pName="foo"
+	//   "prop.foo" -> namespace=PROP  pName="foo"
+	attrExists := false
+	namespace, attrName, err := fsys.xattrParseName(op.Name)
+	if err != nil {
+		return err
+	}
+
+	switch namespace {
+	case XATTR_TAG:
+		// this is in the tag namespace
+		for _, tag := range file.Tags {
+			if tag == attrName {
+				attrExists = true
+				break
+			}
+		}
+	case XATTR_PROP:
+		// in the property namespace
+		for key, _ := range file.Properties {
+			if key == attrName {
+				attrExists = true
+				break
+			}
+		}
+	default:
+		fsys.log("property must start with one of {%s ,%s}", XATTR_TAG, XATTR_PROP)
+		return fuse.EINVAL
+	}
+
+	// cases of early return
+	switch op.Flags {
+	case 0x1:
+		if attrExists {
+			return fuse.EEXIST
+		}
+	case 0x2:
+		if !attrExists {
+			return fuse.ENOATTR
+		}
+	case 0x0:
+		// can accept both cases
+	default:
+		fsys.log("invalid SetAttr flag value %d, expecting one of {0x0, 0x1, 0x2}",
+			op.Flags)
+		return syscall.EINVAL
+	}
+
+	// update the file in-memory representation
+	switch namespace {
+	case XATTR_TAG:
+		if !attrExists {
+			file.Tags = append(file.Tags, attrName)
+		} else {
+			// The tag is already set. There is no need
+			// to tag again.
+		}
+	case XATTR_PROP:
+		// The key may already exist, in which case we are updating
+		// the value.
+		file.Properties[attrName] = string(op.Value)
+	default:
+		log.Panicf("sanity: invalid namespace %s", namespace)
+	}
+
+	// update the database
+	if err := fsys.mdb.UpdateFileTagsAndProperties(ctx, oph, file); err != nil {
+		fsys.log("database error in OpenFile %s", err.Error())
+		return fuse.EIO
+	}
+
+	// set it on the platform.
+	switch namespace {
+	case XATTR_TAG:
+		if !attrExists {
+			return fsys.ops.DxAddTag(ctx, oph.httpClient, file.ProjId, file.Id, attrName)
+		} else {
+			// already tagged
+			return nil
+		}
+	case XATTR_PROP:
+		value := string(op.Value)
+		return fsys.ops.DxSetProperty(ctx, oph.httpClient, file.ProjId, file.Id, attrName, &value)
+	default:
+		log.Panicf("sanity: invalid namespace %s", namespace)
+		return fuse.EINVAL
+	}
 }

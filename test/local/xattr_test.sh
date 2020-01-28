@@ -30,28 +30,20 @@ trap teardown EXIT
 
 ######################################################################
 
-function xattr_test {
-    mkdir -p $mountpoint
-
-    sudo -E $dxfuse -verbose 2 -uid $(id -u) -gid $(id -g) $mountpoint $projName
-
-    # This seems to be needed on MacOS
-    sleep 1
-
-    local baseDir=$mountpoint/$projName/xattrs
-    tree $baseDir
+function check_bat {
+    local base_dir=$1
 
     # Get a list of all the attributes
-    local bat_all_attrs=$(xattr $baseDir/bat.txt | sort | tr '\n' ' ')
-    local bat_all_expected="base.archivalState base.id base.state props.eat props.family props.fly "
+    local bat_all_attrs=$(xattr $base_dir/bat.txt | sort | tr '\n' ' ')
+    local bat_all_expected="base.archivalState base.id base.state prop.eat prop.family prop.fly "
     if [[ $bat_all_attrs != $bat_all_expected ]]; then
-       echo "bat attributes are incorrect"
-       echo "   got:       $bat_all_attrs"
-       echo "   expecting: $bat_all_expected"
-       exit 1
+        echo "bat attributes are incorrect"
+        echo "   got:       $bat_all_attrs"
+        echo "   expecting: $bat_all_expected"
+        exit 1
     fi
 
-    local bat_family=$(xattr -p props.family $baseDir/bat.txt)
+    local bat_family=$(xattr -p prop.family $base_dir/bat.txt)
     local bat_family_expected="mammal"
     if [[ $bat_family != $bat_family_expected ]]; then
         echo "bat family is wrong"
@@ -60,7 +52,15 @@ function xattr_test {
         exit 1
     fi
 
-    local whale_all_attrs=$(xattr $baseDir/whale.txt | sort | tr '\n' ' ')
+
+    xattr -w prop.family carnivore $base_dir/bat.txt
+    xattr -w prop.family mammal $base_dir/bat.txt
+}
+
+function check_whale {
+    local base_dir=$1
+
+    local whale_all_attrs=$(xattr $base_dir/whale.txt | sort | tr '\n' ' ')
     local whale_all_expected="base.archivalState base.id base.state "
     if [[ $whale_all_attrs != $whale_all_expected ]]; then
        echo "whale attributes are incorrect"
@@ -68,6 +68,21 @@ function xattr_test {
        echo "   expecting: $whale_all_expected"
        exit 1
     fi
+}
+
+function xattr_test {
+    mkdir -p $mountpoint
+
+    sudo -E $dxfuse -verbose 2 -uid $(id -u) -gid $(id -g) $mountpoint $projName
+
+    # This seems to be needed on MacOS
+    sleep 1
+
+    local base_dir=$mountpoint/$projName/xattrs
+    tree $base_dir
+
+    check_bat $base_dir
+    check_whale $base_dir
 
     teardown
 }
