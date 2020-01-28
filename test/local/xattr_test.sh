@@ -70,6 +70,17 @@ function check_whale {
     fi
 }
 
+function check_new {
+    local base_dir=$1
+    local f=$base_dir/Mountains.txt
+    echo "K2, Kilimanjaro, Everest, Mckinly" > $f
+
+    xattr -w prop.family mountains $f
+    xattr -w tag.mountain $f
+
+    xattr -l $f
+}
+
 function xattr_test {
     mkdir -p $mountpoint
 
@@ -83,6 +94,6 @@ function xattr_test {
 
     check_bat $base_dir
     check_whale $base_dir
-
+    check_new $base_dir
     teardown
 }

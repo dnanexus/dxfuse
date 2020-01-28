@@ -1614,9 +1614,101 @@ func (fsys *Filesys) xattrParseName(name string) (string, string, error) {
 	return namespace, attrName, nil
 }
 
-func (fsys *Filesys) RemoveXattr(context.Context, *fuseops.RemoveXattrOp) error {
-	// not supported right now
-	return syscall.EPERM
+func (fsys *Filesys) RemoveXattr(ctx context.Context, op *fuseops.RemoveXattrOp) error {
+	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
+	oph := fsys.OpOpen()
+	defer fsys.OpClose(oph)
+
+	if fsys.options.Verbose {
+		fsys.log("RemoveXattr %d", op.Inode)
+	}
+
+	// Grab the inode.
+	node, ok, err := fsys.mdb.LookupByInode(ctx, oph, int64(op.Inode))
+	if err != nil {
+		fsys.log("database error in RemoveXattr: %s", err.Error())
+		return fuse.EIO
+	}
+	if !ok {
+		return fuse.ENOENT
+	}
+
+	var file File
+	switch node.(type) {
+	case File:
+		file = node.(File)
+	case Dir:
+		// directories do not have attributes
+		return syscall.EINVAL
+	}
+
+	// look for the attribute
+	namespace, attrName, err := fsys.xattrParseName(op.Name)
+	if err != nil {
+		return err
+	}
+
+	attrExists := false
+	switch namespace {
+	case XATTR_TAG:
+		// this is in the tag namespace
+		for _, tag := range file.Tags {
+			if tag == attrName {
+				attrExists = true
+				break
+			}
+		}
+	case XATTR_PROP:
+		// in the property namespace
+		for key, _ := range file.Properties {
+			if key == attrName {
+				attrExists = true
+				break
+			}
+		}
+	default:
+		fsys.log("property must start with one of {%s ,%s}", XATTR_TAG, XATTR_PROP)
+		return fuse.EINVAL
+	}
+
+	if !attrExists {
+		return fuse.ENOATTR
+	}
+
+	// remove the key from in-memory representation
+	switch namespace {
+	case XATTR_TAG:
+		var tags []string
+		for _, tag := range file.Tags {
+			if tag != attrName {
+				tags = append(tags, attrName)
+			}
+		}
+		file.Tags = tags
+	case XATTR_PROP:
+		delete(file.Properties, attrName)
+	default:
+		log.Panicf("sanity: invalid namespace %s", namespace)
+	}
+
+	// update the database
+	if err := fsys.mdb.UpdateFileTagsAndProperties(ctx, oph, file); err != nil {
+		fsys.log("database error in RemoveXattr: %s", err.Error())
+		return fuse.EIO
+	}
+
+	// set it on the platform.
+	switch namespace {
+	case XATTR_TAG:
+		return fsys.ops.DxRemoveTag(ctx, oph.httpClient, file.ProjId, file.Id, attrName)
+	case XATTR_PROP:
+		return fsys.ops.DxSetProperty(ctx, oph.httpClient, file.ProjId, file.Id, attrName, nil)
+	default:
+		log.Panicf("sanity: invalid namespace %s", namespace)
+		return fuse.EINVAL
+	}
+
 }
 
 

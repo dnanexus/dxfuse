@@ -595,3 +595,47 @@ func (ops *DxOps) DxAddTag(
 
 	return nil
 }
+
+
+type RequestRemoveTags struct {
+	ProjId    string  `json:"project"`
+	Tags    []string  `json:"tags"`
+}
+
+type ReplyRemoveTags struct {
+	Id  string `json:"id"`
+}
+
+func (ops *DxOps) DxRemoveTag(
+	ctx context.Context,
+	httpClient *retryablehttp.Client,
+	projId string,
+	objId string,
+	key string) error {
+
+	var request RequestRemoveTags
+	request.ProjId = projId
+	tags := make([]string, 1)
+	tags[0] = key
+	request.Tags = tags
+
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return err
+	}
+
+	repJs, err := dxda.DxAPI(
+		ctx, httpClient, NumRetriesDefault, &ops.dxEnv,
+		fmt.Sprintf("%s/removeTags", objId),
+		string(payload))
+	if err != nil {
+		return err
+	}
+
+	var reply ReplyRemoveTags
+	if err := json.Unmarshal(repJs, &reply); err != nil {
+		return err
+	}
+
+	return nil
+}
