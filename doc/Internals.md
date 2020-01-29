@@ -1,4 +1,4 @@
-## The Database Schema
+# The Database Schema
 
 A local sqlite3 database is used to store filesystem information
 discovered by querying DNAnexus.
@@ -122,26 +122,20 @@ A hard link is an entry in the namespace that points to an existing data object.
 single i-node can have multiple namespace entries, so it cannot serve as a primary key.
 
 
-## Sequential Prefetch
+# Sequential Prefetch
 
 Performing prefetch for sequential streams incurs overhead and costs
 memory. The goal of the prefetch module is: *if a file is read from start to finish, we want to be
 able to read it in large network requests*. What follows is a simplified description of the algorithm.
 
 In order for a file to be eligible for streaming it has to be at
-8MiB. A bitmap is maintained for areas accessed. If the first metabyte
+8MiB. A bitmap is maintained for areas accessed. If a complete metabyte
 is accessed, prefetch is started. This entails sending multiple
 asynchronous IO to fetch 4MiB of data. As long as the data
 is fully read, prefetch continues. If a file is not accessed for more
-than five minutes, or, access is outside the prefetched area, the process stops.
+than five minutes, or, access is outside the prefetched area, the process halts. It will start again if sequential access is detected down the road.
 
-## File upload and creation
-
-It is possible to create new files. These are written to the local disk, and uploaded when they
-are closed. Since DNAnexus files are immutable, once a file is closed, it becomes read only. The local
-copy is not erased, it is accessed when performing read IOs.
-
-## Manifest
+# Manifest
 
 The *manifest* option specifies the initial snapshot of the filesystem
 tree as a JSON file. The database is initialized from this snapshot,
@@ -202,3 +196,11 @@ will create the directory structure:
 ```
 
 Browsing through directory `Cards/J`, is equivalent to traversing the remote `proj-1019001:/Joker` folder.
+
+
+# File upload and creation
+
+It is possible to create new files, and overwrite existing files. When a file is
+first created, it is written to the local disk. An existing file is downloaded in its entirety before it may be modified. Modified files are marked dirty in the data-objects table.
+
+A background daemon scans the table periodically and uploads dirty files.
