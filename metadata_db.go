@@ -155,7 +155,7 @@ func propertiesMarshal(props map[string]string) string {
 
 func propertiesUnmarshal(buf string) map[string]string {
 	if buf == "" {
-		return nil
+		return make(map[string]string)
 	}
 	var coded MProperties
 	err := json.Unmarshal([]byte(buf), &coded)
@@ -939,7 +939,7 @@ func (mdb *MetadataDb) populateDir(
 			o.MtimeSeconds,
 			o.Tags,
 			o.Properties,
-			fileReadOnlyMode,
+			fileReadWriteMode,
 			dirPath,
 			o.Name,
 			inlineData)
@@ -1422,24 +1422,6 @@ func (mdb *MetadataDb) UpdateFile(
 }
 
 
-func (mdb *MetadataDb) UpdateFileMakeRemote(ctx context.Context, oph *OpHandle, fileId string) error {
-	if mdb.options.Verbose {
-		mdb.log("Make file remote fileId=%s", fileId)
-	}
-	sqlStmt := fmt.Sprintf(`
- 		        UPDATE data_objects
-                        SET Mode = '%d', InlineData=''
-			WHERE id = '%s';`,
-		fileReadOnlyMode, fileId)
-
-	if _, err := oph.txn.Exec(sqlStmt); err != nil {
-		mdb.log(err.Error())
-		mdb.log("UpdateFileMakeRemote error executing transaction")
-		return oph.RecordError(err)
-	}
-	return nil
-}
-
 // Move a file
 // 1) Can move a file from one directory to another,
 //    or leave it in the same directory
@@ -1618,6 +1600,34 @@ func (mdb *MetadataDb) MoveDir(
 		if err := mdb.execModifyRecord(oph, r); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (mdb *MetadataDb) UpdateFileTagsAndProperties(
+	ctx context.Context,
+	oph *OpHandle,
+	file File) error {
+	if mdb.options.Verbose {
+		mdb.log("UpdateFileTagsAndProperties tags=%v properties=%v",
+			file.Tags, file.Properties)
+	}
+
+	// marshal tags and properties
+	mTags := tagsMarshal(file.Tags)
+	mProps := propertiesMarshal(file.Properties)
+
+	// update the database
+	sqlStmt := fmt.Sprintf(`
+		UPDATE data_objects
+                SET tags='%s', properties='%s'
+		WHERE id = '%s';`,
+		mTags, mProps, file.Id)
+
+	if _, err := oph.txn.Exec(sqlStmt); err != nil {
+		mdb.log(err.Error())
+		mdb.log("UpdateFileTagsAndProperties error executing transaction")
+		return oph.RecordError(err)
 	}
 	return nil
 }

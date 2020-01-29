@@ -23,7 +23,7 @@ const (
 	MaxDirSize         = 10 * 1000
 	MaxNumFileHandles  = 1000 * 1000
 	NumRetriesDefault  = 3
-	Version            = "v0.18"
+	Version            = "v0.19"
 )
 const (
 	InodeInvalid       = 0
@@ -40,6 +40,7 @@ const (
 	dirReadOnlyMode = 0555 | os.ModeDir
 	dirReadWriteMode = 0777 | os.ModeDir
 	fileReadOnlyMode = 0444
+	fileReadWriteMode = 0644
 )
 
 // A URL generated with the /file-xxxx/download API call, that is
