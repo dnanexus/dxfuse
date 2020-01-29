@@ -200,7 +200,26 @@ Browsing through directory `Cards/J`, is equivalent to traversing the remote `pr
 
 # File upload and creation
 
-It is possible to create new files, and overwrite existing files. When a file is
-first created, it is written to the local disk. An existing file is downloaded in its entirety before it may be modified. Modified files are marked dirty in the data-objects table.
+dxfuse allows creating new files and modifing existing files,
+inspite of the fact that only immutable files exist on DNAx. This
+mismatch between what the filesystem allows for (updating a file), and
+what is available natively on the platform makes the update operation
+expensive.
 
-A background daemon scans the table periodically and uploads dirty files.
+When a file is first created it is written to the local disk, and
+marked dirty in the database. In order to modify an existing file, it
+is downloaded in its entirety to the local disk, modified locally, and
+marked dirty. A background daemon scans the database periodically and
+uploads dirty files to the platform. If a file `foo` already exists as
+object `file-xxxx`, a new version of it is uploaded, and when done,
+the database is modified to point to the new version. It is then
+possible to either erase the old version, or keep it as an old
+snapshot.
+
+There are situations where you want the background process to
+synchronously update all modified and newly created files. For example, before shutting down a machine,
+or unmounting the filesystem. This can be done by using the `dxfuse_tools` executable, and
+issuing the command:
+```
+$ dxfuse_tools sync
+```
