@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"sync"
 	"time"
@@ -11,6 +12,21 @@ import (
 	"github.com/dnanexus/dxda"
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/jacobsa/fuse"
+)
+
+const (
+	sweepPeriodicTime = 1 * time.Minute
+)
+
+const (
+	chunkMaxQueueSize = 10
+
+	numFileThreads = 4
+	numBulkDataThreads = 8
+	minChunkSize = 16 * MiB
+
+	fileCloseWaitTime = 5 * time.Second
+	fileCloseMaxWaitTime = 10 * time.Minute
 )
 
 type Chunk struct {
@@ -31,7 +47,7 @@ type FileUploadReq struct {
 	fileSize     int64
 }
 
-type FileUploadGlobalState struct {
+type SyncDbDx struct {
 	dxEnv           dxda.DXEnvironment
 	options         Options
 	projId2Desc     map[string]DxDescribePrj
@@ -41,33 +57,18 @@ type FileUploadGlobalState struct {
 	mutex           sync.Mutex
 	mdb            *MetadataDb
 	ops            *DxOps
-
-	// list of files undergoing upload. If the flag is true, the file should be
-	// uploaded. If it is false, the upload was cancelled.
-	ongoingOps      map[string]bool
 }
 
-const (
-	chunkMaxQueueSize = 10
-
-	numFileThreads = 4
-	numBulkDataThreads = 8
-	minChunkSize = 16 * MiB
-
-	fileCloseWaitTime = 5 * time.Second
-	fileCloseMaxWaitTime = 10 * time.Minute
-)
-
-func NewFileUploadGlobalState(
+func NewSyncDbDx(
 	options Options,
 	dxEnv dxda.DXEnvironment,
-	projId2Desc map[string]DxDescribePrj) *FileUploadGlobalState {
+	projId2Desc map[string]DxDescribePrj) *SyncDbDx {
 
 	// the chunk queue size should be at least the size of the thread
 	// pool.
 	chunkQueueSize := MaxInt(numBulkDataThreads, chunkMaxQueueSize)
 
-	fugs := &FileUploadGlobalState{
+	sybx := &SyncDbDx{
 		dxEnv : dxEnv,
 		options : options,
 		projId2Desc : projId2Desc,
@@ -79,66 +80,58 @@ func NewFileUploadGlobalState(
 
 		mutex : sync.Mutex{},
 		ops : NewDxOps(dxEnv, options),
-		ongoingOps : make(map[string]bool, 0),
 	}
 
 	// Create a bunch of threads
-	fugs.wg.Add(numFileThreads)
+	sybx.wg.Add(numFileThreads)
 	for i := 0; i < numFileThreads; i++ {
-		go fugs.createFileWorker()
+		go sybx.createFileWorker()
 	}
 
-	fugs.wg.Add(numBulkDataThreads)
+	sybx.wg.Add(numBulkDataThreads)
 	for i := 0; i < numBulkDataThreads; i++ {
-		go fugs.bulkDataWorker()
+		go sybx.bulkDataWorker()
 	}
 
-	return fugs
+	// start a periodic thread to synchronize the database with
+	// the platform
+	go sybx.periodicSync()
+
+	return sybx
 }
 
 // write a log message, and add a header
-func (fugs *FileUploadGlobalState) log(a string, args ...interface{}) {
+func (sybx *SyncDbDx) log(a string, args ...interface{}) {
 	LogMsg("file_upload", a, args...)
 }
 
-func (fugs *FileUploadGlobalState) Shutdown() {
+func (sybx *SyncDbDx) Shutdown() {
 	// signal all upload threads to stop
-	close(fugs.fileUploadQueue)
-	close(fugs.chunkQueue)
+	close(sybx.fileUploadQueue)
+	close(sybx.chunkQueue)
 
 	// wait for all of them to complete
-	fugs.wg.Wait()
-}
-
-func (fugs *FileUploadGlobalState) CancelUpload(fileId string) {
-	fugs.mutex.Lock()
-	fugs.mutex.Unlock()
-	_, ok := fugs.ongoingOps[fileId]
-	if !ok {
-		// The file is not being uploaded. We are done.
-		return
-	}
-	fugs.ongoingOps[fileId] = false
+	sybx.wg.Wait()
 }
 
 // A worker dedicated to performing data-upload operations
-func (fugs *FileUploadGlobalState) bulkDataWorker() {
+func (sybx *SyncDbDx) bulkDataWorker() {
 	// A fixed http client
 	client := dxda.NewHttpClient(true)
 
 	for true {
-		chunk, ok := <- fugs.chunkQueue
+		chunk, ok := <- sybx.chunkQueue
 		if !ok {
-			fugs.wg.Done()
+			sybx.wg.Done()
 			return
 		}
-		if fugs.options.Verbose {
-			fugs.log("Uploading chunk=%d len=%d", chunk.index, len(chunk.data))
+		if sybx.options.Verbose {
+			sybx.log("Uploading chunk=%d len=%d", chunk.index, len(chunk.data))
 		}
 
 		// upload the data, and store the error code in the chunk
 		// data structure.
-		chunk.err = fugs.ops.DxFileUploadPart(
+		chunk.err = sybx.ops.DxFileUploadPart(
 			context.TODO(),
 			client,
 			chunk.fileId, chunk.index, chunk.data)
@@ -171,7 +164,7 @@ func checkPartSizeSolution(param FileUploadParameters, fileSize int64, partSize 
 	return true
 }
 
-func (fugs *FileUploadGlobalState) calcPartSize(param FileUploadParameters, fileSize int64) (int64, error) {
+func (sybx *SyncDbDx) calcPartSize(param FileUploadParameters, fileSize int64) (int64, error) {
 	if param.MaximumFileSize < fileSize {
 		return 0, errors.New(
 			fmt.Sprintf("File is too large, the limit is %d, and the file is %d",
@@ -216,8 +209,8 @@ func readLocalFileExtent(filename string, ofs int64, len int) ([]byte, error) {
 		return nil, err
 	}
 	if recvLen != len {
-		panic(fmt.Sprintf("short read, got %d bytes instead of %d",
-			recvLen, len))
+		log.Panicf("short read, got %d bytes instead of %d",
+			recvLen, len)
 	}
 	return buf, nil
 }
@@ -226,11 +219,11 @@ func readLocalFileExtent(filename string, ofs int64, len int) ([]byte, error) {
 // files are uploaded by worker threads.
 //
 // note: chunk indexes start at 1 (not zero)
-func (fugs *FileUploadGlobalState) uploadFileData(
+func (sybx *SyncDbDx) uploadFileData(
 	client *retryablehttp.Client,
 	upReq FileUploadReq) error {
 	if upReq.fileSize == 0 {
-		panic("The file is empty")
+		log.Panicf("The file is empty")
 	}
 
 	if upReq.fileSize <= upReq.partSize {
@@ -241,7 +234,7 @@ func (fugs *FileUploadGlobalState) uploadFileData(
 		if err != nil {
 			return err
 		}
-		return fugs.ops.DxFileUploadPart(
+		return sybx.ops.DxFileUploadPart(
 			context.TODO(),
 			client,
 			upReq.id, 1, data)
@@ -270,7 +263,7 @@ func (fugs *FileUploadGlobalState) uploadFileData(
 		// enqueue an upload request. This can block, if there
 		// are many chunks.
 		fileWg.Add(1)
-		fugs.chunkQueue <- chunk
+		sybx.chunkQueue <- chunk
 		fileParts = append(fileParts, chunk)
 
 		ofs += upReq.partSize
@@ -284,7 +277,7 @@ func (fugs *FileUploadGlobalState) uploadFileData(
 	var finalErr error
 	for _, chunk := range(fileParts) {
 		if chunk.err != nil {
-			fugs.log("failed to upload file %s part %d, error=%s",
+			sybx.log("failed to upload file %s part %d, error=%s",
 				chunk.fileId, chunk.index, chunk.err.Error())
 			finalErr = chunk.err
 		}
@@ -293,7 +286,7 @@ func (fugs *FileUploadGlobalState) uploadFileData(
 	return finalErr
 }
 
-func (fugs *FileUploadGlobalState) createEmptyFile(
+func (sybx *SyncDbDx) createEmptyFile(
 	httpClient *retryablehttp.Client,
 	upReq FileUploadReq) error {
 	// The file is empty
@@ -301,9 +294,9 @@ func (fugs *FileUploadGlobalState) createEmptyFile(
 		// we need to upload an empty part, only
 		// then can we close the file
 		ctx := context.TODO()
-		err := fugs.ops.DxFileUploadPart(ctx, httpClient, upReq.id, 1, make([]byte, 0))
+		err := sybx.ops.DxFileUploadPart(ctx, httpClient, upReq.id, 1, make([]byte, 0))
 		if err != nil {
-			fugs.log("error uploading empty chunk to file %s", upReq.id)
+			sybx.log("error uploading empty chunk to file %s", upReq.id)
 			return err
 		}
 	} else {
@@ -312,114 +305,75 @@ func (fugs *FileUploadGlobalState) createEmptyFile(
 	return nil
 }
 
-func (fugs *FileUploadGlobalState) uploadFileDataAndWait(
+func (sybx *SyncDbDx) uploadFileDataAndWait(
 	client *retryablehttp.Client,
 	upReq FileUploadReq) error {
-	if fugs.options.Verbose {
-		fugs.log("Upload file-size=%d part-size=%d", upReq.fileSize, upReq.partSize)
+	if sybx.options.Verbose {
+		sybx.log("Upload file-size=%d part-size=%d", upReq.fileSize, upReq.partSize)
 	}
 
 	if upReq.fileSize == 0 {
 		// Create an empty file
-		if err := fugs.createEmptyFile(client, upReq); err != nil {
+		if err := sybx.createEmptyFile(client, upReq); err != nil {
 			return err
 		}
 	} else {
 		// loop over the parts, and upload them
-		if err := fugs.uploadFileData(client, upReq); err != nil {
+		if err := sybx.uploadFileData(client, upReq); err != nil {
 			return err
 		}
 	}
 
-	if fugs.options.Verbose {
-		fugs.log("Closing %s", upReq.id)
+	if sybx.options.Verbose {
+		sybx.log("Closing %s", upReq.id)
 	}
 	ctx := context.TODO()
-	return fugs.ops.DxFileCloseAndWait(ctx, client, upReq.id, fugs.options.Verbose)
+	return sybx.ops.DxFileCloseAndWait(ctx, client, upReq.id, sybx.options.Verbose)
 }
 
-// check if the upload has been cancelled
-func (fugs *FileUploadGlobalState) shouldUpload(fileid string) bool {
-	fugs.mutex.Lock()
-	defer fugs.mutex.Unlock()
-
-	return fugs.ongoingOps[fileid]
-}
-
-func (fugs *FileUploadGlobalState) uploadComplete(fileid string) {
-	fugs.mutex.Lock()
-	defer fugs.mutex.Unlock()
-
-	delete(fugs.ongoingOps, fileid)
-}
-
-func (fugs *FileUploadGlobalState) createFileWorker() {
+func (sybx *SyncDbDx) createFileWorker() {
 	// A fixed http client. The idea is to be able to reuse http connections.
 	client := dxda.NewHttpClient(true)
 
 	for true {
-		upReq, ok := <-fugs.fileUploadQueue
+		upReq, ok := <-sybx.fileUploadQueue
 		if !ok {
-			fugs.wg.Done()
+			sybx.wg.Done()
 			return
 		}
 
-		// check if the upload has been cancelled
-		if !fugs.shouldUpload(upReq.id) {
-			fugs.log("file %s was removed, no need to upload", upReq.id)
-			fugs.uploadComplete(upReq.id)
-			continue
-		}
-
-		err := fugs.uploadFileDataAndWait(client, upReq)
+		err := sybx.uploadFileDataAndWait(client, upReq)
 
 		if err != nil {
 			// Upload failed. Do not erase the local copy.
 			//
-			// Note: we have not entire eliminated the race condition
-			// between uploading and removing a file. We may still
-			// get errors in good path cases.
-			if (fugs.shouldUpload(upReq.id)) {
-				fugs.log("Error during upload of file %s", upReq.id)
-				fugs.log(err.Error())
-			}
-			fugs.uploadComplete(upReq.id)
+			sybx.log("Error during upload of file %s",
+				upReq.id, err.Error())
 			continue
 		}
 
-		// Update the database to point to the remote file copy. This saves
-		// space on the local drive.
-		//fugs.mdb.UpdateFileMakeRemote(context.TODO(), upReq.id)
-
-		fugs.uploadComplete(upReq.id)
+		//sybx.uploadComplete(upReq.id)
 	}
 }
 
 // enqueue a request to upload the file. This will happen in the background. Since
 // we don't erase the local file, there is no rush.
-func (fugs *FileUploadGlobalState) UploadFile(f File, fileSize int64) error {
-	projDesc, ok := fugs.projId2Desc[f.ProjId]
+func (sybx *SyncDbDx) UploadFile(f File, fileSize int64) error {
+	projDesc, ok := sybx.projId2Desc[f.ProjId]
 	if !ok {
-		panic(fmt.Sprintf("project %s not found", f.ProjId))
+		log.Panicf("project %s not found", f.ProjId)
 	}
 
-	partSize, err := fugs.calcPartSize(projDesc.UploadParams, fileSize)
+	partSize, err := sybx.calcPartSize(projDesc.UploadParams, fileSize)
 	if err != nil {
-		fugs.log(`
+		sybx.log(`
 There is a problem with the file size, it cannot be uploaded
 to the platform due to part size constraints. Error=%s`,
 			err.Error())
 		return fuse.EINVAL
 	}
 
-	// Add the file to the "being-uploaded" list.
-	// we will need this in the corner case of deleting the file while
-	// it is being uploaded.
-	fugs.mutex.Lock()
-	fugs.ongoingOps[f.Id] = true
-	fugs.mutex.Unlock()
-
-	fugs.fileUploadQueue <- FileUploadReq{
+	sybx.fileUploadQueue <- FileUploadReq{
 		id : f.Id,
 		partSize : partSize,
 		uploadParams : projDesc.UploadParams,
@@ -427,4 +381,38 @@ to the platform due to part size constraints. Error=%s`,
 		fileSize : fileSize,
 	}
 	return nil
+}
+
+
+// TODO
+func (sybx *SyncDbDx) sweep() {
+	// query the database, find all the files that have been
+	// deleted, and remove them from the platform.
+
+	// query the database, find all dirty files, and upload them to the platform.
+
+	// query the database, find all the files whose metadata has changed, and upload
+	// the new tags/properties
+}
+
+func (sybx *SyncDbDx) periodicSync() {
+	for true {
+		time.Sleep(sweepPeriodicTime)
+		if sybx.options.Verbose {
+			sybx.log("syncing database and platform [")
+		}
+		sybx.mutex.Lock()
+		sybx.sweep()
+		sybx.mutex.Unlock()
+
+		if sybx.options.Verbose {
+			sybx.log("]")
+		}
+	}
+}
+
+func (sybx *SyncDbDx) CmdSync() {
+	sybx.mutex.Lock()
+	sybx.sweep()
+	sybx.mutex.Unlock()
 }

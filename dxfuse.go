@@ -115,12 +115,12 @@ func NewDxfuse(
 		projId2Desc[pDesc.Id] = *pDesc
 	}
 
-	// initialize background upload state
-	fsys.fugs = NewFileUploadGlobalState(options, dxEnv, projId2Desc)
+	// initialize sync daemon
+	fsys.sybx = NewSyncDbDx(options, dxEnv, projId2Desc)
 
 	// Provide the upload module with a reference to the database.
 	// This is needed to report the end of an upload.
-	fsys.fugs.mdb = mdb
+	fsys.sybx.mdb = mdb
 	return fsys, nil
 }
 
@@ -185,7 +185,7 @@ func (fsys *Filesys) Shutdown() {
 
 	// complete pending uploads
 	if !fsys.options.ReadOnly {
-		fsys.fugs.Shutdown()
+		fsys.sybx.Shutdown()
 	}
 }
 
@@ -1040,10 +1040,6 @@ func (fsys *Filesys) Unlink(ctx context.Context, op *fuseops.UnlinkOp) error {
 	}
 	check(fileToRemove.Nlink > 0)
 
-	// Report to the upload module, that we are cancelling the upload
-	// for this file.
-	fsys.fugs.CancelUpload(fileToRemove.Id)
-
 	// remove the file on the platform
 	objectIds := make([]string, 1)
 	objectIds[0] = fileToRemove.Id
@@ -1581,9 +1577,8 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 			fsys.log("database error in OpenFile %s", err.Error())
 			return fuse.EIO
 		}
-
-		// initiate a background request to upload the file to the cloud
-		return fsys.fugs.UploadFile(fh.f, fileSize)
+		// the sync daemon will upload the file asynchronously
+		return nil
 
 	case RO_LocalCopy:
 		// Read-only file with a local copy

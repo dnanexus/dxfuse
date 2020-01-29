@@ -42,6 +42,7 @@ func usage() {
 
 var (
 	debugFuseFlag = flag.Bool("debugFuse", false, "Tap into FUSE debugging information")
+	fsSync = flag.Bool("fsSync", false, "Sychronize the filesystem and exit")
 	gid = flag.Int("gid", -1, "User group id (gid)")
 	help = flag.Bool("help", false, "display program options")
 	readOnly = flag.Bool("readOnly", false, "mount the filesystem in read-only mode")
@@ -177,6 +178,11 @@ func parseCmdLineArgs() Config {
 	if *version {
 		// print the version and exit
 		fmt.Println(dxfuse.Version)
+		os.Exit(0)
+	}
+	if *fsSync {
+		cmdClient := dxfuse.NewCmdClient()
+		cmdClient.Sync()
 		os.Exit(0)
 	}
 	if *help {

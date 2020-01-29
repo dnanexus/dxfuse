@@ -87,8 +87,8 @@ type Filesys struct {
 	// prefetch state for all files
 	pgs *PrefetchGlobalState
 
-	// background upload state
-	fugs *FileUploadGlobalState
+	// sync daemon
+	sybx *SyncDbDx
 
 	// API to dx
 	ops *DxOps
