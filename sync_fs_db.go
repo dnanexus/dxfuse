@@ -389,9 +389,9 @@ func (sybx *SyncDbDx) sweep() {
 	// query the database, find all the files that have been
 	// deleted, and remove them from the platform.
 
-	// query the database, find all dirty files, and upload them to the platform.
+	// find all the dirty files and upload them to the platform.
 
-	// query the database, find all the files whose metadata has changed, and upload
+	// find all the files whose metadata has changed, and upload
 	// the new tags/properties
 }
 

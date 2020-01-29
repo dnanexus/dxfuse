@@ -21,6 +21,9 @@ The `data_objects` table maintains information for files, applets, workflows, an
 | tags            | text     | DNAx tags for this object, encoded as a JSON array |
 | properties      | text     | DNAx properties for this object, encoded as JSON  |
 | inline\_data    | text     | holds the path for a symlink, if it has a local copy, this is the path |
+| dead            | bit      | has this object been deleted? |
+| dirtyData       | bit      | has the data been modified? (only files) |
+| dirtyMetadata   | bit      | have the tags or properties been modified? |
 
 It stores `stat` information on a data object, and maps it to an
 inode.  The inode is the primary key, and it cannot change once
@@ -218,8 +221,7 @@ snapshot.
 
 There are situations where you want the background process to
 synchronously update all modified and newly created files. For example, before shutting down a machine,
-or unmounting the filesystem. This can be done by using the `dxfuse_tools` executable, and
-issuing the command:
+or unmounting the filesystem. This can be done by issuing the command:
 ```
-$ dxfuse_tools sync
+$ dxfuse -sync
 ```
