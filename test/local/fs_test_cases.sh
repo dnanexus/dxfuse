@@ -538,7 +538,7 @@ function archived_files {
     fi
 }
 
-function fs_test_cases() {
+function fs_test_cases {
     # Get all the DX environment variables, so that dxfuse can use them
     echo "loading the dx environment"
 
@@ -553,11 +553,11 @@ function fs_test_cases() {
     mkdir -p $mountpoint
 
     # generate random alphanumeric strings
-    base_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+    base_dir=$(cat /dev/urandom | env LC_CTYPE=C LC_ALL=C tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
     base_dir="base_$base_dir"
-    faux_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+    faux_dir=$(cat /dev/urandom | env LC_CTYPE=C LC_ALL=C tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
     faux_dir="faux_$faux_dir"
-    expr_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+    expr_dir=$(cat /dev/urandom | env LC_CTYPE=C LC_ALL=C tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
     expr_dir="expr_$expr_dir"
     writeable_dirs=($base_dir $faux_dir $expr_dir)
     for d in ${writeable_dirs[@]}; do
