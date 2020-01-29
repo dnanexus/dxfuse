@@ -169,7 +169,7 @@ You cannot modify any _base.*_ attribute, these are read-only. Currently, settin
 
 ## Mac OS (OSX)
 
-For OSX you will need to install [OSXFUSE](http://osxfuse.github.com/).
+For OSX you will need to install [OSXFUSE](http://osxfuse.github.com/). Note that Your Milage May Vary (YMMV) on this platform, we are focused on Linux currently.
 
 # Common problems
 
