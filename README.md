@@ -137,13 +137,13 @@ sudo umount MOUNT-POINT
 
 ## Extended attributes (xattrs)
 
-DNXa data objects have properties and tags, these are exposed as POSIX extended attributes. The package we use for testing is `xattr` which is native on MacOS (OSX), and can be installed with `sudo apt-get install xattr` on Linux. Xattrs can be written and removed. The examples here use `xattr`, although other tools will work just as well.
+DNXa data objects have properties and tags, these are exposed as POSIX extended attributes. Xattrs can be read, written, and removed. The package we use here is `attr`, it can installed with `sudo apt-get install attr` on Linux. On OSX the `xattr` package comes packaged with the base operating system, and can be used to the same effect.
 
-DNAx tags and properties are prefixed. For example, if `zebra.txt` is a file then `xattr -l zebra.txt` will print out all the tags, properties, and attributes that have no POSIX equivalent. These are split into three correspnding prefixes _tag_, _prop_, and _base_ all under the `user` Linux namespace.
+DNAx tags and properties are prefixed. For example, if `zebra.txt` is a file then `attr -l zebra.txt` will print out all the tags, properties, and attributes that have no POSIX equivalent. These are split into three correspnding prefixes _tag_, _prop_, and _base_ all under the `user` Linux namespace.
 
 Here `zebra.txt` has no properties or tags.
 ```
-$ xattr -l zebra.txt
+$ attr -l zebra.txt
 
 base.state: closed
 base.archivalState: live
@@ -152,17 +152,17 @@ base.id: file-xxxx
 
 Add a property named `family` with value `mammal`
 ```
-$ xattr -w prop.family mammal zebra.txt
+$ attr -s prop.family -V mammal zebra.txt
 ```
 
 Add a tag `africa`
 ```
-$ xattr -w tag.africa XXX zebra.txt
+$ attr -s tag.africa -V XXX zebra.txt
 ```
 
 Remove the `family` property:
 ```
-$ xattr -d prop.family zebra.txt
+$ attr -r prop.family zebra.txt
 ```
 
 You cannot modify any _base.*_ attribute, these are read-only. Currently, setting and deleting xattrs can be done only for files that are closed on the platform.
