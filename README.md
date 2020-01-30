@@ -94,7 +94,7 @@ git clone git@github.com:dnanexus/dxfuse.git
 
 Build the code:
 ```
-go build -o /go/bin/dxfuse /go/src/github.com/dnanexus/cmd/main.go
+go build -o /go/bin/dxfuse /go/src/github.com/dnanexus/dxfuse/cli/main.go
 ```
 
 # Usage
@@ -178,3 +178,23 @@ If a project appears empty, or is missing files, it could be that the dnanexus t
 If you do not set the `uid` and `gid` options then creating hard links will fail on Linux. This is because it will fail the kernel's permissions check.
 
 There is no natural match for DNAnexus applets and workflows, so they are presented as block devices. They do not behave like block devices, but the shell colors them differently from files and directories.
+
+Mmap doesn't work all that well with FUSE ([stack overflow issue](https://stackoverflow.com/questions/46839807/mmap-no-such-device)).
+
+For example, trying op mmap a file with python causes an error.
+```
+>>> import mmap
+>>> fd = open('/home/orodeh/MNT/dxfuse_test_data/README.md', 'r')
+>>> mmap.mmap(fp.fileno(), 0, mmap.PROT_READ)
+Traceback (most recent call last):
+  File "<stdin>", line 1, in <module>
+  OSError: [Errno 19] No such device
+```
+
+A workaround is to make the mapping private:
+```
+>>> import mmap
+>>> fd = open('/home/orodeh/MNT/dxfuse_test_data/README.md', 'r')
+>>> mmap.mmap(fd.fileno(), 0, prot=mmap.PROT_READ, flags=mmap.MAP_PRIVATE, offset=0)
+>>> fd.readline()
+```
