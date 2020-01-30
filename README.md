@@ -179,9 +179,8 @@ If you do not set the `uid` and `gid` options then creating hard links will fail
 
 There is no natural match for DNAnexus applets and workflows, so they are presented as block devices. They do not behave like block devices, but the shell colors them differently from files and directories.
 
-Mmap doesn't work all that well with FUSE ([stack overflow issue](https://stackoverflow.com/questions/46839807/mmap-no-such-device)).
+Mmap doesn't work all that well with FUSE ([stack overflow issue](https://stackoverflow.com/questions/46839807/mmap-no-such-device)). For example, trying to memory-map (mmap) a file with python causes an error.
 
-For example, trying to memory-map (mmap) a file with python causes an error.
 ```
 >>> import mmap
 >>> fd = open('/home/orodeh/MNT/dxfuse_test_data/README.md', 'r')
@@ -192,6 +191,7 @@ Traceback (most recent call last):
 ```
 
 A workaround is to make the mapping private:
+
 ```
 >>> import mmap
 >>> fd = open('/home/orodeh/MNT/dxfuse_test_data/README.md', 'r')
