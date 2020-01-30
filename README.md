@@ -165,7 +165,7 @@ Remove the `family` property:
 $ attr -r prop.family zebra.txt
 ```
 
-You cannot modify any _base.*_ attribute, these are read-only. Currently, setting and deleting xattrs can be done only for files that are closed on the platform.
+You cannot modify _base.*_ attributes, these are read-only. Currently, setting and deleting xattrs can be done only for files that are closed on the platform.
 
 ## Mac OS (OSX)
 
