@@ -181,7 +181,7 @@ There is no natural match for DNAnexus applets and workflows, so they are presen
 
 Mmap doesn't work all that well with FUSE ([stack overflow issue](https://stackoverflow.com/questions/46839807/mmap-no-such-device)).
 
-For example, trying op mmap a file with python causes an error.
+For example, trying to memory-map (mmap) a file with python causes an error.
 ```
 >>> import mmap
 >>> fd = open('/home/orodeh/MNT/dxfuse_test_data/README.md', 'r')
