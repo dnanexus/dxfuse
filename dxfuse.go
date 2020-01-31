@@ -116,7 +116,7 @@ func NewDxfuse(
 	}
 
 	// initialize sync daemon
-	fsys.sybx = NewSyncDbDx(options, dxEnv, projId2Desc)
+	fsys.sybx = NewSyncDbDx(options, dxEnv, projId2Desc, fsys.httpClientPool)
 
 	// Provide the upload module with a reference to the database.
 	// This is needed to report the end of an upload.
@@ -127,36 +127,6 @@ func NewDxfuse(
 // write a log message, and add a header
 func (fsys *Filesys) log(a string, args ...interface{}) {
 	LogMsg("dxfuse", a, args...)
-}
-
-func (fsys *Filesys) OpOpen() *OpHandle {
-	txn, err := fsys.mdb.BeginTxn()
-	if err != nil {
-		log.Panic("Could not open transaction")
-	}
-	httpClient := <- fsys.httpClientPool
-
-	return &OpHandle{
-		httpClient : httpClient,
-		txn : txn,
-		err : nil,
-	}
-}
-
-func (fsys *Filesys) OpClose(oph *OpHandle) {
-	fsys.httpClientPool <- oph.httpClient
-
-	if oph.err == nil {
-		err := oph.txn.Commit()
-		if err != nil {
-			log.Panic("could not commit transaction")
-		}
-	} else {
-		err := oph.txn.Rollback()
-		if err != nil {
-			log.Panic("could not rollback transaction")
-		}
-	}
 }
 
 func (fsys *Filesys) Shutdown() {
@@ -186,6 +156,36 @@ func (fsys *Filesys) Shutdown() {
 	// complete pending uploads
 	if !fsys.options.ReadOnly {
 		fsys.sybx.Shutdown()
+	}
+}
+
+func (fsys *Filesys) OpOpen() *OpHandle {
+	txn, err := fsys.mdb.BeginTxn()
+	if err != nil {
+		log.Panic("Could not open transaction")
+	}
+	httpClient := <- fsys.httpClientPool
+
+	return &OpHandle{
+		httpClient : httpClient,
+		txn : txn,
+		err : nil,
+	}
+}
+
+func (fsys *Filesys) OpClose(oph *OpHandle) {
+	fsys.httpClientPool <- oph.httpClient
+
+	if oph.err == nil {
+		err := oph.txn.Commit()
+		if err != nil {
+			log.Panic("could not commit transaction")
+		}
+	} else {
+		err := oph.txn.Rollback()
+		if err != nil {
+			log.Panic("could not rollback transaction")
+		}
 	}
 }
 
@@ -1700,18 +1700,7 @@ func (fsys *Filesys) RemoveXattr(ctx context.Context, op *fuseops.RemoveXattrOp)
 		fsys.log("database error in RemoveXattr: %s", err.Error())
 		return fuse.EIO
 	}
-
-	// set it on the platform.
-	switch namespace {
-	case XATTR_TAG:
-		return fsys.ops.DxRemoveTag(ctx, oph.httpClient, file.ProjId, file.Id, attrName)
-	case XATTR_PROP:
-		return fsys.ops.DxSetProperty(ctx, oph.httpClient, file.ProjId, file.Id, attrName, nil)
-	default:
-		log.Panicf("sanity: invalid namespace %s", namespace)
-		return fuse.EINVAL
-	}
-
+	return nil
 }
 
 
@@ -1941,21 +1930,5 @@ func (fsys *Filesys) SetXattr(ctx context.Context, op *fuseops.SetXattrOp) error
 		fsys.log("database error in SetXattr %s", err.Error())
 		return fuse.EIO
 	}
-
-	// set it on the platform.
-	switch namespace {
-	case XATTR_TAG:
-		if !attrExists {
-			return fsys.ops.DxAddTag(ctx, oph.httpClient, file.ProjId, file.Id, attrName)
-		} else {
-			// already tagged
-			return nil
-		}
-	case XATTR_PROP:
-		value := string(op.Value)
-		return fsys.ops.DxSetProperty(ctx, oph.httpClient, file.ProjId, file.Id, attrName, &value)
-	default:
-		log.Panicf("sanity: invalid namespace %s", namespace)
-		return fuse.EINVAL
-	}
+	return nil
 }

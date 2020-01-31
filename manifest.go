@@ -311,7 +311,7 @@ func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnviron
 	for fId, _  := range fileIds {
 		fileIdList = append(fileIdList, fId)
 	}
-	dataObjs, err := DxDescribeBulkObjects(ctx, tmpHttpClient, &dxEnv, fileIdList, true)
+	dataObjs, err := DxDescribeBulkObjects(ctx, tmpHttpClient, &dxEnv, fileIdList)
 	if err != nil {
 		return err
 	}
@@ -321,6 +321,11 @@ func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnviron
 		fl := &m.Files[i]
 		fDesc, ok := dataObjs[fl.FileId]
 		if ok {
+			if fDesc.State != "closed" {
+				return fmt.Errorf("File %s is not closed, it is %s",
+					fDesc.Id, fDesc.State)
+			}
+
 			// This file was missing details
 			if fl.Fname == "" {
 				fl.Fname = fDesc.Name

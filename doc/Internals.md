@@ -7,12 +7,12 @@ The `data_objects` table maintains information for files, applets, workflows, an
 
 | field name      | SQL type | description |
 | ---             | ---      | --          |
-| inode           | bigint   | local filesystem i-node, cannot change |
 | kind            | int      | type of file: regular, symbolic link, other |
 | id              | text     | The DNAx object-id |
 | proj\_id        | text     | A project id for the file |
 | state           | text     | the file state (open/closing/closed) |
 | archival\_state | text     | archival state of this file |
+| inode           | bigint   | local filesystem i-node, cannot change |
 | size            | bigint   | size of the file in bytes |
 | ctime           | bigint   | creation time |
 | mtime           | bigint   | modification time |
@@ -21,9 +21,8 @@ The `data_objects` table maintains information for files, applets, workflows, an
 | tags            | text     | DNAx tags for this object, encoded as a JSON array |
 | properties      | text     | DNAx properties for this object, encoded as JSON  |
 | inline\_data    | text     | holds the path for a symlink, if it has a local copy, this is the path |
-| dead            | bit      | has this object been deleted? |
-| dirtyData       | bit      | has the data been modified? (only files) |
-| dirtyMetadata   | bit      | have the tags or properties been modified? |
+| dirty\_data     | int      | has the data been modified? (only files) |
+| dirty\_metadata | int      | have the tags or properties been modified? |
 
 It stores `stat` information on a data object, and maps it to an
 inode.  The inode is the primary key, and it cannot change once
@@ -37,6 +36,18 @@ the server side.
 The `archival_state` is relevant for files only. It can have one of
 four values: `live`, `archival`, `archived`, `unarchiving`. A file can
 be accessed only when it is in the `live` state.
+
+The `state` can be one of `open`, `closing`, `closed`. It applies to all data objects.
+
+The `dead_objects` table contains objects that have been deleted. They were removed from the `data_objects`, and are scheduled for deletion on the platform. The idea is to batch together deletions, and avoid upload/delete conflicts.
+
+| field name      | SQL type | description |
+| ---             | ---      | --          |
+| kind            | int      | type of file: regular, symbolic link, other |
+| id              | text     | The DNAx object-id |
+| proj\_id        | text     | A project id for the file |
+| inode           | bigint   | local filesystem i-node, cannot change |
+| inline\_data    | text     | holds the path for a symlink, if it has a local copy, this is the path |
 
 The `namespace` table stores information on the directory structure.
 
@@ -225,3 +236,7 @@ or unmounting the filesystem. This can be done by issuing the command:
 ```
 $ dxfuse -sync
 ```
+
+Metadata such as xattrs is updated with a similar scheme. The database
+is updated, and the inode is marked `dirtyMetadata`. The background daemon then
+updates the attributes asynchronously.

@@ -23,6 +23,7 @@ const (
 
 	numFileThreads = 4
 	numBulkDataThreads = 8
+	numMetadataThreads = 2
 	minChunkSize = 16 * MiB
 
 	fileCloseWaitTime = 5 * time.Second
@@ -48,21 +49,27 @@ type FileUploadReq struct {
 }
 
 type SyncDbDx struct {
-	dxEnv           dxda.DXEnvironment
-	options         Options
-	projId2Desc     map[string]DxDescribePrj
-	fileUploadQueue chan FileUploadReq
-	chunkQueue      chan *Chunk
-	wg              sync.WaitGroup
-	mutex           sync.Mutex
-	mdb            *MetadataDb
-	ops            *DxOps
+	dxEnv               dxda.DXEnvironment
+	options             Options
+	projId2Desc         map[string]DxDescribePrj
+	fileUploadQueue     chan FileUploadReq
+	metadataUpdateQueue chan MetadataUpdateInfo
+	chunkQueue          chan *Chunk
+	wg                  sync.WaitGroup
+	mutex               sync.Mutex
+	mdb                *MetadataDb
+	ops                *DxOps
+
+	// a pool of http clients, for short requests, such as file creation,
+	// or file describe.
+	httpClientPool      chan(*retryablehttp.Client)
 }
 
 func NewSyncDbDx(
 	options Options,
 	dxEnv dxda.DXEnvironment,
-	projId2Desc map[string]DxDescribePrj) *SyncDbDx {
+	projId2Desc map[string]DxDescribePrj,
+	httpClientPool chan(*retryablehttp.Client) ) *SyncDbDx {
 
 	// the chunk queue size should be at least the size of the thread
 	// pool.
@@ -73,6 +80,7 @@ func NewSyncDbDx(
 		options : options,
 		projId2Desc : projId2Desc,
 		fileUploadQueue : make(chan FileUploadReq),
+		metadataUpdateQueue : make(chan MetadataUpdateInfo),
 
 		// limit the size of the chunk queue, so we don't
 		// have too many chunks stored in memory.
@@ -93,6 +101,11 @@ func NewSyncDbDx(
 		go sybx.bulkDataWorker()
 	}
 
+	sybx.wg.Add(numMetadataThreads)
+	for i := 0; i < numMetadataThreads; i++ {
+		go sybx.metadataUpdateWorker()
+	}
+
 	// start a periodic thread to synchronize the database with
 	// the platform
 	go sybx.periodicSync()
@@ -106,9 +119,10 @@ func (sybx *SyncDbDx) log(a string, args ...interface{}) {
 }
 
 func (sybx *SyncDbDx) Shutdown() {
-	// signal all upload threads to stop
+	// signal all upload and modification threads to stop
 	close(sybx.fileUploadQueue)
 	close(sybx.chunkQueue)
+	close(sybx.metadataUpdateQueue)
 
 	// wait for all of them to complete
 	sybx.wg.Wait()
@@ -328,7 +342,7 @@ func (sybx *SyncDbDx) uploadFileDataAndWait(
 		sybx.log("Closing %s", upReq.id)
 	}
 	ctx := context.TODO()
-	return sybx.ops.DxFileCloseAndWait(ctx, client, upReq.id, sybx.options.Verbose)
+	return sybx.ops.DxFileCloseAndWait(ctx, client, upReq.id)
 }
 
 func (sybx *SyncDbDx) createFileWorker() {
@@ -343,7 +357,6 @@ func (sybx *SyncDbDx) createFileWorker() {
 		}
 
 		err := sybx.uploadFileDataAndWait(client, upReq)
-
 		if err != nil {
 			// Upload failed. Do not erase the local copy.
 			//
@@ -351,20 +364,18 @@ func (sybx *SyncDbDx) createFileWorker() {
 				upReq.id, err.Error())
 			continue
 		}
-
-		//sybx.uploadComplete(upReq.id)
 	}
 }
 
 // enqueue a request to upload the file. This will happen in the background. Since
 // we don't erase the local file, there is no rush.
-func (sybx *SyncDbDx) UploadFile(f File, fileSize int64) error {
-	projDesc, ok := sybx.projId2Desc[f.ProjId]
+func (sybx *SyncDbDx) UploadFile(fInfo FileUploadInfo) error {
+	projDesc, ok := sybx.projId2Desc[fInfo.ProjId]
 	if !ok {
-		log.Panicf("project %s not found", f.ProjId)
+		log.Panicf("project %s not found", fInfo.ProjId)
 	}
 
-	partSize, err := sybx.calcPartSize(projDesc.UploadParams, fileSize)
+	partSize, err := sybx.calcPartSize(projDesc.UploadParams, fInfo.FileSize)
 	if err != nil {
 		sybx.log(`
 There is a problem with the file size, it cannot be uploaded
@@ -374,25 +385,210 @@ to the platform due to part size constraints. Error=%s`,
 	}
 
 	sybx.fileUploadQueue <- FileUploadReq{
-		id : f.Id,
+		id : fInfo.Id,
 		partSize : partSize,
 		uploadParams : projDesc.UploadParams,
-		localPath : f.InlineData,
-		fileSize : fileSize,
+		localPath : fInfo.LocalPath,
+		fileSize : fInfo.FileSize,
 	}
+	return nil
+}
+
+func (sybx *SyncDbDx) metadataUpdateWorker() {
+	// A fixed http client. The idea is to be able to reuse http connections.
+	client := dxda.NewHttpClient(true)
+
+	for true {
+		mui, ok := <-sybx.metadataUpdateQueue
+		if !ok {
+			sybx.wg.Done()
+			return
+		}
+
+		// describe the object state on the platform. The properties/tags have
+		// changed.
+		fDesc, err := DxDescribe(context.TODO(), client, &sybx.dxEnv, mui.Id)
+		if err != nil {
+			sybx.log(err.Error())
+			sybx.log("Failed ot describe file %v", mui.Id)
+			continue
+		}
+
+		// Figure out the symmetric difference between the on-platform properties,
+		// and what the filesystem has.
+		dnaxProps := fDesc.Properties
+		fsProps := mui.Properties
+		opProps := make(map[string]*string)
+
+		for key, dnaxValue := range(dnaxProps) {
+			fsValue, ok := fsProps[key]
+			if !ok {
+				// property was removed
+				opProps[key] = nil
+			} else if dnaxValue != fsValue {
+				// value has changed
+				opProps[key] = &fsValue
+			}
+		}
+
+		for key, fsValue := range(fsProps) {
+			_, ok := dnaxProps[key]
+			if !ok {
+				// a new property
+				opProps[key] = &fsValue
+			} else {
+				// existing property, we already checked that case;
+				// if the value changed, we set it in the map
+			}
+		}
+
+		if len(opProps) > 0 {
+			if sybx.options.Verbose {
+				sybx.log("%s symmetric difference between properties %v ^ %v = %v",
+					mui.Id, dnaxProps, fsProps, opProps)
+			}
+			sybx.ops.DxSetProperties(context.TODO(), client, mui.ProjId, mui.Id, opProps)
+		}
+
+		// figure out the symmetric difference between the old and new tags.
+		dnaxTags := fDesc.Tags
+		fsTags := mui.Tags
+
+		// make hash-tables for easy access
+		dnaxTagsTbl := make(map[string]bool)
+		for _, tag := range(dnaxTags) {
+			dnaxTagsTbl[tag] = true
+		}
+		fsTagsTbl := make(map[string]bool)
+		for _, tag := range(fsTags) {
+			fsTagsTbl[tag] = true
+		}
+
+		var tagsRemoved []string
+		for _, tag := range(dnaxTags) {
+			_, ok := fsTagsTbl[tag]
+			if !ok {
+				tagsRemoved = append(tagsRemoved, tag)
+			}
+		}
+
+		var tagsAdded []string
+		for _, tag := range(fsTags) {
+			_, ok := dnaxTagsTbl[tag]
+			if !ok {
+				tagsAdded = append(tagsAdded, tag)
+			}
+		}
+		if sybx.options.Verbose {
+			if len(tagsAdded) > 0 || len(tagsRemoved) > 0 {
+				sybx.log("%s symmetric difference between tags %v ^ %v = (added=%v, removed=%v)",
+					mui.Id, dnaxTags, fsTags, tagsAdded, tagsRemoved)
+			}
+		}
+
+		if len(tagsAdded) != 0  {
+			sybx.ops.DxAddTags(context.TODO(), client, mui.ProjId, mui.Id, tagsAdded)
+		}
+		if len(tagsRemoved) != 0 {
+			sybx.ops.DxRemoveTags(context.TODO(), client, mui.ProjId, mui.Id, tagsRemoved)
+		}
+	}
+}
+
+// query the database, find all the files that have been
+// deleted, and remove them from the platform.
+func (sybx *SyncDbDx) DeleteDeadObjects() error {
+	deadFiles, err := sybx.mdb.DeadObjectsGetAllAndReset()
+	if err != nil {
+		return err
+	}
+	if deadFiles == nil || len(deadFiles) == 0 {
+		return nil
+	}
+
+	// remove all local data
+	for _, df := range(deadFiles) {
+		if df.Kind != FK_Regular {
+			continue
+		}
+
+		// remove the file data so it does not take up space on disk.
+		//
+		// We know there isn't an ongoing upload, because we are locking
+		// the sync-fs-db state here.
+		localPath := df.InlineData
+		if sybx.options.Verbose {
+			sybx.log("Removing file %v local-path=%s", df, localPath)
+		}
+		if err := os.Remove(localPath); err != nil {
+			sybx.log("Error removing file %v local-path=%s", df, localPath)
+			sybx.log(err.Error())
+		}
+	}
+
+	// delete all files from the platform
+	httpClient := <- sybx.httpClientPool
+	defer func() {
+		sybx.httpClientPool <- httpClient
+	} ()
+
+	// Split into a per-project list
+	projects := make(map[string][]DeadFile)
+	for _, df := range(deadFiles) {
+		dfa, ok := projects[df.ProjId]
+		if !ok {
+			dfa := make([]DeadFile, 1)
+			dfa[0] = df
+			projects[df.ProjId] = dfa
+		} else {
+			dfa = append(dfa, df)
+			projects[df.ProjId] = dfa
+		}
+
+		if sybx.options.Verbose {
+			sybx.log("split into per project lists %v", projects)
+		}
+	}
+
+	for projId, files := range(projects) {
+		var objIds []string
+		for _,df := range(files) {
+			objIds = append(objIds, df.Id)
+		}
+		sybx.ops.DxRemoveObjects(context.TODO(), httpClient, projId, objIds)
+	}
+
 	return nil
 }
 
 
 // TODO
-func (sybx *SyncDbDx) sweep() {
+func (sybx *SyncDbDx) sweep() error {
 	// query the database, find all the files that have been
 	// deleted, and remove them from the platform.
+	sybx.DeleteDeadObjects()
 
 	// find all the dirty files and upload them to the platform.
+	dirtyFiles, err := sybx.mdb.DirtyFilesGetAllAndReset()
+	if err != nil {
+		return err
+	}
+	for _, file := range(dirtyFiles) {
+		sybx.UploadFile(file)
+	}
 
 	// find all the files whose metadata has changed, and upload
 	// the new tags/properties
+	objsWithDirtyMetadata, err := sybx.mdb.DirtyMetadataGetAllAndReset()
+	if err != nil {
+		return err
+	}
+	// enqueue all the metadata update requests
+	for _, req := range(objsWithDirtyMetadata) {
+		sybx.metadataUpdateQueue <- req
+	}
+
+	return nil
 }
 
 func (sybx *SyncDbDx) periodicSync() {
@@ -411,8 +607,14 @@ func (sybx *SyncDbDx) periodicSync() {
 	}
 }
 
-func (sybx *SyncDbDx) CmdSync() {
+func (sybx *SyncDbDx) CmdDeleteDeadObjects() error {
 	sybx.mutex.Lock()
-	sybx.sweep()
-	sybx.mutex.Unlock()
+	defer sybx.mutex.Unlock()
+	return sybx.DeleteDeadObjects()
+}
+
+func (sybx *SyncDbDx) CmdSync() error {
+	sybx.mutex.Lock()
+	defer sybx.mutex.Unlock()
+	return sybx.sweep()
 }

@@ -36,16 +36,21 @@ is dropped, and a warning is emitted to the log.
 dxfuse approximates a normal POSIX filesystem, but does not always have the same semantics. For example:
 1. Metadata like last access time are not supported
 2. Directories have approximate create/modify times. This is because DNAx does not keep such attributes for directories.
-3. Files are immutable, which means that they cannot be overwritten.
-4. A newly written file is located locally. When it is closed, it becomes read-only, and is uploaded to the cloud.
 
 There are several limitations currently:
 - Primarily intended for Linux, but can be used on OSX
-- Intended to operate on platform workers
 - Limits directories to 10,000 elements
 - Updates to the project emanating from other machines are not reflected locally
 - Rename does not allow removing the target file or directory. This is because this cannot be
   done automatically by dnanexus.
+
+Updates to files are batched and asynchronously applied to the cloud
+object system. For example, if `foo.txt` is updated, the changes will
+not be immediately visible to another user looking at the platform
+object directly. Because platform files are immutable, even a minor
+modification requires rewriting the entire file, creating a new
+version. This is an inherent limitation, making file update
+inefficient.
 
 ## Implementation
 
@@ -135,6 +140,13 @@ To stop the dxfuse process do:
 sudo umount MOUNT-POINT
 ```
 
+There are situations where you want the background process to
+synchronously update all modified and newly created files. For example, before shutting down a machine,
+or unmounting the filesystem. This can be done by issuing the command:
+```
+$ sudo dxfuse -sync
+```
+
 ## Extended attributes (xattrs)
 
 DNXa data objects have properties and tags, these are exposed as POSIX extended attributes. Xattrs can be read, written, and removed. The package we use here is `attr`, it can installed with `sudo apt-get install attr` on Linux. On OSX the `xattr` package comes packaged with the base operating system, and can be used to the same effect.
@@ -169,7 +181,7 @@ You cannot modify _base.*_ attributes, these are read-only. Currently, setting a
 
 ## Mac OS (OSX)
 
-For OSX you will need to install [OSXFUSE](http://osxfuse.github.com/). Note that Your Milage May Vary (YMMV) on this platform, we are focused on Linux currently.
+For OSX you will need to install [OSXFUSE](http://osxfuse.github.com/). Note that Your Milage May Vary (YMMV) on this platform, we are mostly focused on Linux.
 
 # Common problems
 

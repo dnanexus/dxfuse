@@ -99,8 +99,7 @@ func submit(
 	ctx context.Context,
 	httpClient *retryablehttp.Client,
 	dxEnv *dxda.DXEnvironment,
-	fileIds []string,
-	closedFilesOnly bool) (map[string]DxDescribeDataObject, error) {
+	fileIds []string) (map[string]DxDescribeDataObject, error) {
 
 	// Limit the number of fields returned, because by default we
 	// get too much information, which is a burden on the server side.
@@ -177,8 +176,7 @@ func DxDescribeBulkObjects(
 	ctx context.Context,
 	httpClient *retryablehttp.Client,
 	dxEnv *dxda.DXEnvironment,
-	objIds []string,
-	closedFilesOnly bool) (map[string]DxDescribeDataObject, error) {
+	objIds []string) (map[string]DxDescribeDataObject, error) {
 	var gMap = make(map[string]DxDescribeDataObject)
 	if len(objIds) == 0 {
 		return gMap, nil
@@ -197,7 +195,7 @@ func DxDescribeBulkObjects(
 	batches = append(batches, objIds)
 
 	for _, objIdBatch := range(batches) {
-		m, err := submit(ctx, httpClient, dxEnv, objIdBatch, closedFilesOnly)
+		m, err := submit(ctx, httpClient, dxEnv, objIdBatch)
 		if err != nil {
 			return nil, err
 		}
@@ -275,9 +273,7 @@ func DxDescribeFolder(
 	httpClient *retryablehttp.Client,
 	dxEnv *dxda.DXEnvironment,
 	projectId string,
-	folder string,
-	closedFilesOnly bool) (*DxFolder, error) {
-
+	folder string) (*DxFolder, error) {
 	// The listFolder API call returns a list of object ids and folders.
 	// We could describe the objects right here, but we do that separately.
 	folderInfo, err := listFolder(ctx, httpClient, dxEnv, projectId, folder)
@@ -293,7 +289,7 @@ func DxDescribeFolder(
 			numElementsInDir, MaxDirSize)
 	}
 
-	dxObjs, err := DxDescribeBulkObjects(ctx, httpClient, dxEnv, folderInfo.objIds, closedFilesOnly)
+	dxObjs, err := DxDescribeBulkObjects(ctx, httpClient, dxEnv, folderInfo.objIds)
 	if err != nil {
 		log.Printf("describeBulkObjects(%v) error %s", folderInfo.objIds, err.Error())
 		return nil, err
@@ -377,11 +373,10 @@ func DxDescribe(
 	ctx context.Context,
 	httpClient *retryablehttp.Client,
 	dxEnv *dxda.DXEnvironment,
-	objId string,
-	closedFilesOnly bool) (DxDescribeDataObject, error) {
+	objId string) (DxDescribeDataObject, error) {
 	var objectIds []string
 	objectIds = append(objectIds, objId)
-	m, err := DxDescribeBulkObjects(ctx, httpClient, dxEnv, objectIds, closedFilesOnly)
+	m, err := DxDescribeBulkObjects(ctx, httpClient, dxEnv, objectIds)
 	if err != nil {
 		return DxDescribeDataObject{}, err
 	}

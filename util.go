@@ -214,6 +214,32 @@ func (f File) GetInode() fuseops.InodeID {
 	return fuseops.InodeID(f.Inode)
 }
 
+// A file that is scheduled for removal
+type DeadFile struct {
+	Kind       int     // Kind of object this is
+	Id         string  // Required to build a download URL
+	ProjId     string  // Note: this could be a container
+	Inode      int64
+	InlineData string
+}
+
+// Information required to upload file data to the platform
+type FileUploadInfo struct {
+	Id         string
+	ProjId     string
+	FileSize   int64
+	LocalPath  string
+}
+
+// Information required for updating the tags and properties of
+// a data-object. Not only files have attributes, applets and workflows
+// have them too.
+type MetadataUpdateInfo struct {
+	Id         string
+	ProjId     string
+	Tags       []string
+	Properties map[string]string
+}
 
 // Files can be opened in read-only mode, or read-write mode.
 const (

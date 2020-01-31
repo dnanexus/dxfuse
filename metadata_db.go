@@ -187,6 +187,8 @@ func (mdb *MetadataDb) init2(txn *sql.Tx) error {
                 tags text,
                 properties text,
                 inline_data text,
+                dirty_data int,
+                dirty_metadata int,
                 PRIMARY KEY (inode)
 	);
 	`
@@ -196,14 +198,48 @@ func (mdb *MetadataDb) init2(txn *sql.Tx) error {
 	}
 
 	sqlStmt = `
-	CREATE INDEX id_index
+	CREATE INDEX idx_id
 	ON data_objects (id);
 	`
 	if _, err := txn.Exec(sqlStmt); err != nil {
 		mdb.log(err.Error())
-		return fmt.Errorf("Could not create index id_index on table data_objects")
+		return fmt.Errorf("Could not create index on id column table data_objects")
 	}
 
+	sqlStmt = `
+	CREATE INDEX idx_dirty_data
+	ON data_objects (dirty_data);
+	`
+	if _, err := txn.Exec(sqlStmt); err != nil {
+		mdb.log(err.Error())
+		return fmt.Errorf("Could not create index on dirty_data column in table data_objects")
+	}
+
+	sqlStmt = `
+	CREATE INDEX idx_dirty_metadata
+	ON data_objects (dirty_metadata);
+	`
+	if _, err := txn.Exec(sqlStmt); err != nil {
+		mdb.log(err.Error())
+		return fmt.Errorf("Could not create index on dirty_metdata column in table data_objects")
+	}
+
+	// A table for all the objects that have been removed. They are removed from the platform
+	// in asynchronous fashion, however, it needs to look synchronous from the local point of view.
+	sqlStmt = `
+	CREATE TABLE dead_objects (
+                kind int,
+		id text,
+		proj_id text,
+                inode bigint,
+                inline_data text,
+                PRIMARY KEY (inode)
+	);
+	`
+	if _, err := txn.Exec(sqlStmt); err != nil {
+		mdb.log(err.Error())
+		return fmt.Errorf("Could not create table dead_objects")
+	}
 
 	// Create a table for the namespace relationships. All members of a directory
 	// are listed here under their parent. Linking all the tables are the inode numbers.
@@ -324,6 +360,13 @@ func (mdb *MetadataDb) Init() error {
 		mdb.log("Completed creating files and directories tables\n")
 	}
 	return nil
+}
+
+func (mdb *MetadataDb) Shutdown() {
+	if err := mdb.db.Close(); err != nil {
+		mdb.log(err.Error())
+		mdb.log("Error closing the sqlite database %s", mdb.dbFullPath)
+	}
 }
 
 // Allocate an inode number. These must remain stable during the
@@ -705,7 +748,7 @@ func (mdb *MetadataDb) createDataObject(
 		}
 
 		// File doesn't exist, we need to choose a new inode number.
-		// NOte: it is on stable storage, and will not change.
+		// Note: it is on stable storage, and will not change.
 		inode = mdb.allocInodeNum()
 
 		// marshal tags and properties
@@ -715,10 +758,11 @@ func (mdb *MetadataDb) createDataObject(
 		// Create an entry for the file
 		sqlStmt := fmt.Sprintf(`
  		        INSERT INTO data_objects
-			VALUES ('%d', '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%d', '%s', '%s', '%s');`,
+			VALUES ('%d', '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%d', '%s', '%s', '%s', '%d', %d');`,
 			kind, objId, projId, state, archivalState, inode, size, ctime, mtime, int(mode), 1,
 			mTags, mProps,
-			inlineData)
+			inlineData,
+			boolToInt(false), boolToInt(false))
 		if _, err := oph.txn.Exec(sqlStmt); err != nil {
 			mdb.log(err.Error())
 			mdb.log("Error inserting into data objects table")
@@ -1000,7 +1044,7 @@ func (mdb *MetadataDb) directoryReadFromDNAx(
 	}
 
 	// describe all (closed) files
-	dxDir, err := DxDescribeFolder(ctx, oph.httpClient, &mdb.dxEnv, projId, projFolder, true)
+	dxDir, err := DxDescribeFolder(ctx, oph.httpClient, &mdb.dxEnv, projId, projFolder)
 	if err != nil {
 		fmt.Printf(err.Error())
 		fmt.Printf("reading directory frmo DNAx error")
@@ -1383,14 +1427,15 @@ func (mdb *MetadataDb) Unlink(ctx context.Context, oph *OpHandle, file File) err
 			return oph.RecordError(err)
 		}
 
-		if file.Kind == RW_File || file.Kind == RO_LocalCopy {
-			// remove the file data so it does not take up space on disk.
-			// This might be undergoing upload at the moment. Removing the local
-			// file will cause the download to fail early, which is what we
-			// want.
-			if err := os.Remove(file.InlineData); err != nil {
-				mdb.log(err.Error())
-			}
+		// add the file to the dead-object table
+		sqlStmt = fmt.Sprintf(`
+ 		        INSERT INTO dead_objects
+			VALUES ('%d', '%s', '%s', '%d', '%s');`,
+			file.Kind, file.Id, file.ProjId, file.Inode, file.InlineData)
+		if _, err := oph.txn.Exec(sqlStmt); err != nil {
+			mdb.log(err.Error())
+			mdb.log("Error inserting into dead-objects table")
+			return oph.RecordError(err)
 		}
 	}
 	return nil
@@ -1409,9 +1454,9 @@ func (mdb *MetadataDb) UpdateFile(
 	modTimeSec := modTime.Unix()
 	sqlStmt := fmt.Sprintf(`
  		        UPDATE data_objects
-                        SET size = '%d', mtime='%d', mode='%d'
+                        SET size = '%d', mtime='%d', mode='%d', dirty_data'='%d'
 			WHERE inode = '%d';`,
-		fileSize, modTimeSec, int(mode), f.Inode)
+		fileSize, modTimeSec, int(mode), boolToInt(true), f.Inode)
 
 	if _, err := oph.txn.Exec(sqlStmt); err != nil {
 		mdb.log(err.Error())
@@ -1620,9 +1665,9 @@ func (mdb *MetadataDb) UpdateFileTagsAndProperties(
 	// update the database
 	sqlStmt := fmt.Sprintf(`
 		UPDATE data_objects
-                SET tags='%s', properties='%s'
+                SET tags='%s', properties='%s', dirty_metadata='%d'
 		WHERE id = '%s';`,
-		mTags, mProps, file.Id)
+		mTags, mProps, boolToInt(true), file.Id)
 
 	if _, err := oph.txn.Exec(sqlStmt); err != nil {
 		mdb.log(err.Error())
@@ -1632,9 +1677,146 @@ func (mdb *MetadataDb) UpdateFileTagsAndProperties(
 	return nil
 }
 
-func (mdb *MetadataDb) Shutdown() {
-	if err := mdb.db.Close(); err != nil {
-		mdb.log(err.Error())
-		mdb.log("Error closing the sqlite database %s", mdb.dbFullPath)
+// =================
+// handling the dead-objects table
+
+// Get a list of all the data-objects to be deleted, and reset the table
+func (mdb *MetadataDb) DeadObjectsGetAllAndReset() ([]DeadFile, error) {
+	txn, err := mdb.BeginTxn()
+	if err != nil {
+		return nil, err
 	}
+
+	sqlStmt := `
+ 	        SELECT kind, id, proj_id, inode, inline_data
+                FROM dead_objects
+	);
+	`
+
+	rows, err := txn.Query(sqlStmt)
+	if err != nil {
+		mdb.log("DeadObjectsGetAllAndReset err=%s", err.Error())
+		txn.Rollback()
+		return nil, err
+	}
+
+	var files []DeadFile
+	for rows.Next() {
+		var df DeadFile
+		rows.Scan(&df.Kind, &df.Id, &df.ProjId, &df.Inode, &df.InlineData)
+		files = append(files, df)
+	}
+	rows.Close()
+
+	// remove all rows from the table
+	sqlStmt = `DELETE FROM dead_objects;`
+	if _, err := txn.Exec(sqlStmt); err != nil {
+		mdb.log(err.Error())
+		mdb.log("DeadObjectsGetAllAndReset error executing transaction")
+		return nil, txn.Rollback()
+	}
+
+	if err := txn.Commit(); err != nil {
+		return nil, err
+	}
+	return files, nil
+}
+
+
+// Get a list of all the dirty files, and reset the table. The files can be modified again,
+// which will set the flag to true.
+func (mdb *MetadataDb) DirtyFilesGetAllAndReset() ([]FileUploadInfo, error) {
+	txn, err := mdb.BeginTxn()
+	if err != nil {
+		return nil, err
+	}
+
+	sqlStmt := fmt.Sprintf(`
+ 	        SELECT id, proj_id, size, inline_data
+                FROM data_objects
+                WHERE kind = '%d';`,
+		FK_Regular)
+
+	rows, err := txn.Query(sqlStmt)
+	if err != nil {
+		mdb.log("GetAllDirtyFilesAndReset err=%s", err.Error())
+		txn.Rollback()
+		return nil, err
+	}
+
+	var fInfoAr []FileUploadInfo
+	for rows.Next() {
+		var fInfo FileUploadInfo
+		rows.Scan(&fInfo.Id, &fInfo.ProjId, &fInfo.FileSize, &fInfo.LocalPath)
+		fInfoAr = append(fInfoAr, fInfo)
+	}
+	rows.Close()
+
+	// erase the flag from the entire table
+	sqlStmt = fmt.Sprintf(`
+ 	        UPDATE data_objects
+                SET dirtyData = '%d'
+		WHERE dirtyData = '%d';`,
+		boolToInt(false), boolToInt(true))
+	if _, err := txn.Exec(sqlStmt); err != nil {
+		mdb.log("Error erasing dirtyData flag (%s)", err.Error())
+		txn.Rollback()
+		return nil, err
+	}
+
+	if err := txn.Commit(); err != nil {
+		return nil, err
+	}
+	return fInfoAr, nil
+}
+
+
+// Get a list of all the data-objects with modified attributes. Then,
+// set the dirtyMetadata to false for all these objects in the
+// table. The data-objects can be modified again, which will set the flag to true.
+func (mdb *MetadataDb) DirtyMetadataGetAllAndReset() ([]MetadataUpdateInfo, error) {
+	txn, err := mdb.BeginTxn()
+	if err != nil {
+		return nil, err
+	}
+
+	sqlStmt := fmt.Sprintf(`
+ 	        SELECT id, proj_id, tags, properties
+                FROM data_objects;`)
+	rows, err := txn.Query(sqlStmt)
+	if err != nil {
+		mdb.log("DirtyMetadataGetAllAndReset err=%s", err.Error())
+		txn.Rollback()
+		return nil, err
+	}
+
+	var muiAr []MetadataUpdateInfo
+	for rows.Next() {
+		var mui MetadataUpdateInfo
+		var tags string
+		var props string
+		rows.Scan(&mui.Id, &mui.ProjId, &tags, &props)
+		mui.Tags = tagsUnmarshal(tags)
+		mui.Properties = propertiesUnmarshal(props)
+
+		muiAr = append(muiAr, mui)
+	}
+	rows.Close()
+
+	// erase the flag from the entire table
+	sqlStmt = fmt.Sprintf(`
+ 	        UPDATE data_objects
+                SET dirtyMetadata = '%d'
+		WHERE dirtyMetadata = '%d';`,
+		boolToInt(false), boolToInt(true))
+	if _, err := txn.Exec(sqlStmt); err != nil {
+		mdb.log("Error erasing dirtyMetadata flag (%s)", err.Error())
+		txn.Rollback()
+		return nil, err
+	}
+
+	if err := txn.Commit(); err != nil {
+		return nil, err
+	}
+	return muiAr, nil
 }
