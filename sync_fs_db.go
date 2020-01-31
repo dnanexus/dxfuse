@@ -360,7 +360,7 @@ func (sybx *SyncDbDx) createFileWorker() {
 		if err != nil {
 			// Upload failed. Do not erase the local copy.
 			//
-			sybx.log("Error during upload of file %s",
+			sybx.log("Error during upload of file %s: %s",
 				upReq.id, err.Error())
 			continue
 		}

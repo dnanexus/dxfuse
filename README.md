@@ -92,8 +92,19 @@ download methods were (1) `dx cat`, and (2) `cat` from a dxfuse mount point.
 # Building
 
 To build the code from source, you'll need, at the very least, the `go` and `git` tools.
-Assuming the go directory is `/go`, then, clone the code with:
+install dependencies:
 ```
+go get github.com/google/subcommands
+go get golang.org/x/sync/semaphore
+go install github.com/google/subcommands
+go get github.com/dnanexus/dxda
+go install github.com/dnanexus/dxda
+go install github.com/dnanexus/dxda/cmd/dx-download-
+```
+
+Assuming the go directory is `/go`, clone the code with:
+```
+cd /go/src/github.com/dnanexus/dxfuse
 git clone git@github.com:dnanexus/dxfuse.git
 ```
 

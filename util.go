@@ -93,6 +93,9 @@ type Filesys struct {
 	// API to dx
 	ops *DxOps
 
+	// A way to send external commands to the filesystem
+	cmdSrv *CmdServer
+
 	// all open files
 	fhCounter uint64
 	fhTable map[fuseops.HandleID]*FileHandle

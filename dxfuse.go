@@ -119,8 +119,11 @@ func NewDxfuse(
 	fsys.sybx = NewSyncDbDx(options, dxEnv, projId2Desc, fsys.httpClientPool)
 
 	// Provide the upload module with a reference to the database.
-	// This is needed to report the end of an upload.
 	fsys.sybx.mdb = mdb
+
+	fsys.cmdSrv = NewCmdServer(options, fsys.sybx)
+	InitCmdServer(fsys.cmdSrv)
+
 	return fsys, nil
 }
 

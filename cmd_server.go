@@ -8,9 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"net/http"
 	"net/rpc"
-	"os"
 )
 
 const (
@@ -21,14 +19,6 @@ const (
 type CmdServer struct {
 	options  Options
 	sybx    *SyncDbDx
-}
-
-type CmdClient struct {
-}
-
-type Args struct {
-	// currently unused
-	a int
 }
 
 func NewCmdServer(options Options, sybx *SyncDbDx) *CmdServer {
@@ -44,43 +34,34 @@ func (csrv *CmdServer) log(a string, args ...interface{}) {
 	LogMsg("CmdServer", a, args...)
 }
 
-func (csrv *CmdServer) Init() {
-	rpc.Register(*csrv)
-	rpc.HandleHTTP()
-
-	// setup a server on the local host.
-	l, err := net.Listen("tcp", ":" + string(CmdPort))
+func InitCmdServer(csrv *CmdServer) {
+	addy, err := net.ResolveTCPAddr("tcp", fmt.Sprintf(":%d", CmdPort))
 	if err != nil {
-		log.Panicf("listen error:%s", err.Error())
+		log.Fatal(err)
 	}
-	go http.Serve(l, nil)
+
+	inbound, err := net.ListenTCP("tcp", addy)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	rpc.Register(csrv)
+	go rpc.Accept(inbound)
+
+	csrv.log("started command server, accepting external commands")
 }
 
-func (csrv *CmdServer) Sync(args *Args, reply *bool) error {
-	csrv.sybx.CmdSync()
+// Note: all export functions from this module have to have this format.
+// Nothing else will work with the RPC package.
+func (csrv *CmdServer) GetLine(arg string, reply *bool) error {
+	csrv.log("Received line %s", arg)
+	switch arg {
+	case "sync":
+		csrv.sybx.CmdSync()
+	default:
+		csrv.log("Unknown command")
+	}
 
 	*reply = true
 	return nil
-}
-
-func NewCmdClient() *CmdClient {
-	return &CmdClient{}
-}
-
-func (client *CmdClient) Sync() {
-	rpcClient, err := rpc.DialHTTP("tcp", "127.0.0.1" + ":" + string(CmdPort))
-	if err != nil {
-		fmt.Printf("could not connect to the dxfuse server:", err.Error())
-		os.Exit(1)
-	}
-	defer rpcClient.Close()
-
-	// Synchronous call
-	args := Args{a : 3}
-	var reply bool
-	err = rpcClient.Call("CmdServer.Sync", &args, &reply)
-	if err != nil {
-		fmt.Printf("sync error:", err.Error())
-		os.Exit(1)
-	}
 }

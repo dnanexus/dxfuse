@@ -124,5 +124,7 @@ function xattr_test {
     check_whale $base_dir
     check_new $base_dir
 
+    sudo $dxfuse -sync
+
     teardown
 }

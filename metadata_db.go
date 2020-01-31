@@ -758,7 +758,7 @@ func (mdb *MetadataDb) createDataObject(
 		// Create an entry for the file
 		sqlStmt := fmt.Sprintf(`
  		        INSERT INTO data_objects
-			VALUES ('%d', '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%d', '%s', '%s', '%s', '%d', %d');`,
+			VALUES ('%d', '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%d', '%s', '%s', '%s', '%d', '%d');`,
 			kind, objId, projId, state, archivalState, inode, size, ctime, mtime, int(mode), 1,
 			mTags, mProps,
 			inlineData,
