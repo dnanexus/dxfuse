@@ -228,10 +228,13 @@ type DeadFile struct {
 
 // Information required to upload file data to the platform
 type FileUploadInfo struct {
-	Id         string
-	ProjId     string
-	FileSize   int64
-	LocalPath  string
+	Inode       int64
+	ProjId      string
+	FileSize    int64
+	LocalPath   string
+	Name        string
+	ParentFolder string
+	ProjFolder  string
 }
 
 // Information required for updating the tags and properties of

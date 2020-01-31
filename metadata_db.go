@@ -774,6 +774,10 @@ func (mdb *MetadataDb) createDataObject(
 				projId, objId)
 		}
 
+		// FIXME.
+		// I am not sure this is actually correct handling for hard-links
+		log.panicf("a file with multiple links, not properly handled right now")
+
 		// File already exists, we need to increase the link count
 		sqlStmt := fmt.Sprintf(`
  		        UPDATE data_objects
@@ -1339,51 +1343,6 @@ func (mdb *MetadataDb) CreateFile(
 	}, nil
 }
 
-// We know that
-// 1) the parent directory exists and is populated
-// 2) the target file
-// 3) the source i-node exists
-func (mdb *MetadataDb) CreateLink(ctx context.Context, oph *OpHandle, srcFile File, dstParent Dir, name string) (File, error) {
-	// insert into the database
-	_, err := mdb.createDataObject(
-		oph,
-		CDO_ALREADY_EXISTS,
-		FK_Regular,
-		dstParent.ProjId,
-		srcFile.State,
-		srcFile.ArchivalState,
-		srcFile.Id,
-		srcFile.Size,
-		int64(srcFile.Ctime.Second()),
-		int64(srcFile.Mtime.Second()),
-		nil,  // cloning does not copy the tags or properties
-		nil,
-		srcFile.Mode,
-		dstParent.FullPath,
-		name,
-		"")
-	if err != nil {
-		mdb.log("CreateLink error creating data object")
-		return File{}, oph.RecordError(err)
-	}
-
-	// 3. return a File structure
-	return File{
-		Kind: FK_Regular,
-		Id : srcFile.Id,
-		ProjId : dstParent.ProjId,
-		ArchivalState : srcFile.ArchivalState,
-		Name : name,
-		Size : srcFile.Size,
-		Inode : srcFile.Inode,
-		Ctime : srcFile.Ctime,
-		Mtime : srcFile.Mtime,
-		Mode : srcFile.Mode,
-		Nlink : srcFile.Nlink + 1,
-		InlineData : "",
-	}, nil
-}
-
 // reduce link count by one. If it reaches zero, delete the file.
 //
 // TODO: take into account the case of ForgetInode, and files that are open, but unlinked.
@@ -1725,18 +1684,18 @@ func (mdb *MetadataDb) DeadObjectsGetAllAndReset() ([]DeadFile, error) {
 
 // Get a list of all the dirty files, and reset the table. The files can be modified again,
 // which will set the flag to true.
-func (mdb *MetadataDb) DirtyFilesGetAllAndReset() ([]FileUploadInfo, error) {
+func (mdb *MetadataDb) DirtyFilesGetAllAndReset() ([]File, error) {
 	txn, err := mdb.BeginTxn()
 	if err != nil {
 		return nil, err
 	}
 
-	sqlStmt := fmt.Sprintf(`
- 	        SELECT id, proj_id, size, inline_data
-                FROM data_objects
-                WHERE kind = '%d';`,
-		FK_Regular)
-
+	sqlStmt = fmt.Sprintf(`
+ 		        SELECT dos.kind, dos.inode, dos.proj_id, dos.size, dos.inline_data, namespace.name, namespace.parent
+                        FROM data_objects as dos
+                        JOIN namespace
+                        ON dos.inode = namespace.inode
+			WHERE dos.dirty_data = '%1';`)
 	rows, err := txn.Query(sqlStmt)
 	if err != nil {
 		mdb.log("GetAllDirtyFilesAndReset err=%s", err.Error())
@@ -1744,22 +1703,30 @@ func (mdb *MetadataDb) DirtyFilesGetAllAndReset() ([]FileUploadInfo, error) {
 		return nil, err
 	}
 
-	var fInfoAr []FileUploadInfo
+	var fAr []FileUploadInfo
 	for rows.Next() {
-		var fInfo FileUploadInfo
-		rows.Scan(&fInfo.Id, &fInfo.ProjId, &fInfo.FileSize, &fInfo.LocalPath)
-		fInfoAr = append(fInfoAr, fInfo)
+		var f FileUploadInfo
+		var kind int
+		rows.Scan(&kind, &f.Inode, &f.ProjId, &f.FileSize, &f.LocalPath, &f.Name, &f.ParentFolder)
+		if kind != FK_Regular {
+			log.panicf("Non regular file has dirty data")
+		}
+		fAr = append(fAr, f)
 	}
 	rows.Close()
+
+	// Collect more information for each file. We need the project-directory.
+
+
 
 	// erase the flag from the entire table
 	sqlStmt = fmt.Sprintf(`
  	        UPDATE data_objects
-                SET dirtyData = '%d'
-		WHERE dirtyData = '%d';`,
+                SET dirty_data = '%d'
+		WHERE dirty_data = '%d';`,
 		boolToInt(false), boolToInt(true))
 	if _, err := txn.Exec(sqlStmt); err != nil {
-		mdb.log("Error erasing dirtyData flag (%s)", err.Error())
+		mdb.log("Error erasing dirty_data flag (%s)", err.Error())
 		txn.Rollback()
 		return nil, err
 	}
@@ -1774,43 +1741,52 @@ func (mdb *MetadataDb) DirtyFilesGetAllAndReset() ([]FileUploadInfo, error) {
 // Get a list of all the data-objects with modified attributes. Then,
 // set the dirtyMetadata to false for all these objects in the
 // table. The data-objects can be modified again, which will set the flag to true.
-func (mdb *MetadataDb) DirtyMetadataGetAllAndReset() ([]MetadataUpdateInfo, error) {
+func (mdb *MetadataDb) DirtyMetadataGetAllAndReset() ([]FileUploadInfo, error) {
 	txn, err := mdb.BeginTxn()
 	if err != nil {
 		return nil, err
 	}
 
 	sqlStmt := fmt.Sprintf(`
- 	        SELECT id, proj_id, tags, properties
-                FROM data_objects;`)
+ 		        SELECT kind,id,proj_id,state,archival_state,inode,size,ctime,mtime,mode,nlink,tags,properties,inline_data
+                        FROM data_objects
+ 		        WHERE dirty_metadata = '%d';`,
+		boolToInt(true))
 	rows, err := txn.Query(sqlStmt)
 	if err != nil {
-		mdb.log("DirtyMetadataGetAllAndReset err=%s", err.Error())
-		txn.Rollback()
+		mdb.log("DirtyMetadataGetAllAndReset error in query: %s", err.Error())
 		return nil, err
 	}
 
-	var muiAr []MetadataUpdateInfo
+	var files []File
 	for rows.Next() {
-		var mui MetadataUpdateInfo
-		var tags string
-		var props string
-		rows.Scan(&mui.Id, &mui.ProjId, &tags, &props)
-		mui.Tags = tagsUnmarshal(tags)
-		mui.Properties = propertiesUnmarshal(props)
+		var f File
+		f.Name = ""
+		f.Uid = mdb.options.Uid
+		f.Gid = mdb.options.Gid
 
-		muiAr = append(muiAr, mui)
+		var ctime int64
+		var mtime int64
+		var props string
+		var tags string
+		rows.Scan(&f.Kind, &f.Id, &f.ProjId, &f.State, &f.ArchivalState, &f.Inode, &f.Size, &ctime, &mtime, &f.Mode, &f.Nlink, &tags, &props, &f.InlineData)
+		f.Ctime = SecondsToTime(ctime)
+		f.Mtime = SecondsToTime(mtime)
+		f.Tags = tagsUnmarshal(tags)
+		f.Properties = propertiesUnmarshal(props)
+
+		files = append(files, f)
 	}
 	rows.Close()
 
 	// erase the flag from the entire table
 	sqlStmt = fmt.Sprintf(`
  	        UPDATE data_objects
-                SET dirtyMetadata = '%d'
-		WHERE dirtyMetadata = '%d';`,
+                SET dirty_metadata = '%d'
+		WHERE dirty_metadata = '%d';`,
 		boolToInt(false), boolToInt(true))
 	if _, err := txn.Exec(sqlStmt); err != nil {
-		mdb.log("Error erasing dirtyMetadata flag (%s)", err.Error())
+		mdb.log("Error erasing dirty_metadata flag (%s)", err.Error())
 		txn.Rollback()
 		return nil, err
 	}

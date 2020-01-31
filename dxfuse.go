@@ -642,22 +642,11 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	cnt := atomic.AddUint64(&fsys.tmpFileCounter, 1)
 	localPath := fmt.Sprintf("%s/%d_%s", CreatedFilesDir, cnt, op.Name)
 
-	// create the file object on the platform.
-	fileId, err := fsys.ops.DxFileNew(
-		ctx, oph.httpClient, fsys.nonce.String(),
-		parentDir.ProjId, op.Name, parentDir.ProjFolder)
-	if err != nil {
-		fsys.log("Error in creating file (%s:%s/%s) on dnanexus: %s",
-			parentDir.ProjId, parentDir.ProjFolder, op.Name,
-			err.Error())
-		oph.RecordError(err)
-		return fsys.translateError(err)
-	}
-
 	file, err := fsys.mdb.CreateFile(ctx, oph, &parentDir, fileId, op.Name, op.Mode, localPath)
 	if err != nil {
 		return err
 	}
+	// The file will be created on the platform asynchronously.
 
 	// Set up attributes for the child.
 	now := time.Now()
@@ -702,98 +691,8 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 }
 
 func (fsys *Filesys) CreateLink(ctx context.Context, op *fuseops.CreateLinkOp) error {
-	fsys.mutex.Lock()
-	defer fsys.mutex.Unlock()
-	oph := fsys.OpOpen()
-	defer fsys.OpClose(oph)
-
-	if fsys.options.Verbose {
-		fsys.log("CreateLink (inode=%d) -> (parent-inode=%d name=%s)",
-			op.Target, op.Parent, op.Name)
-	}
-
-	// parent is supposed to be a directory
-	parentDir, ok, err := fsys.mdb.LookupDirByInode(ctx, oph, int64(op.Parent))
-	if err != nil {
-		return err
-	}
-	if !ok {
-		// parent directory does not exist
-		return fuse.ENOENT
-	}
-
-	// Make sure the destination doesn't already exist
-	_, ok, err = fsys.mdb.LookupInDir(ctx, oph, &parentDir, op.Name)
-	if err != nil {
-		return err
-	}
-	if ok {
-		// The link file already exists
-		return fuse.EEXIST
-	}
-
-	// make sure that target node exists
-	targetNode, ok, err := fsys.mdb.LookupByInode(ctx, oph, int64(op.Target))
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return fuse.ENOENT
-	}
-
-	var targetFile File
-	switch targetNode.(type) {
-	case Dir:
-		// can't make a hard link to a directory
-		return fuse.EINVAL
-	case File:
-		targetFile = targetNode.(File)
-	}
-
-	if targetFile.Name != op.Name {
-		fsys.log("cloning is only allowed if the destination and source names are the same")
-		return fuse.EINVAL
-	}
-
-	if fsys.options.Verbose {
-		fsys.log("CreateLink %s/%s -> %s",
-			parentDir.FullPath, op.Name, targetFile.Name)
-	}
-
-	// create a link on the platform. This is done with the clone call.
-	ok, err = fsys.ops.DxClone(
-		ctx, oph.httpClient,
-		targetFile.ProjId,    // source project
-		targetFile.Id,        // source id
-		parentDir.ProjId,     // destination project id
-		parentDir.ProjFolder)  // destination folder
-	if err != nil {
-		fsys.log("dx clone error %s", err.Error())
-		oph.RecordError(err)
-		return fsys.translateError(err)
-	}
-	if !ok {
-		fsys.log("(%s) object not cloned because it already exists in the target project (%s)",
-			targetFile.Id, parentDir.ProjId)
-		return syscall.EINVAL
-	}
-
-	destFile, err := fsys.mdb.CreateLink(ctx, oph, targetFile, parentDir, op.Name)
-	if err != nil {
-		fsys.log("database error in create-link %s", err.Error())
-		return fuse.EIO
-	}
-
-	// fill in child information
-	op.Entry.Child = destFile.GetInode()
-	op.Entry.Attributes = destFile.GetAttrs()
-
-	// We don't spontaneously mutate, so the kernel can cache as long as it wants
-	// (since it also handles invalidation).
-	op.Entry.AttributesExpiration = fsys.calcExpirationTime(op.Entry.Attributes)
-	op.Entry.EntryExpiration = op.Entry.AttributesExpiration
-
-	return nil
+	// not supporting creation of hard links now
+	return fuse.ENOSYS
 }
 
 func (fsys *Filesys) renameFile(

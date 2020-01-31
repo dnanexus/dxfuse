@@ -2,20 +2,10 @@
 ## constants
 
 projName="dxfuse_test_data"
-
-if [[ $DX_JOB_ID == "" ]]; then
-    # small test for a remote laptop
-    dxDirOnProject="mini"
-else
-    # larger test for a cloud worker
-    dxDirOnProject="correctness"
-fi
-
+dxfuse="$GOPATH/bin/dxfuse"
+dxDirOnProject="mini"
 baseDir=$HOME/dxfuse_test
 mountpoint=${baseDir}/MNT
-
-dxfuseDir=$mountpoint/$projName/$dxDirOnProject
-dxpyDir=${baseDir}/dxCopy/$dxDirOnProject
 
 # Directories created during the test
 writeable_dirs=()
@@ -60,15 +50,7 @@ function check_file_write_content {
     echo $content > $write_dir/A.txt
     ls -l $write_dir/A.txt
 
-    # wait for the file to achieve the closed state
-    while true; do
-        file_state=$(dx describe $projName:/$target_dir/A.txt --json | grep state | awk '{ gsub("[,\"]", "", $2); print $2 }')
-        if [[ "$file_state" == "closed" ]]; then
-            break
-        fi
-        sleep 2
-    done
-
+    sudo $dxfuse -sync
     echo "file is closed"
     dx ls -l $projName:/$target_dir/A.txt
 
@@ -496,17 +478,6 @@ function faux_dirs_remove {
 }
 
 
-
-function hard_links {
-    local root_dir=$1
-    cd $root_dir
-
-    ln $mountpoint/dxfuse_test_read_only/doc/approaches.md .
-    stat approaches.md
-    rm -f approaches.md
-}
-
-
 function populate_faux_dir {
     local faux_dir=$1
 
@@ -547,7 +518,6 @@ function fs_test_cases {
     dx env --bash > ENV
     source ENV >& /dev/null
     rm -f ENV
-    dxfuse="$GOPATH/bin/dxfuse"
 
     # clean and make fresh directories
     mkdir -p $mountpoint
@@ -555,18 +525,19 @@ function fs_test_cases {
     # generate random alphanumeric strings
     base_dir=$(cat /dev/urandom | env LC_CTYPE=C LC_ALL=C tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
     base_dir="base_$base_dir"
-    faux_dir=$(cat /dev/urandom | env LC_CTYPE=C LC_ALL=C tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
-    faux_dir="faux_$faux_dir"
-    expr_dir=$(cat /dev/urandom | env LC_CTYPE=C LC_ALL=C tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
-    expr_dir="expr_$expr_dir"
-    writeable_dirs=($base_dir $faux_dir $expr_dir)
+#    faux_dir=$(cat /dev/urandom | env LC_CTYPE=C LC_ALL=C tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+#    faux_dir="faux_$faux_dir"
+#    expr_dir=$(cat /dev/urandom | env LC_CTYPE=C LC_ALL=C tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+#    expr_dir="expr_$expr_dir"
+#    writeable_dirs=($base_dir $faux_dir $expr_dir)
+    writeable_dirs=($base_dir)
     for d in ${writeable_dirs[@]}; do
         dx rm -r $projName:/$d >& /dev/null || true
     done
 
     dx mkdir $projName:/$base_dir
-    populate_faux_dir $faux_dir
-    dx mkdir $projName:/$expr_dir
+#    populate_faux_dir $faux_dir
+#    dx mkdir $projName:/$expr_dir
 
     target_dir=$base_dir/T1
     dx mkdir $projName:/$target_dir
@@ -586,68 +557,65 @@ function fs_test_cases {
 #    echo "can write several files to a directory"
 #    write_files $mountpoint/$projName/$dxDirOnProject/large $mountpoint/$projName/$target_dir
 
-    echo "can't write to read-only project"
-    write_to_read_only_project
-
-    echo "archived files"
-    archived_files $mountpoint/ArchivedStuff
-
-    echo "create directory"
-    create_dir $mountpoint/$projName/$dxDirOnProject/small  $mountpoint/$projName/$base_dir/T2
-
-    echo "create/remove directory"
-    create_remove_dir "yes" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$base_dir/T3
-    create_remove_dir "no" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$base_dir/T3
-
-    echo "mkdir rmdir"
-    rmdir_non_empty $mountpoint/$projName/$base_dir/T4
-    rmdir_not_exist $mountpoint/$projName/$base_dir/T4
-    mkdir_existing  $mountpoint/$projName/$base_dir/T4
-
-    echo "file create remove"
-    file_create_existing "$mountpoint/$projName"
-    file_remove_non_exist "$mountpoint/$projName"
-
-    echo "move file I"
-    move_file $mountpoint/$projName/$expr_dir
-
-    echo "move file II"
-    move_file2 $mountpoint/$projName/$expr_dir
-
-    echo "rename directory"
-    rename_dir $mountpoint/$projName/$expr_dir
-    rename_dir /tmp
-    diff -r /tmp/B $mountpoint/$projName/$expr_dir/B
-    rm -rf /tmp/B $mountpoint/$projName/$expr_dir/B
-
-    echo "move directory"
-    move_dir $mountpoint/$projName/$expr_dir
-
-    echo "move a deep directory"
-    move_dir_deep $mountpoint/$projName/$expr_dir 1
-    move_dir_deep /tmp 2
-    cd $HOME
-
-    diff /tmp/results_1.txt /tmp/results_2.txt
-    diff -r $mountpoint/$projName/$expr_dir/D /tmp/D
-    rm -rf $mountpoint/$projName/$expr_dir/D
-    rm -rf /tmp/D
-
-    echo "checking illegal directory moves"
-    move_non_existent_dir "$mountpoint/$projName"
-    move_dir_to_file "$mountpoint/$projName"
-
-    echo "faux dirs cannot be moved"
-    faux_dirs_move $mountpoint/$projName/$faux_dir
-
-    echo "faux dir operations"
-    faux_dirs_remove $mountpoint/$projName/$faux_dir
-
-    echo "hard links"
-    hard_links $mountpoint/$projName/$faux_dir
-
-    echo "directory and file with the same name"
-    dir_and_file_with_the_same_name $mountpoint/$projName
+#    echo "can't write to read-only project"
+#    write_to_read_only_project
+#
+#    echo "archived files"
+#    archived_files $mountpoint/ArchivedStuff
+#
+#    echo "create directory"
+#    create_dir $mountpoint/$projName/$dxDirOnProject/small  $mountpoint/$projName/$base_dir/T2
+#
+#    echo "create/remove directory"
+#    create_remove_dir "yes" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$base_dir/T3
+#    create_remove_dir "no" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$base_dir/T3
+#
+#    echo "mkdir rmdir"
+#    rmdir_non_empty $mountpoint/$projName/$base_dir/T4
+#    rmdir_not_exist $mountpoint/$projName/$base_dir/T4
+#    mkdir_existing  $mountpoint/$projName/$base_dir/T4
+#
+#    echo "file create remove"
+#    file_create_existing "$mountpoint/$projName"
+#    file_remove_non_exist "$mountpoint/$projName"
+#
+#    echo "move file I"
+#    move_file $mountpoint/$projName/$expr_dir
+#
+#    echo "move file II"
+#    move_file2 $mountpoint/$projName/$expr_dir
+#
+#    echo "rename directory"
+#    rename_dir $mountpoint/$projName/$expr_dir
+#    rename_dir /tmp
+#    diff -r /tmp/B $mountpoint/$projName/$expr_dir/B
+#    rm -rf /tmp/B $mountpoint/$projName/$expr_dir/B
+#
+#    echo "move directory"
+#    move_dir $mountpoint/$projName/$expr_dir
+#
+#    echo "move a deep directory"
+#    move_dir_deep $mountpoint/$projName/$expr_dir 1
+#    move_dir_deep /tmp 2
+#    cd $HOME
+#
+#    diff /tmp/results_1.txt /tmp/results_2.txt
+#    diff -r $mountpoint/$projName/$expr_dir/D /tmp/D
+#    rm -rf $mountpoint/$projName/$expr_dir/D
+#    rm -rf /tmp/D
+#
+#    echo "checking illegal directory moves"
+#    move_non_existent_dir "$mountpoint/$projName"
+#    move_dir_to_file "$mountpoint/$projName"
+#
+#    echo "faux dirs cannot be moved"
+#    faux_dirs_move $mountpoint/$projName/$faux_dir
+#
+#    echo "faux dir operations"
+#    faux_dirs_remove $mountpoint/$projName/$faux_dir
+#
+#    echo "directory and file with the same name"
+#    dir_and_file_with_the_same_name $mountpoint/$projName
 
     teardown
 }

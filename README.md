@@ -43,6 +43,7 @@ There are several limitations currently:
 - Updates to the project emanating from other machines are not reflected locally
 - Rename does not allow removing the target file or directory. This is because this cannot be
   done automatically by dnanexus.
+- Does not support hard links
 
 Updates to files are batched and asynchronously applied to the cloud
 object system. For example, if `foo.txt` is updated, the changes will
