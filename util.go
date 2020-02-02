@@ -104,7 +104,6 @@ type Filesys struct {
 	dhCounter uint64
 	dhTable map[fuseops.HandleID]*DirHandle
 
-	nonce *Nonce
 	tmpFileCounter uint64
 
 	// is the the system shutting down (unmounting)
@@ -188,7 +187,6 @@ type File struct {
 	Ctime      time.Time
 	Mtime      time.Time
 	Mode       os.FileMode  // uint32
-	Nlink      int
 	Uid        uint32
 	Gid        uint32
 
@@ -203,7 +201,7 @@ type File struct {
 
 func (f File) GetAttrs() (a fuseops.InodeAttributes) {
 	a.Size = uint64(f.Size)
-	a.Nlink = uint32(f.Nlink)
+	a.Nlink = 1
 	a.Mtime = f.Mtime
 	a.Ctime = f.Ctime
 	a.Mode = f.Mode
@@ -229,12 +227,12 @@ type DeadFile struct {
 // Information required to upload file data to the platform
 type FileUploadInfo struct {
 	Inode       int64
-	ProjId      string
+	Id          string
 	FileSize    int64
 	LocalPath   string
 	Name        string
-	ParentFolder string
 	ProjFolder  string
+	ProjId      string
 }
 
 // Information required for updating the tags and properties of

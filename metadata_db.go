@@ -183,7 +183,6 @@ func (mdb *MetadataDb) init2(txn *sql.Tx) error {
                 ctime bigint,
                 mtime bigint,
                 mode int,
-                nlink int,
                 tags text,
                 properties text,
                 inline_data text,
@@ -378,43 +377,6 @@ func (mdb *MetadataDb) allocInodeNum() int64 {
 	return mdb.inodeCnt
 }
 
-// search for a file by Id. If the file exists, return its inode and link-count. Otherwise,
-// return 0, 0.
-func (mdb *MetadataDb) lookupDataObjectById(oph *OpHandle, fId string) (int64, int, bool, error) {
-	// point lookup in the files table
-	sqlStmt := fmt.Sprintf(`
- 		        SELECT inode,nlink
-                        FROM data_objects
-			WHERE id = '%s';`,
-		fId)
-	rows, err := oph.txn.Query(sqlStmt)
-	if err != nil {
-		mdb.log("lookupDataObjectById fId=%s err=%s", fId, err.Error())
-		return InodeInvalid, 0, false, oph.RecordError(err)
-	}
-
-	var nlink int
-	var inode int64
-	numRows := 0
-	for rows.Next() {
-		rows.Scan(&inode, &nlink)
-		numRows++
-	}
-	rows.Close()
-
-	switch numRows {
-	case 0:
-		// this file doesn't exist in the database
-		return InodeInvalid, 0, false, nil
-	case 1:
-		// correct, there is exactly one such file
-		return inode, nlink, true, nil
-	default:
-		log.Panicf("Found %d data-objects with Id %s", numRows, fId)
-		return 0, 0, false, nil
-	}
-}
-
 // search for a file with a particular inode
 //
 // This is important for a file with multiple hard links. The
@@ -423,7 +385,7 @@ func (mdb *MetadataDb) lookupDataObjectById(oph *OpHandle, fId string) (int64, i
 func (mdb *MetadataDb) lookupDataObjectByInode(oph *OpHandle, oname string, inode int64) (File, bool, error) {
 	// point lookup in the files table
 	sqlStmt := fmt.Sprintf(`
- 		        SELECT kind,id,proj_id,state,archival_state,size,ctime,mtime,mode,nlink,tags,properties,inline_data
+ 		        SELECT kind,id,proj_id,state,archival_state,size,ctime,mtime,mode,tags,properties,inline_data
                         FROM data_objects
 			WHERE inode = '%d';`,
 		inode)
@@ -445,7 +407,7 @@ func (mdb *MetadataDb) lookupDataObjectByInode(oph *OpHandle, oname string, inod
 		var mtime int64
 		var props string
 		var tags string
-		rows.Scan(&f.Kind, &f.Id, &f.ProjId, &f.State, &f.ArchivalState, &f.Size, &ctime, &mtime, &f.Mode, &f.Nlink,
+		rows.Scan(&f.Kind, &f.Id, &f.ProjId, &f.State, &f.ArchivalState, &f.Size, &ctime, &mtime, &f.Mode,
 			&tags, &props, &f.InlineData)
 		f.Ctime = SecondsToTime(ctime)
 		f.Mtime = SecondsToTime(mtime)
@@ -530,8 +492,7 @@ func (mdb *MetadataDb) lookupDirByInode(oph *OpHandle, parent string, dname stri
 
 // search for a file with a particular inode.
 //
-// Note: a file with multiple hard links will appear several times.
-func (mdb *MetadataDb) LookupByInodeAll(ctx context.Context, oph *OpHandle, inode int64) ([]Node, error) {
+func (mdb *MetadataDb) LookupByInodeAll(ctx context.Context, oph *OpHandle, inode int64) (Node, error) {
 	// point lookup in the namespace table
 	sqlStmt := fmt.Sprintf(`
  		        SELECT parent,name,obj_type
@@ -620,6 +581,29 @@ func (mdb *MetadataDb) LookupByInode(ctx context.Context, oph *OpHandle, inode i
 	return nodes[0], true, nil
 }
 
+// We wrote a new version of this file, creating a new file-id.
+func (mdb *MetadataDb) UpdateInodeFileId(inode int64, fileId string) error {
+	txn, err := mdb.BeginTxn()
+	if err != nil {
+		return nil, err
+	}
+
+	sqlStmt := fmt.Sprintf(`
+ 		        UPDATE data_objects
+                        SET id = '%s'
+			WHERE inode = '%d';`,
+		fileId, inode)
+	if _, err := txn.Exec(sqlStmt); err != nil {
+		txn.Rollback()
+		mdb.log("UpdateInodeFileId Error updating data_object table, %s",
+			err.Error())
+		return err
+	}
+
+	return txn.Commit()
+}
+
+
 // The directory is in the database, read it in its entirety.
 func (mdb *MetadataDb) directoryReadAllEntries(
 	oph *OpHandle,
@@ -666,7 +650,7 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 
 	// Extract information for all the files
 	sqlStmt = fmt.Sprintf(`
- 		        SELECT dos.kind, dos.id, dos.proj_id, dos.state, dos.archival_state, dos.inode, dos.size, dos.ctime, dos.mtime, dos.mode, dos.nlink, dos.tags, dos.properties, dos.inline_data, namespace.name
+ 		        SELECT dos.kind, dos.id, dos.proj_id, dos.state, dos.archival_state, dos.inode, dos.size, dos.ctime, dos.mtime, dos.mode, dos.tags, dos.properties, dos.inline_data, namespace.name
                         FROM data_objects as dos
                         JOIN namespace
                         ON dos.inode = namespace.inode
@@ -688,7 +672,7 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 		var tags string
 		var props string
 		var mode int
-		rows.Scan(&f.Kind,&f.Id, &f.ProjId, &f.State, &f.ArchivalState, &f.Inode, &f.Size, &ctime, &mtime, &mode, &f.Nlink,
+		rows.Scan(&f.Kind,&f.Id, &f.ProjId, &f.State, &f.ArchivalState, &f.Inode, &f.Size, &ctime, &mtime, &mode,
 			&tags, &props, &f.InlineData,&f.Name)
 		f.Ctime = SecondsToTime(ctime)
 		f.Mtime = SecondsToTime(mtime)
@@ -1338,64 +1322,45 @@ func (mdb *MetadataDb) CreateFile(
 		Ctime : SecondsToTime(nowSeconds),
 		Mtime : SecondsToTime(nowSeconds),
 		Mode : mode,
-		Nlink : 1,
 		InlineData : localPath,
 	}, nil
 }
 
-// reduce link count by one. If it reaches zero, delete the file.
-//
 // TODO: take into account the case of ForgetInode, and files that are open, but unlinked.
+//
+// on this file system, since we don't keep track of link count, this amount to removing the file.
 func (mdb *MetadataDb) Unlink(ctx context.Context, oph *OpHandle, file File) error {
-	nlink := file.Nlink - 1
-	if nlink > 0 {
-		// reduce one from the link count. It is still positive,
-		// so there is nothing else to do
-		sqlStmt := fmt.Sprintf(`
-  		           UPDATE data_objects
-                           SET nlink = '%d'
-                           WHERE inode = '%d'`,
-			nlink, file.Inode)
-		if _, err := oph.txn.Exec(sqlStmt); err != nil {
-			mdb.log(err.Error())
-			mdb.log("could not reduce the link count for inode=%d to %d",
-				file.Inode, nlink)
-			return oph.RecordError(err)
-		}
-	} else {
-		// the link hit zero, we can remove the file
-		sqlStmt := fmt.Sprintf(`
+	sqlStmt := fmt.Sprintf(`
                            DELETE FROM namespace
                            WHERE inode='%d';`,
+		file.Inode)
+	if _, err := oph.txn.Exec(sqlStmt); err != nil {
+		mdb.log(err.Error())
+		mdb.log("could not delete row for inode=%d from the namespace table",
 			file.Inode)
-		if _, err := oph.txn.Exec(sqlStmt); err != nil {
-			mdb.log(err.Error())
-			mdb.log("could not delete row for inode=%d from the namespace table",
-				file.Inode)
-			return oph.RecordError(err)
-		}
+		return oph.RecordError(err)
+	}
 
-		sqlStmt = fmt.Sprintf(`
+	sqlStmt = fmt.Sprintf(`
                            DELETE FROM data_objects
                            WHERE inode='%d';`,
+		file.Inode)
+	if _, err := oph.txn.Exec(sqlStmt); err != nil {
+		mdb.log(err.Error())
+		mdb.log("could not delete row for inode=%d from the data_objects table",
 			file.Inode)
-		if _, err := oph.txn.Exec(sqlStmt); err != nil {
-			mdb.log(err.Error())
-			mdb.log("could not delete row for inode=%d from the data_objects table",
-				file.Inode)
-			return oph.RecordError(err)
-		}
+		return oph.RecordError(err)
+	}
 
-		// add the file to the dead-object table
-		sqlStmt = fmt.Sprintf(`
+	// add the file to the dead-object table
+	sqlStmt = fmt.Sprintf(`
  		        INSERT INTO dead_objects
 			VALUES ('%d', '%s', '%s', '%d', '%s');`,
-			file.Kind, file.Id, file.ProjId, file.Inode, file.InlineData)
-		if _, err := oph.txn.Exec(sqlStmt); err != nil {
-			mdb.log(err.Error())
-			mdb.log("Error inserting into dead-objects table")
-			return oph.RecordError(err)
-		}
+		file.Kind, file.Id, file.ProjId, file.Inode, file.InlineData)
+	if _, err := oph.txn.Exec(sqlStmt); err != nil {
+		mdb.log(err.Error())
+		mdb.log("Error inserting into dead-objects table")
+		return oph.RecordError(err)
 	}
 	return nil
 }
@@ -1690,12 +1655,18 @@ func (mdb *MetadataDb) DirtyFilesGetAllAndReset() ([]File, error) {
 		return nil, err
 	}
 
+	// join all the tables so we can get the file attributes, the
+	// directory is lives under, and which project-folder this
+	// corresponds to.
 	sqlStmt = fmt.Sprintf(`
- 		        SELECT dos.kind, dos.inode, dos.proj_id, dos.size, dos.inline_data, namespace.name, namespace.parent
+ 		        SELECT dos.kind, dos.id, dos.inode, dos.size, dos.inline_data, namespace.name, dirs.proj_folder, dirs.proj_id
                         FROM data_objects as dos
                         JOIN namespace
+                        JOIN directories as dirs
                         ON dos.inode = namespace.inode
-			WHERE dos.dirty_data = '%1';`)
+                        ON dirs.parent = namespace.parent
+                        ON dirs.name = namespace.name
+			WHERE dos.dirty_data = '1';`)
 	rows, err := txn.Query(sqlStmt)
 	if err != nil {
 		mdb.log("GetAllDirtyFilesAndReset err=%s", err.Error())
@@ -1707,17 +1678,13 @@ func (mdb *MetadataDb) DirtyFilesGetAllAndReset() ([]File, error) {
 	for rows.Next() {
 		var f FileUploadInfo
 		var kind int
-		rows.Scan(&kind, &f.Inode, &f.ProjId, &f.FileSize, &f.LocalPath, &f.Name, &f.ParentFolder)
+		rows.Scan(&kind, &f.Inode, &f.Id, &f.FileSize, &f.LocalPath, &f.Name, &f.ProjFolder, &f.ProjId)
 		if kind != FK_Regular {
 			log.panicf("Non regular file has dirty data")
 		}
 		fAr = append(fAr, f)
 	}
 	rows.Close()
-
-	// Collect more information for each file. We need the project-directory.
-
-
 
 	// erase the flag from the entire table
 	sqlStmt = fmt.Sprintf(`
@@ -1737,7 +1704,6 @@ func (mdb *MetadataDb) DirtyFilesGetAllAndReset() ([]File, error) {
 	return fInfoAr, nil
 }
 
-
 // Get a list of all the data-objects with modified attributes. Then,
 // set the dirtyMetadata to false for all these objects in the
 // table. The data-objects can be modified again, which will set the flag to true.
@@ -1748,7 +1714,7 @@ func (mdb *MetadataDb) DirtyMetadataGetAllAndReset() ([]FileUploadInfo, error) {
 	}
 
 	sqlStmt := fmt.Sprintf(`
- 		        SELECT kind,id,proj_id,state,archival_state,inode,size,ctime,mtime,mode,nlink,tags,properties,inline_data
+ 		        SELECT kind,id,proj_id,state,archival_state,inode,size,ctime,mtime,mode,tags,properties,inline_data
                         FROM data_objects
  		        WHERE dirty_metadata = '%d';`,
 		boolToInt(true))
@@ -1769,7 +1735,7 @@ func (mdb *MetadataDb) DirtyMetadataGetAllAndReset() ([]FileUploadInfo, error) {
 		var mtime int64
 		var props string
 		var tags string
-		rows.Scan(&f.Kind, &f.Id, &f.ProjId, &f.State, &f.ArchivalState, &f.Inode, &f.Size, &ctime, &mtime, &f.Mode, &f.Nlink, &tags, &props, &f.InlineData)
+		rows.Scan(&f.Kind, &f.Id, &f.ProjId, &f.State, &f.ArchivalState, &f.Inode, &f.Size, &ctime, &mtime, &f.Mode, &tags, &props, &f.InlineData)
 		f.Ctime = SecondsToTime(ctime)
 		f.Mtime = SecondsToTime(mtime)
 		f.Tags = tagsUnmarshal(tags)

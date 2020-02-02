@@ -41,13 +41,9 @@ type Chunk struct {
 }
 
 type FileUploadReq struct {
-	inode        int64
-	fName        string
-	projFolder   string
+	FileUploadInfo fui
 	partSize     int64
 	uploadParams FileUploadParameters
-	localPath    string
-	fileSize     int64
 }
 
 type SyncDbDx struct {
@@ -61,6 +57,7 @@ type SyncDbDx struct {
 	mutex               sync.Mutex
 	mdb                *MetadataDb
 	ops                *DxOps
+	nonce              *Nonce
 
 	// a pool of http clients, for short requests, such as file creation,
 	// or file describe.
@@ -90,6 +87,7 @@ func NewSyncDbDx(
 
 		mutex : sync.Mutex{},
 		ops : NewDxOps(dxEnv, options),
+		nonce : NewNonce(),
 	}
 
 	// Create a bunch of threads
@@ -237,7 +235,8 @@ func readLocalFileExtent(filename string, ofs int64, len int) ([]byte, error) {
 // note: chunk indexes start at 1 (not zero)
 func (sybx *SyncDbDx) uploadFileData(
 	client *retryablehttp.Client,
-	upReq FileUploadReq) error {
+	upReq FileUploadReq,
+	fildId string) error {
 	if upReq.fileSize == 0 {
 		log.Panicf("The file is empty")
 	}
@@ -246,14 +245,14 @@ func (sybx *SyncDbDx) uploadFileData(
 		// This is a small file, upload it synchronously.
 		// This ensures that only large chunks are uploaded by the bulk-threads,
 		// improving fairness.
-		data, err := readLocalFileExtent(upReq.localPath, 0, int(upReq.fileSize))
+		data, err := readLocalFileExtent(upReq.fui.LocalPath, 0, int(upReq.fui.FileSize))
 		if err != nil {
 			return err
 		}
 		return sybx.ops.DxFileUploadPart(
 			context.TODO(),
 			client,
-			upReq.id, 1, data)
+			fileId, 1, data)
 	}
 
 	// a large file, with more than a single chunk
@@ -270,7 +269,7 @@ func (sybx *SyncDbDx) uploadFileData(
 			return err
 		}
 		chunk := &Chunk{
-			fileId : upReq.id,
+			fileId : filId,
 			index : cIndex,
 			data : buf,
 			fwg : &fileWg,
@@ -327,10 +326,10 @@ func (sybx *SyncDbDx) uploadFileDataAndWait(
 	fileId string,
 	upReq FileUploadReq) error {
 	if sybx.options.Verbose {
-		sybx.log("Upload file-size=%d part-size=%d", upReq.fileSize, upReq.partSize)
+		sybx.log("Upload file-size=%d part-size=%d", upReq.fui.FileSize, upReq.partSize)
 	}
 
-	if upReq.fileSize == 0 {
+	if upReq.fui.FileSize == 0 {
 		// Create an empty file
 		if err := sybx.createEmptyFile(client, upReq, fileId); err != nil {
 			return err
@@ -345,8 +344,7 @@ func (sybx *SyncDbDx) uploadFileDataAndWait(
 	if sybx.options.Verbose {
 		sybx.log("Closing %s", fileId)
 	}
-	ctx := context.TODO()
-	return sybx.ops.DxFileCloseAndWait(ctx, client, fileId)
+	return sybx.ops.DxFileCloseAndWait(context.TODO(), client, fileId)
 }
 
 func (sybx *SyncDbDx) createFileWorker() {
@@ -362,9 +360,9 @@ func (sybx *SyncDbDx) createFileWorker() {
 
 		// create the file object on the platform.
 		fileId, err := sybx.ops.DxFileNew(
-			ctx, oph.httpClient, fsys.nonce.String(),
-			upReq.f.ProjId,
-			op.Name,
+			ctx, client, sybx.nonce.String(),
+			upReq.fui.ProjId,
+			upReq.fui.Name,
 			parentDir.ProjFolder)
 		if err != nil {
 			fsys.log("Error in creating file (%s:%s/%s) on dnanexus: %s",
@@ -381,19 +379,30 @@ func (sybx *SyncDbDx) createFileWorker() {
 			continue
 		}
 
-		// TODO: Update the database
+		// 1. Update the database with the new ID.
+		sybx.mdb.UpdateInodeFileId(upReq.fui.inode, fileId)
+
+		// 2. Erase the old file-id.
+		if upReq.fui.Id == "" {
+			// This is the first time we are creating the file, there
+			// is no older version on the platform.
+			continue
+		}
+		var oldFileId []string
+		oldFileId = append(objIds, upReq.fui.Id)
+		sybx.ops.DxRemoveObjects(context.TODO(), client, fui.ProjId, oldFileId)
 	}
 }
 
 // enqueue a request to upload the file. This will happen in the background. Since
 // we don't erase the local file, there is no rush.
-func (sybx *SyncDbDx) UploadFile(f File) error {
-	projDesc, ok := sybx.projId2Desc[f.ProjId]
+func (sybx *SyncDbDx) uploadFile(fui FileUploadInfo) error {
+	projDesc, ok := sybx.projId2Desc[fui.ProjId]
 	if !ok {
-		log.Panicf("project %s not found", f.ProjId)
+		log.Panicf("project %s not found", fui.ProjId)
 	}
 
-	partSize, err := sybx.calcPartSize(projDesc.UploadParams, f.Size)
+	partSize, err := sybx.calcPartSize(projDesc.UploadParams, fui.Size)
 	if err != nil {
 		sybx.log(`
 There is a problem with the file size, it cannot be uploaded
@@ -403,11 +412,9 @@ to the platform due to part size constraints. Error=%s`,
 	}
 
 	sybx.fileUploadQueue <- FileUploadReq{
-		f : f,
+		fui : fui,
 		partSize : partSize,
 		uploadParams : projDesc.UploadParams,
-		localPath : fInfo.InlineData,
-		fileSize : f.Size,
 	}
 	return nil
 }
@@ -580,31 +587,31 @@ func (sybx *SyncDbDx) DeleteDeadObjects() error {
 }
 
 
-// TODO
 func (sybx *SyncDbDx) sweep() error {
 	// query the database, find all the files that have been
 	// deleted, and remove them from the platform.
 	sybx.DeleteDeadObjects()
 
-	// find all the dirty files and upload them to the platform.
+	// find all the dirty files
 	dirtyFiles, err := sybx.mdb.DirtyFilesGetAllAndReset()
 	if err != nil {
 		return err
 	}
+	// enqueue them on the "to-upload" list
 	for _, file := range(dirtyFiles) {
-		sybx.UploadFile(file)
+		sybx.uploadFile(file)
 	}
 
 	// find all the files whose metadata has changed, and upload
 	// the new tags/properties
-	objsWithDirtyMetadata, err := sybx.mdb.DirtyMetadataGetAllAndReset()
+/*	objsWithDirtyMetadata, err := sybx.mdb.DirtyMetadataGetAllAndReset()
 	if err != nil {
 		return err
 	}
 	// enqueue all the metadata update requests
 	for _, req := range(objsWithDirtyMetadata) {
 		sybx.metadataUpdateQueue <- req
-	}
+	}*/
 
 	return nil
 }

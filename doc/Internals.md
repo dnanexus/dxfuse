@@ -17,7 +17,6 @@ The `data_objects` table maintains information for files, applets, workflows, an
 | ctime           | bigint   | creation time |
 | mtime           | bigint   | modification time |
 | mode            | int      | Unix permission bits |
-| nlink           | int      | number of hard links to this file |
 | tags            | text     | DNAx tags for this object, encoded as a JSON array |
 | properties      | text     | DNAx properties for this object, encoded as JSON  |
 | inline\_data    | text     | holds the path for a symlink, if it has a local copy, this is the path |
@@ -38,6 +37,10 @@ four values: `live`, `archival`, `archived`, `unarchiving`. A file can
 be accessed only when it is in the `live` state.
 
 The `state` can be one of `open`, `closing`, `closed`. It applies to all data objects.
+
+The `id` will be empty when a file is first created. It will be populated when it is first
+uploaded to the platform. Every update the id will change. This is because DNAx files are immutable,
+and changing, even a single byte, requires rewriting the entire file, generating a new id.
 
 The `dead_objects` table contains objects that have been deleted. They were removed from the `data_objects`, and are scheduled for deletion on the platform. The idea is to batch together deletions, and avoid upload/delete conflicts.
 

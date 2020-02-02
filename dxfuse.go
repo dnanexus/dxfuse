@@ -53,7 +53,6 @@ func NewDxfuse(
 		fhTable : make(map[fuseops.HandleID]*FileHandle),
 		dhCounter : 1,
 		dhTable : make(map[fuseops.HandleID]*DirHandle),
-		nonce : NewNonce(),
 		tmpFileCounter : 0,
 		shutdownCalled : false,
 	}
