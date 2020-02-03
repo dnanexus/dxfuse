@@ -224,25 +224,26 @@ type DeadFile struct {
 	InlineData string
 }
 
-// Information required to upload file data to the platform
-type FileUploadInfo struct {
-	Inode       int64
-	Id          string
-	FileSize    int64
-	LocalPath   string
-	Name        string
-	ProjFolder  string
-	ProjId      string
-}
-
-// Information required for updating the tags and properties of
-// a data-object. Not only files have attributes, applets and workflows
+// Information required to upload file data to the platform.
+// It also includes updated tags and properties of a data-object.
+//
+// Not that not only files have attributes, applets and workflows
 // have them too.
-type MetadataUpdateInfo struct {
-	Id         string
-	ProjId     string
-	Tags       []string
-	Properties map[string]string
+//
+type DirtyFileInfo struct {
+	Inode         int64
+	dirtyData     bool
+	dirtyMetadata bool
+
+	// will be "" for files created locally, and not uploaded yet
+	Id            string
+	FileSize      int64
+	LocalPath     string
+	Name          string
+	ProjFolder    string
+	ProjId        string
+	Tags          []string
+	Properties    map[string]string
 }
 
 // Files can be opened in read-only mode, or read-write mode.
@@ -357,4 +358,25 @@ func BytesToString(numBytes int64) string {
 		return fmt.Sprintf("%dB", numBytes)
 	}
 	return fmt.Sprintf("%d%s", digits[msd], byteModifier[msd])
+}
+
+func check(value bool) {
+	if !value {
+		log.Panicf("assertion failed")
+		os.Exit(1)
+	}
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+func intToBool(x int) bool {
+	if x > 0 {
+		return true
+	}
+	return false
 }

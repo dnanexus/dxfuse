@@ -314,12 +314,6 @@ func (pgs *PrefetchGlobalState) Shutdown() {
 	// we aren't waiting for the periodic cleanup thread.
 }
 
-func check(value bool) {
-	if !value {
-		panic("assertion failed")
-	}
-}
-
 func (pgs *PrefetchGlobalState) reportIfSlowIO(
 	startTs time.Time,
 	f File,
