@@ -41,7 +41,7 @@ type Chunk struct {
 }
 
 type FileUpdateReq struct {
-	DirtyFileInfo dfi
+	dfi           DirtyFileInfo
 	partSize      int64
 	uploadParams  FileUploadParameters
 }
@@ -52,6 +52,8 @@ type SyncDbDx struct {
 	projId2Desc         map[string]DxDescribePrj
 	fileUpdateQueue     chan FileUpdateReq
 	chunkQueue          chan *Chunk
+	deadObjectsQueue    chan []DeadFile
+	disableSweep        bool
 	wg                  sync.WaitGroup
 	mutex               sync.Mutex
 	mdb                *MetadataDb
@@ -67,37 +69,23 @@ func NewSyncDbDx(
 	options Options,
 	dxEnv dxda.DXEnvironment,
 	projId2Desc map[string]DxDescribePrj,
-	httpClientPool chan(*retryablehttp.Client) ) *SyncDbDx {
-
-	// the chunk queue size should be at least the size of the thread
-	// pool.
-	chunkQueueSize := MaxInt(numBulkDataThreads, chunkMaxQueueSize)
+	httpClientPool chan(*retryablehttp.Client),
+	mutex sync.Mutex) *SyncDbDx {
 
 	sybx := &SyncDbDx{
 		dxEnv : dxEnv,
 		options : options,
 		projId2Desc : projId2Desc,
-		fileUpdateQueue : make(chan FileUpdateReq),
-
-		// limit the size of the chunk queue, so we don't
-		// have too many chunks stored in memory.
-		chunkQueue : make(chan *Chunk, chunkQueueSize),
-
-		mutex : sync.Mutex{},
+		fileUpdateQueue : nil,
+		chunkQueue : nil,
+		disableSweep : false,
+		mutex : mutex,
 		ops : NewDxOps(dxEnv, options),
 		nonce : NewNonce(),
+		httpClientPool : httpClientPool,
 	}
 
-	// Create a bunch of threads
-	sybx.wg.Add(numFileThreads)
-	for i := 0; i < numFileThreads; i++ {
-		go sybx.updateFileWorker()
-	}
-
-	sybx.wg.Add(numBulkDataThreads)
-	for i := 0; i < numBulkDataThreads; i++ {
-		go sybx.bulkDataWorker()
-	}
+	sybx.startBackgroundWorkers()
 
 	// start a periodic thread to synchronize the database with
 	// the platform
@@ -108,16 +96,57 @@ func NewSyncDbDx(
 
 // write a log message, and add a header
 func (sybx *SyncDbDx) log(a string, args ...interface{}) {
-	LogMsg("file_upload", a, args...)
+	LogMsg("synx_db_dx", a, args...)
 }
 
-func (sybx *SyncDbDx) Shutdown() {
+func (sybx *SyncDbDx) startBackgroundWorkers() {
+	sybx.fileUpdateQueue = make(chan FileUpdateReq)
+
+	// the chunk queue size should be at least the size of the thread
+	// pool.
+	chunkQueueSize := MaxInt(numBulkDataThreads, chunkMaxQueueSize)
+
+	// limit the size of the chunk queue, so we don't
+	// have too many chunks stored in memory.
+	sybx.chunkQueue = make(chan *Chunk, chunkQueueSize)
+
+	sybx.deadObjectsQueue = make(chan []DeadFile)
+
+	// Create a bunch of threads to update files and metadata
+	for i := 0; i < numFileThreads; i++ {
+		sybx.wg.Add(1)
+		go sybx.updateFileWorker()
+	}
+
+	// bunch of background threads to upload bulk file data
+	for i := 0; i < numBulkDataThreads; i++ {
+		sybx.wg.Add(1)
+		go sybx.bulkDataWorker()
+	}
+
+	sybx.wg.Add(1)
+	go sybx.deadObjectsRemover()
+}
+
+func (sybx *SyncDbDx) stopBackgroundWorkers() {
 	// signal all upload and modification threads to stop
 	close(sybx.fileUpdateQueue)
 	close(sybx.chunkQueue)
 
+	// stop also the object-removal thread
+	close(sybx.deadObjectsQueue)
+
 	// wait for all of them to complete
 	sybx.wg.Wait()
+}
+
+func (sybx *SyncDbDx) Shutdown() {
+	// disable to sweep thread
+	sybx.mutex.Lock()
+	sybx.disableSweep = false
+	sybx.mutex.Unlock()
+
+	sybx.stopBackgroundWorkers()
 }
 
 // A worker dedicated to performing data-upload operations
@@ -228,12 +257,12 @@ func readLocalFileExtent(filename string, ofs int64, len int) ([]byte, error) {
 func (sybx *SyncDbDx) uploadFileData(
 	client *retryablehttp.Client,
 	upReq FileUpdateReq,
-	fildId string) error {
-	if upReq.fileSize == 0 {
+	fileId string) error {
+	if upReq.dfi.FileSize == 0 {
 		log.Panicf("The file is empty")
 	}
 
-	if upReq.fileSize <= upReq.partSize {
+	if upReq.dfi.FileSize <= upReq.partSize {
 		// This is a small file, upload it synchronously.
 		// This ensures that only large chunks are uploaded by the bulk-threads,
 		// improving fairness.
@@ -249,19 +278,19 @@ func (sybx *SyncDbDx) uploadFileData(
 
 	// a large file, with more than a single chunk
 	var fileWg sync.WaitGroup
-	fileEndOfs := upReq.fileSize - 1
+	fileEndOfs := upReq.dfi.FileSize - 1
 	ofs := int64(0)
 	cIndex := 1
 	fileParts := make([]*Chunk, 0)
 	for ofs <= fileEndOfs {
 		chunkEndOfs := MinInt64(ofs + upReq.partSize - 1, fileEndOfs)
 		chunkLen := chunkEndOfs - ofs
-		buf, err := readLocalFileExtent(upReq.localPath, ofs, int(chunkLen))
+		buf, err := readLocalFileExtent(upReq.dfi.LocalPath, ofs, int(chunkLen))
 		if err != nil {
 			return err
 		}
 		chunk := &Chunk{
-			fileId : filId,
+			fileId : fileId,
 			index : cIndex,
 			data : buf,
 			fwg : &fileWg,
@@ -315,8 +344,8 @@ func (sybx *SyncDbDx) createEmptyFileData(
 
 func (sybx *SyncDbDx) uploadFileDataAndWait(
 	client *retryablehttp.Client,
-	fileId string,
-	upReq FileUpdateReq) error {
+	upReq FileUpdateReq,
+	fileId string) error {
 	if sybx.options.Verbose {
 		sybx.log("Upload file-size=%d part-size=%d", upReq.dfi.FileSize, upReq.partSize)
 	}
@@ -342,32 +371,32 @@ func (sybx *SyncDbDx) uploadFileDataAndWait(
 
 // Upload
 func (sybx *SyncDbDx) updateFileData(
-	client retryablehttp.Client,
+	client *retryablehttp.Client,
 	upReq FileUpdateReq) (string, error) {
 
 	// create the file object on the platform.
 	fileId, err := sybx.ops.DxFileNew(
-		ctx, client, sybx.nonce.String(),
+		context.TODO(), client, sybx.nonce.String(),
 		upReq.dfi.ProjId,
 		upReq.dfi.Name,
-		parentDir.ProjFolder)
+		upReq.dfi.ProjFolder)
 	if err != nil {
-		fsys.log("Error in creating file (%s:%s/%s) on dnanexus: %s",
+		sybx.log("Error in creating file (%s:%s/%s) on dnanexus: %s",
 			err.Error())
-		return err
+		return "", err
 	}
 
-	err := sybx.uploadFileDataAndWait(client, upReq, fileId)
+	err = sybx.uploadFileDataAndWait(client, upReq, fileId)
 	if err != nil {
 		// Upload failed. Do not erase the local copy.
 		//
 		sybx.log("Error during upload of file %s: %s",
 			fileId, err.Error())
-		return nil, err
+		return "", err
 	}
 
 	// Update the database with the new ID.
-	sybx.mdb.UpdateInodeFileId(upReq.dfi.inode, fileId)
+	sybx.mdb.UpdateInodeFileId(upReq.dfi.Inode, fileId)
 
 	// Erase the old file-id.
 	if upReq.dfi.Id == "" {
@@ -378,22 +407,22 @@ func (sybx *SyncDbDx) updateFileData(
 
 	// remove the old version
 	var oldFileId []string
-	oldFileId = append(objIds, upReq.dfi.Id)
-	err := sybx.ops.DxRemoveObjects(context.TODO(), client, dfi.ProjId, oldFileId)
+	oldFileId = append(oldFileId, upReq.dfi.Id)
+	err = sybx.ops.DxRemoveObjects(context.TODO(), client, upReq.dfi.ProjId, oldFileId)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	return fildId, nil
+	return fileId, nil
 }
 
-func (sybx *SyncDbDx) updateFileAttributes(client retryablehttp.Client, dfi DirtyFileInfo) error {
+func (sybx *SyncDbDx) updateFileAttributes(client *retryablehttp.Client, dfi DirtyFileInfo) error {
 	// describe the object state on the platform. The properties/tags have
 	// changed.
 	fDesc, err := DxDescribe(context.TODO(), client, &sybx.dxEnv, dfi.Id)
 	if err != nil {
 		sybx.log(err.Error())
-		sybx.log("Failed ot describe file %v", dfi.Id)
-		continue
+		sybx.log("Failed ot describe file %v", dfi)
+		return err
 	}
 
 	// Figure out the symmetric difference between the on-platform properties,
@@ -429,7 +458,10 @@ func (sybx *SyncDbDx) updateFileAttributes(client retryablehttp.Client, dfi Dirt
 			sybx.log("%s symmetric difference between properties %v ^ %v = %v",
 				dfi.Id, dnaxProps, fsProps, opProps)
 		}
-		sybx.ops.DxSetProperties(context.TODO(), client, dfi.ProjId, dfi.Id, opProps)
+		err := sybx.ops.DxSetProperties(context.TODO(), client, dfi.ProjId, dfi.Id, opProps)
+		if err != nil {
+			return err
+		}
 	}
 
 	// figure out the symmetric difference between the old and new tags.
@@ -469,11 +501,18 @@ func (sybx *SyncDbDx) updateFileAttributes(client retryablehttp.Client, dfi Dirt
 	}
 
 	if len(tagsAdded) != 0  {
-		sybx.ops.DxAddTags(context.TODO(), client, dfi.ProjId, dfi.Id, tagsAdded)
+		err := sybx.ops.DxAddTags(context.TODO(), client, dfi.ProjId, dfi.Id, tagsAdded)
+		if err != nil {
+			return err
+		}
 	}
 	if len(tagsRemoved) != 0 {
-		sybx.ops.DxRemoveTags(context.TODO(), client, dfi.ProjId, dfi.Id, tagsRemoved)
+		err := sybx.ops.DxRemoveTags(context.TODO(), client, dfi.ProjId, dfi.Id, tagsRemoved)
+		if err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 func (sybx *SyncDbDx) updateFileWorker() {
@@ -486,23 +525,26 @@ func (sybx *SyncDbDx) updateFileWorker() {
 			sybx.wg.Done()
 			return
 		}
+		if sybx.options.Verbose {
+			sybx.log("updateFile %v", upReq)
+		}
 
 		// note: the file-id may be empty ("") if the file
 		// has just been created on the local machine.
+		var err error
 		crntFileId := upReq.dfi.Id
 		if upReq.dfi.dirtyData {
-			fileId, err := sybx.updateFileData(client, upReq)
+			crntFileId, err = sybx.updateFileData(client, upReq)
 			if err != nil {
 				sybx.log("Error in update-data: %s", err.Error())
 				continue
 			}
-			crntFileId = fileId
 		}
 		if upReq.dfi.dirtyMetadata {
 			if crntFileId == "" {
 				// create an empty file
 				check(upReq.dfi.FileSize == 0)
-				crntFileId, err := sybx.updateFileData(client, upReq)
+				crntFileId, err = sybx.updateFileData(client, upReq)
 				if err != nil {
 					sybx.log("Error when creating a metadata-only file %s",
 						err.Error())
@@ -526,7 +568,7 @@ func (sybx *SyncDbDx) enqueueUpdateFileReq(dfi DirtyFileInfo) error {
 		log.Panicf("project %s not found", dfi.ProjId)
 	}
 
-	partSize, err := sybx.calcPartSize(projDesc.UploadParams, dfi.Size)
+	partSize, err := sybx.calcPartSize(projDesc.UploadParams, dfi.FileSize)
 	if err != nil {
 		sybx.log(`
 There is a problem with the file size, it cannot be uploaded
@@ -543,17 +585,7 @@ to the platform due to part size constraints. Error=%s`,
 	return nil
 }
 
-// query the database, find all the files that have been
-// deleted, and remove them from the platform.
-func (sybx *SyncDbDx) DeleteDeadObjects() error {
-	deadFiles, err := sybx.mdb.DeadObjectsGetAllAndReset()
-	if err != nil {
-		return err
-	}
-	if deadFiles == nil || len(deadFiles) == 0 {
-		return nil
-	}
-
+func (sybx *SyncDbDx) deleteObjects(deadFiles []DeadFile) error {
 	// remove all local data
 	for _, df := range(deadFiles) {
 		if df.Kind != FK_Regular {
@@ -603,55 +635,112 @@ func (sybx *SyncDbDx) DeleteDeadObjects() error {
 		for _,df := range(files) {
 			objIds = append(objIds, df.Id)
 		}
-		sybx.ops.DxRemoveObjects(context.TODO(), httpClient, projId, objIds)
+		err := sybx.ops.DxRemoveObjects(context.TODO(), httpClient, projId, objIds)
+		if err != nil {
+			sybx.log("Error in dx-remove-objects %s", err.Error())
+		}
 	}
 
 	return nil
 }
 
+// Threads that continuously polls for objects to delete, and removes them
+// from the local disk and the platform. These are primarily files that
+// the user removed.
+func (sybx *SyncDbDx) deadObjectsRemover() {
+	for true {
+		deadFiles, ok := <- sybx.deadObjectsQueue
+		if !ok {
+			sybx.wg.Done()
+			return
+		}
+		sybx.deleteObjects(deadFiles)
+	}
+}
+
+// query the database, find all the files that have been
+// deleted, and enqueue them for deletion from the platform.
+func (sybx *SyncDbDx) enqueueDeadObjects() error {
+	deadFiles, err := sybx.mdb.DeadObjectsGetAllAndReset()
+	if err != nil {
+		return err
+	}
+	if deadFiles == nil || len(deadFiles) == 0 {
+		return nil
+	}
+	sybx.deadObjectsQueue <- deadFiles
+	return nil
+}
 
 func (sybx *SyncDbDx) sweep() error {
+	if sybx.options.Verbose {
+		sybx.log("syncing database and platform [")
+	}
+
 	// query the database, find all the files that have been
 	// deleted, and remove them from the platform.
-	sybx.DeleteDeadObjects()
+	if err := sybx.enqueueDeadObjects(); err != nil {
+		return err
+	}
 
 	// find all the dirty files
 	dirtyFiles, err := sybx.mdb.DirtyFilesGetAllAndReset()
 	if err != nil {
 		return err
 	}
+	if sybx.options.Verbose {
+		sybx.log("%d dirty files", len(dirtyFiles))
+	}
+
 	// enqueue them on the "to-upload" list
 	for _, file := range(dirtyFiles) {
 		sybx.enqueueUpdateFileReq(file)
 	}
 
+	if sybx.options.Verbose {
+		sybx.log("]")
+	}
 	return nil
 }
 
 func (sybx *SyncDbDx) periodicSync() {
 	for true {
 		time.Sleep(sweepPeriodicTime)
-		if sybx.options.Verbose {
-			sybx.log("syncing database and platform [")
-		}
-		sybx.mutex.Lock()
-		sybx.sweep()
-		sybx.mutex.Unlock()
 
-		if sybx.options.Verbose {
-			sybx.log("]")
+		sybx.mutex.Lock()
+		if (!sybx.disableSweep) {
+			err := sybx.sweep()
+			if err != nil {
+				sybx.log("Error in sweep: %s", err.Error())
+			}
 		}
+		sybx.mutex.Unlock()
 	}
 }
 
 func (sybx *SyncDbDx) CmdDeleteDeadObjects() error {
 	sybx.mutex.Lock()
 	defer sybx.mutex.Unlock()
-	return sybx.DeleteDeadObjects()
+	return sybx.enqueueDeadObjects()
 }
 
 func (sybx *SyncDbDx) CmdSync() error {
 	sybx.mutex.Lock()
-	defer sybx.mutex.Unlock()
-	return sybx.sweep()
+	if err := sybx.sweep(); err != nil {
+		sybx.mutex.Unlock()
+		return err
+	}
+	sybx.disableSweep = true
+	sybx.mutex.Unlock()
+
+	// now wait for the objects to be created and the data uploaded
+	sybx.stopBackgroundWorkers()
+
+	// start the background work again, now that everything is done
+	sybx.startBackgroundWorkers()
+
+	sybx.mutex.Lock()
+	sybx.disableSweep = false
+	sybx.mutex.Unlock()
+	return nil
 }

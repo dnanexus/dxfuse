@@ -240,6 +240,7 @@ type DirtyFileInfo struct {
 	FileSize      int64
 	LocalPath     string
 	Name          string
+	Directory     string
 	ProjFolder    string
 	ProjId        string
 	Tags          []string

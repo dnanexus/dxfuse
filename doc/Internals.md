@@ -59,7 +59,7 @@ The `namespace` table stores information on the directory structure.
 | parent     | text | the parent folder |
 | name       | text | directory/file name |
 | obj\_type  | int  | directory=1, data-object=2 |
-| inode      | bigint  | local filesystem i-node, cannot change |
+| inode      | bigint | local filesystem i-node, cannot change |
 
 For example, directory `/A/B/C` is represented with the record:
 ```

@@ -3,6 +3,9 @@
 CRNT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 echo "current dir=$CRNT_DIR"
 
+#source $CRNT_DIR/dx_download_compare.sh
+#dx_download_compare
+
 #source $CRNT_DIR/xattr_test.sh
 #xattr_test
 

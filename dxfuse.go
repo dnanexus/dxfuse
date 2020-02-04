@@ -115,7 +115,7 @@ func NewDxfuse(
 	}
 
 	// initialize sync daemon
-	fsys.sybx = NewSyncDbDx(options, dxEnv, projId2Desc, fsys.httpClientPool)
+	fsys.sybx = NewSyncDbDx(options, dxEnv, projId2Desc, fsys.httpClientPool, fsys.mutex)
 
 	// Provide the upload module with a reference to the database.
 	fsys.sybx.mdb = mdb
@@ -641,7 +641,7 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	cnt := atomic.AddUint64(&fsys.tmpFileCounter, 1)
 	localPath := fmt.Sprintf("%s/%d_%s", CreatedFilesDir, cnt, op.Name)
 
-	file, err := fsys.mdb.CreateFile(ctx, oph, &parentDir, fileId, op.Name, op.Mode, localPath)
+	file, err := fsys.mdb.CreateFile(ctx, oph, &parentDir, op.Name, op.Mode, localPath)
 	if err != nil {
 		return err
 	}
@@ -938,17 +938,6 @@ func (fsys *Filesys) Unlink(ctx context.Context, op *fuseops.UnlinkOp) error {
 	case Dir:
 		// can't unlink a directory
 		return fuse.EINVAL
-	}
-	check(fileToRemove.Nlink > 0)
-
-	// remove the file on the platform
-	objectIds := make([]string, 1)
-	objectIds[0] = fileToRemove.Id
-	if err := fsys.ops.DxRemoveObjects(ctx, oph.httpClient, parentDir.ProjId, objectIds); err != nil {
-		fsys.log("Error in removing file (%s:%s/%s) on dnanexus: %s",
-			parentDir.ProjId, parentDir.ProjFolder, op.Name,
-			err.Error())
-		return fsys.translateError(err)
 	}
 
 	if err := fsys.mdb.Unlink(ctx, oph, fileToRemove); err != nil {

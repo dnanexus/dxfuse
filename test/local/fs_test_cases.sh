@@ -7,6 +7,9 @@ dxDirOnProject="mini"
 baseDir=$HOME/dxfuse_test
 mountpoint=${baseDir}/MNT
 
+dxfuseDir=$mountpoint/$projName/$dxDirOnProject
+dxpyDir=${baseDir}/dxCopy/$dxDirOnProject
+
 # Directories created during the test
 writeable_dirs=()
 ######################################################################
@@ -50,7 +53,9 @@ function check_file_write_content {
     echo $content > $write_dir/A.txt
     ls -l $write_dir/A.txt
 
+    echo "synchronizing the filesystem"
     sudo $dxfuse -sync
+
     echo "file is closed"
     dx ls -l $projName:/$target_dir/A.txt
 
