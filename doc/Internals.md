@@ -42,16 +42,6 @@ The `id` will be empty when a file is first created. It will be populated when i
 uploaded to the platform. Every update the id will change. This is because DNAx files are immutable,
 and changing, even a single byte, requires rewriting the entire file, generating a new id.
 
-The `dead_objects` table contains objects that have been deleted. They were removed from the `data_objects`, and are scheduled for deletion on the platform. The idea is to batch together deletions, and avoid upload/delete conflicts.
-
-| field name      | SQL type | description |
-| ---             | ---      | --          |
-| kind            | int      | type of file: regular, symbolic link, other |
-| id              | text     | The DNAx object-id |
-| proj\_id        | text     | A project id for the file |
-| inode           | bigint   | local filesystem i-node, cannot change |
-| inline\_data    | text     | holds the path for a symlink, if it has a local copy, this is the path |
-
 The `namespace` table stores information on the directory structure.
 
 | field name | SQL type | description |

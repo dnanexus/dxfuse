@@ -416,59 +416,59 @@ function fs_test_cases {
     sudo -E $dxfuse -uid $(id -u) -gid $(id -g) $flags $mountpoint dxfuse_test_data dxfuse_test_read_only ArchivedStuff
     sleep 1
 
-#    echo "can't write to read-only project"
-#    write_to_read_only_project
-#
-#    echo "archived files"
-#    archived_files $mountpoint/ArchivedStuff
-#
-#    echo "create directory"
-#    create_dir $mountpoint/$projName/$dxDirOnProject/small  $mountpoint/$projName/$base_dir/T2
+    echo "can't write to read-only project"
+    write_to_read_only_project
+
+    echo "archived files"
+    archived_files $mountpoint/ArchivedStuff
+
+    echo "create directory"
+    create_dir $mountpoint/$projName/$dxDirOnProject/small  $mountpoint/$projName/$base_dir/T2
 
     echo "create/remove directory"
     create_remove_dir "yes" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$base_dir/T3
-#    create_remove_dir "no" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$base_dir/T3
+    create_remove_dir "no" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$base_dir/T3
 
-#    echo "mkdir rmdir"
-#    rmdir_non_empty $mountpoint/$projName/$base_dir/T4
-#    rmdir_not_exist $mountpoint/$projName/$base_dir/T4
-#    mkdir_existing  $mountpoint/$projName/$base_dir/T4
+    echo "mkdir rmdir"
+    rmdir_non_empty $mountpoint/$projName/$base_dir/T4
+    rmdir_not_exist $mountpoint/$projName/$base_dir/T4
+    mkdir_existing  $mountpoint/$projName/$base_dir/T4
 
-#    echo "file create remove"
-#    file_create_existing "$mountpoint/$projName"
-#    file_remove_non_exist "$mountpoint/$projName"
-#
-#    echo "move file I"
-#    move_file $mountpoint/$projName/$expr_dir
-#
-#    echo "move file II"
-#    move_file2 $mountpoint/$projName/$expr_dir
-#
-#    echo "rename directory"
-#    rename_dir $mountpoint/$projName/$expr_dir
-#    rename_dir /tmp
-#    diff -r /tmp/B $mountpoint/$projName/$expr_dir/B
-#    rm -rf /tmp/B $mountpoint/$projName/$expr_dir/B
-#
-#    echo "move directory"
-#    move_dir $mountpoint/$projName/$expr_dir
-#
-#    echo "move a deep directory"
-#    move_dir_deep $mountpoint/$projName/$expr_dir 1
-#    move_dir_deep /tmp 2
-#    cd $HOME
-#
-#    diff /tmp/results_1.txt /tmp/results_2.txt
-#    diff -r $mountpoint/$projName/$expr_dir/D /tmp/D
-#    rm -rf $mountpoint/$projName/$expr_dir/D
-#    rm -rf /tmp/D
-#
-#    echo "checking illegal directory moves"
-#    move_non_existent_dir "$mountpoint/$projName"
-#    move_dir_to_file "$mountpoint/$projName"
-#
-#    echo "directory and file with the same name"
-#    dir_and_file_with_the_same_name $mountpoint/$projName
+    echo "file create remove"
+    file_create_existing "$mountpoint/$projName"
+    file_remove_non_exist "$mountpoint/$projName"
+
+    echo "move file I"
+    move_file $mountpoint/$projName/$expr_dir
+
+    echo "move file II"
+    move_file2 $mountpoint/$projName/$expr_dir
+
+    echo "rename directory"
+    rename_dir $mountpoint/$projName/$expr_dir
+    rename_dir /tmp
+    diff -r /tmp/B $mountpoint/$projName/$expr_dir/B
+    rm -rf /tmp/B $mountpoint/$projName/$expr_dir/B
+
+    echo "move directory"
+    move_dir $mountpoint/$projName/$expr_dir
+
+    echo "move a deep directory"
+    move_dir_deep $mountpoint/$projName/$expr_dir 1
+    move_dir_deep /tmp 2
+    cd $HOME
+
+    diff /tmp/results_1.txt /tmp/results_2.txt
+    diff -r $mountpoint/$projName/$expr_dir/D /tmp/D
+    rm -rf $mountpoint/$projName/$expr_dir/D
+    rm -rf /tmp/D
+
+    echo "checking illegal directory moves"
+    move_non_existent_dir "$mountpoint/$projName"
+    move_dir_to_file "$mountpoint/$projName"
+
+    echo "directory and file with the same name"
+    dir_and_file_with_the_same_name $mountpoint/$projName
 
     teardown
 }

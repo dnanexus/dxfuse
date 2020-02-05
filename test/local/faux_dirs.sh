@@ -128,8 +128,5 @@ function faux_dirs {
     echo "faux dir operations"
     faux_dirs_remove $mountpoint/$projName/$faux_dir
 
-    echo "directory and file with the same name"
-    dir_and_file_with_the_same_name $mountpoint/$projName
-
     teardown
 }

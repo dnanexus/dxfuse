@@ -227,23 +227,6 @@ func (mdb *MetadataDb) init2(txn *sql.Tx) error {
 		return fmt.Errorf("Could not create index on dirty_metdata column in table data_objects")
 	}
 
-	// A table for all the objects that have been removed. They are removed from the platform
-	// in asynchronous fashion, however, it needs to look synchronous from the local point of view.
-	sqlStmt = `
-	CREATE TABLE dead_objects (
-                kind int,
-		id text,
-		proj_id text,
-                inode bigint,
-                inline_data text,
-                PRIMARY KEY (inode)
-	);
-	`
-	if _, err := txn.Exec(sqlStmt); err != nil {
-		mdb.log(err.Error())
-		return fmt.Errorf("Could not create table dead_objects")
-	}
-
 	// Create a table for the namespace relationships. All members of a directory
 	// are listed here under their parent. Linking all the tables are the inode numbers.
 	//
@@ -1328,17 +1311,6 @@ func (mdb *MetadataDb) Unlink(ctx context.Context, oph *OpHandle, file File) err
 			file.Inode)
 		return oph.RecordError(err)
 	}
-
-	// add the file to the dead-object table
-	sqlStmt = fmt.Sprintf(`
- 		        INSERT INTO dead_objects
-			VALUES ('%d', '%s', '%s', '%d', '%s');`,
-		file.Kind, file.Id, file.ProjId, file.Inode, file.InlineData)
-	if _, err := oph.txn.Exec(sqlStmt); err != nil {
-		mdb.log(err.Error())
-		mdb.log("Error inserting into dead-objects table")
-		return oph.RecordError(err)
-	}
 	return nil
 }
 
@@ -1577,43 +1549,6 @@ func (mdb *MetadataDb) UpdateFileTagsAndProperties(
 	}
 	return nil
 }
-
-// =================
-// handling the dead-objects table
-
-// Get a list of all the data-objects to be deleted, and reset the table
-func (mdb *MetadataDb) DeadObjectsGetAllAndReset() ([]DeadFile, error) {
-	oph := mdb.opOpen()
-	defer mdb.opClose(oph)
-
-	sqlStmt := `
- 	        SELECT kind, id, proj_id, inode, inline_data
-                FROM dead_objects;`
-
-	rows, err := oph.txn.Query(sqlStmt)
-	if err != nil {
-		mdb.log("DeadObjectsGetAllAndReset err=%s", err.Error())
-		return nil, err
-	}
-
-	var files []DeadFile
-	for rows.Next() {
-		var df DeadFile
-		rows.Scan(&df.Kind, &df.Id, &df.ProjId, &df.Inode, &df.InlineData)
-		files = append(files, df)
-	}
-	rows.Close()
-
-	// remove all rows from the table
-	sqlStmt = `DELETE FROM dead_objects;`
-	if _, err := oph.txn.Exec(sqlStmt); err != nil {
-		mdb.log(err.Error())
-		mdb.log("DeadObjectsGetAllAndReset error executing transaction")
-	}
-
-	return files, nil
-}
-
 
 // Get a list of all the dirty files, and reset the table. The files can be modified again,
 // which will set the flag to true.

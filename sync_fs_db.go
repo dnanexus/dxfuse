@@ -58,17 +58,12 @@ type SyncDbDx struct {
 	mdb                *MetadataDb
 	ops                *DxOps
 	nonce              *Nonce
-
-	// a pool of http clients, for short requests, such as file creation,
-	// or file describe.
-	httpClientPool      chan(*retryablehttp.Client)
 }
 
 func NewSyncDbDx(
 	options Options,
 	dxEnv dxda.DXEnvironment,
 	projId2Desc map[string]DxDescribePrj,
-	httpClientPool chan(*retryablehttp.Client),
 	mdb *MetadataDb,
 	mutex *sync.Mutex) *SyncDbDx {
 	// the chunk queue size should be at least the size of the thread
@@ -90,7 +85,6 @@ func NewSyncDbDx(
 		mdb : mdb,
 		ops : NewDxOps(dxEnv, options),
 		nonce : NewNonce(),
-		httpClientPool : httpClientPool,
 	}
 
 	// bunch of background threads to upload bulk file data.
@@ -395,6 +389,9 @@ func (sybx *SyncDbDx) updateFileData(
 	}
 
 	// Update the database with the new ID.
+	//
+	// TODO: the file may have been deleted while it was being uploaded.
+	// this will cause a failure here.
 	sybx.mdb.UpdateInodeFileId(upReq.dfi.Inode, fileId)
 
 	// Erase the old file-id.
@@ -409,6 +406,8 @@ func (sybx *SyncDbDx) updateFileData(
 	oldFileId = append(oldFileId, upReq.dfi.Id)
 	err = sybx.ops.DxRemoveObjects(context.TODO(), client, upReq.dfi.ProjId, oldFileId)
 	if err != nil {
+		// TODO: if the file has already been removed on the platform, then
+		// we will get an error here.
 		return "", err
 	}
 	return fileId, nil
@@ -584,92 +583,9 @@ to the platform due to part size constraints. Error=%s`,
 	return nil
 }
 
-func (sybx *SyncDbDx) deleteObjects(deadFiles []DeadFile) error {
-	// remove all local data
-	for _, df := range(deadFiles) {
-		if df.Kind != FK_Regular {
-			continue
-		}
-
-		// remove the file data so it does not take up space on disk.
-		//
-		// We know there isn't an ongoing upload, because we are locking
-		// the sync-fs-db state here.
-		localPath := df.InlineData
-		if sybx.options.Verbose {
-			sybx.log("Removing file %v local-path=%s", df, localPath)
-		}
-		if err := os.Remove(localPath); err != nil {
-			sybx.log("Error removing file %v local-path=%s", df, localPath)
-			sybx.log(err.Error())
-		}
-	}
-
-	// delete all files from the platform
-	httpClient := <- sybx.httpClientPool
-	defer func() {
-		sybx.httpClientPool <- httpClient
-	} ()
-
-	// Split into a per-project list
-	projects := make(map[string][]DeadFile)
-	for _, df := range(deadFiles) {
-		dfa, ok := projects[df.ProjId]
-		if !ok {
-			dfa := make([]DeadFile, 1)
-			dfa[0] = df
-			projects[df.ProjId] = dfa
-		} else {
-			dfa = append(dfa, df)
-			projects[df.ProjId] = dfa
-		}
-
-		if sybx.options.Verbose {
-			sybx.log("split into per project lists %v", projects)
-		}
-	}
-
-	for projId, files := range(projects) {
-		var objIds []string
-		for _,df := range(files) {
-			objIds = append(objIds, df.Id)
-		}
-		err := sybx.ops.DxRemoveObjects(context.TODO(), httpClient, projId, objIds)
-		if err != nil {
-			sybx.log("Error in dx-remove-objects %s", err.Error())
-		}
-	}
-
-	return nil
-}
-
-// query the database, find all the files that have been deleted, and
-// removes them from the local disk and the platform. These are
-// primarily files that the user removed.
-func (sybx *SyncDbDx) deleteDeadObjects() error {
-	deadFiles, err := sybx.mdb.DeadObjectsGetAllAndReset()
-	if err != nil {
-		return err
-	}
-	if deadFiles == nil || len(deadFiles) == 0 {
-		if sybx.options.Verbose {
-			sybx.log("found no dead objects to remove")
-		}
-		return nil
-	}
-
-	return sybx.deleteObjects(deadFiles)
-}
-
 func (sybx *SyncDbDx) sweep() error {
 	if sybx.options.Verbose {
 		sybx.log("syncing database and platform [")
-	}
-
-	// query the database, find all the files that have been
-	// deleted, and remove them from the platform.
-	if err := sybx.deleteDeadObjects(); err != nil {
-		return err
 	}
 
 	// find all the dirty files
@@ -704,14 +620,6 @@ func (sybx *SyncDbDx) periodicSync() {
 		}
 		sybx.mutex.Unlock()
 	}
-}
-
-func (sybx *SyncDbDx) CmdDeleteDeadObjects(lock bool) error {
-	if lock {
-		sybx.mutex.Lock()
-		defer sybx.mutex.Unlock()
-	}
-	return sybx.deleteDeadObjects()
 }
 
 func (sybx *SyncDbDx) CmdSync() error {

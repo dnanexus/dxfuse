@@ -30,11 +30,46 @@ trap teardown EXIT
 
 ######################################################################
 
-function check_bat {
+# wait for the file to achieve the closed state
+function close_file {
+    local path=$1
+    while true; do
+        file_state=$(dx describe $path --json | grep state | awk '{ gsub("[,\"]", "", $2); print $2 }')
+        if [[ "$file_state" == "closed" ]]; then
+            break
+        fi
+        sleep 1
+    done
+}
+
+function setup {
     local base_dir=$1
 
+    # bat.txt
+    local f=$projName:/$base_dir/bat.txt
+    echo "flying mammal" | dx upload --destination $f -
+    dx set_properties $f fly=yes family=mammal eat=omnivore
+    close_file $f
+
+    # whale.txt
+    local f=$projName:/$base_dir/whale.txt
+    echo "The largest mammal on earth" | dx upload --destination $f -
+    close_file $f
+
+    # Mountains.txt
+    local f=$projName:/$base_dir/Mountains.txt
+    echo "K2, Kilimanjaro, Everest, Mckinly" | dx upload --destination $f -
+    close_file $f
+
+    dx ls -l $projName:/$base_dir
+}
+
+function check_bat {
+    local base_dir=$1
+    local test_dir=$mountpoint/$projName/$base_dir
+
     # Get a list of all the attributes
-    local bat_all_attrs=$(xattr $base_dir/bat.txt | sort | tr '\n' ' ')
+    local bat_all_attrs=$(xattr $test_dir/bat.txt | sort | tr '\n' ' ')
     local bat_all_expected="base.archivalState base.id base.state prop.eat prop.family prop.fly "
     if [[ $bat_all_attrs != $bat_all_expected ]]; then
         echo "bat attributes are incorrect"
@@ -43,7 +78,7 @@ function check_bat {
         exit 1
     fi
 
-    local bat_family=$(xattr -p prop.family $base_dir/bat.txt)
+    local bat_family=$(xattr -p prop.family $test_dir/bat.txt)
     local bat_family_expected="mammal"
     if [[ $bat_family != $bat_family_expected ]]; then
         echo "bat family is wrong"
@@ -53,14 +88,15 @@ function check_bat {
     fi
 
 
-    xattr -w prop.family carnivore $base_dir/bat.txt
-    xattr -w prop.family mammal $base_dir/bat.txt
+    xattr -w prop.family carnivore $test_dir/bat.txt
+    xattr -w prop.family mammal $test_dir/bat.txt
 }
 
 function check_whale {
     local base_dir=$1
+    local test_dir=$mountpoint/$projName/$base_dir
 
-    local whale_all_attrs=$(xattr $base_dir/whale.txt | sort | tr '\n' ' ')
+    local whale_all_attrs=$(xattr $test_dir/whale.txt | sort | tr '\n' ' ')
     local whale_all_expected="base.archivalState base.id base.state "
     if [[ $whale_all_attrs != $whale_all_expected ]]; then
        echo "whale attributes are incorrect"
@@ -72,7 +108,9 @@ function check_whale {
 
 function check_new {
     local base_dir=$1
-    local f=$base_dir/Mountains.txt
+    local test_dir=$mountpoint/$projName/$base_dir
+    local f=$test_dir/Mountains.txt
+    local dnaxF=$projName:/$base_dir/Mountains.txt
 
     xattr -w prop.family geography $f
     xattr -w tag.high X $f
@@ -95,6 +133,29 @@ function check_new {
         exit 1
     fi
 
+    echo "synchronizing filesystem"
+    $dxfuse -sync
+
+    props=$(dx describe $dnaxF --json | jq -cMS .properties | tr '[]' ' ')
+    echo "props on platform: $props"
+    local props_expected='{"family":"geography"}'
+    if [[ $props != $props_expected ]]; then
+        echo "$f properties mismatch"
+        echo "   got:        $props"
+        echo "   expecting:  $props_expected"
+        exit 1
+    fi
+
+    tags=$(dx describe $dnaxF --json | jq -cMS .tags | tr '[]' ' ')
+    echo "tags on platform: $tags"
+    local tags_expected=' "high" '
+    if [[ $tags != $tags_expected ]]; then
+        echo "$f tags mismatch"
+        echo "   got:        $tags"
+        echo "   expecting:  $tags_expected"
+        exit 1
+    fi
+
     xattr -d prop.family $f
     xattr -d tag.high $f
     xattr  $f
@@ -109,22 +170,45 @@ function check_new {
     fi
 }
 
+
 function xattr_test {
+    # Get all the DX environment variables, so that dxfuse can use them
+    echo "loading the dx environment"
+
+    # local machine
+    rm -f ENV
+    dx env --bash > ENV
+    source ENV >& /dev/null
+    rm -f ENV
+
+    # clean and make fresh directories
     mkdir -p $mountpoint
 
-    sudo -E $dxfuse -verbose 2 -uid $(id -u) -gid $(id -g) $mountpoint $projName
+    # generate random alphanumeric strings
+    base_dir=$(cat /dev/urandom | env LC_CTYPE=C LC_ALL=C tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+    base_dir="base_$base_dir"
+    writeable_dirs=($base_dir)
+    for d in ${writeable_dirs[@]}; do
+        dx rm -r $projName:/$d >& /dev/null || true
+    done
+    dx mkdir $projName:/$base_dir
 
-    # This seems to be needed on MacOS
+    setup $base_dir
+
+    # Start the dxfuse daemon in the background, and wait for it to initilize.
+    echo "Mounting dxfuse"
+    flags=""
+    if [[ $verbose != "" ]]; then
+        flags="-verbose 2"
+    fi
+    sudo -E $dxfuse -uid $(id -u) -gid $(id -g) $flags $mountpoint $projName
     sleep 1
 
-    local base_dir=$mountpoint/$projName/xattrs
-    tree $base_dir
+    tree $mountpoint/$projName/$base_dir
 
     check_bat $base_dir
     check_whale $base_dir
     check_new $base_dir
-
-    sudo $dxfuse -sync
 
     teardown
 }
