@@ -51,6 +51,7 @@ type DxDescribePrj struct {
 	CtimeSeconds   int64
 	MtimeSeconds   int64
 	UploadParams   FileUploadParameters
+	Level          int // one of VIEW, UPLOAD, CONTRIBUTE, ADMINISTER
 }
 
 // a DNAx directory. It holds files and sub-directories.
@@ -319,6 +320,19 @@ type ReplyDescribeProject struct {
 	CreatedMillisec  int64 `json:"created"`
 	ModifiedMillisec int64 `json:"modified"`
 	UploadParams     FileUploadParameters  `json:"fileUploadParameters"`
+	Level            string `json:"level"`
+}
+
+func projectPermissionsToInt(perm string) int {
+	switch perm {
+	case "VIEW": return PERM_VIEW
+	case "UPLOAD": return PERM_UPLOAD
+	case "CONTRIBUTE": return PERM_CONTRIBUTE
+	case "ADMINISTER": return PERM_ADMINISTER
+	}
+
+	log.Panicf("Unknown project permission %s", perm)
+	return 0
 }
 
 func DxDescribeProject(
@@ -337,6 +351,7 @@ func DxDescribeProject(
 		"created" : true,
 		"modified" : true,
 		"fileUploadParameters" : true,
+		"level" : true,
 	}
 	var payload []byte
 	payload, err := json.Marshal(request)
@@ -355,7 +370,7 @@ func DxDescribeProject(
 		return nil, err
 	}
 
-	prj := DxDescribePrj {
+	prj := DxDescribePrj{
 		Id :      reply.Id,
 		Name :    reply.Name,
 		Region :  reply.Region,
@@ -364,6 +379,7 @@ func DxDescribeProject(
 		CtimeSeconds : reply.CreatedMillisec / 1000,
 		MtimeSeconds : reply.ModifiedMillisec/ 1000,
 		UploadParams : reply.UploadParams,
+		Level :        projectPermissionsToInt(reply.Level),
 	}
 	return &prj, nil
 }

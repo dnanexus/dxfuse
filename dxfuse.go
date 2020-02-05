@@ -84,12 +84,12 @@ func NewDxfuse(
 		return nil, err
 	}
 
-	oph := fsys.OpOpen()
+	oph := fsys.opOpen()
 	if err := fsys.mdb.PopulateRoot(context.TODO(), oph, manifest); err != nil {
-		fsys.OpClose(oph)
+		fsys.opClose(oph)
 		return nil, err
 	}
-	fsys.OpClose(oph)
+	fsys.opClose(oph)
 
 	fsys.pgs = NewPrefetchGlobalState(options.VerboseLevel, dxEnv)
 
@@ -113,6 +113,7 @@ func NewDxfuse(
 		}
 		projId2Desc[pDesc.Id] = *pDesc
 	}
+	fsys.projId2Desc = projId2Desc
 
 	// initialize sync daemon
 	fsys.sybx = NewSyncDbDx(options, dxEnv, projId2Desc, fsys.httpClientPool, mdb, fsys.mutex)
@@ -158,7 +159,13 @@ func (fsys *Filesys) Shutdown() {
 	}
 }
 
-func (fsys *Filesys) OpOpen() *OpHandle {
+// check if a user has sufficient permissions to read/write a project
+func (fsys *Filesys) checkProjectPermissions(projId string, requiredPerm int) bool {
+	pDesc := fsys.projId2Desc[projId]
+	return pDesc.Level >= requiredPerm
+}
+
+func (fsys *Filesys) opOpen() *OpHandle {
 	txn, err := fsys.mdb.BeginTxn()
 	if err != nil {
 		log.Panic("Could not open transaction")
@@ -172,7 +179,7 @@ func (fsys *Filesys) OpOpen() *OpHandle {
 	}
 }
 
-func (fsys *Filesys) OpClose(oph *OpHandle) {
+func (fsys *Filesys) opClose(oph *OpHandle) {
 	fsys.httpClientPool <- oph.httpClient
 
 	if oph.err == nil {
@@ -243,8 +250,8 @@ func (fsys *Filesys) calcExpirationTime(a fuseops.InodeAttributes) time.Time {
 func (fsys *Filesys) LookUpInode(ctx context.Context, op *fuseops.LookUpInodeOp) error {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
-	oph := fsys.OpOpen()
-	defer fsys.OpClose(oph)
+	oph := fsys.opOpen()
+	defer fsys.opClose(oph)
 
 	parentDir, ok, err := fsys.mdb.LookupDirByInode(ctx, oph, int64(op.Parent))
 	if err != nil {
@@ -281,8 +288,8 @@ func (fsys *Filesys) LookUpInode(ctx context.Context, op *fuseops.LookUpInodeOp)
 func (fsys *Filesys) GetInodeAttributes(ctx context.Context, op *fuseops.GetInodeAttributesOp) error {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
-	oph := fsys.OpOpen()
-	defer fsys.OpClose(oph)
+	oph := fsys.opOpen()
+	defer fsys.opClose(oph)
 
 	// Grab the inode.
 	node, ok, err := fsys.mdb.LookupByInode(ctx, oph, int64(op.Inode))
@@ -309,8 +316,8 @@ func (fsys *Filesys) GetInodeAttributes(ctx context.Context, op *fuseops.GetInod
 func (fsys *Filesys) SetInodeAttributes(ctx context.Context, op *fuseops.SetInodeAttributesOp) error {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
-	oph := fsys.OpOpen()
-	defer fsys.OpClose(oph)
+	oph := fsys.opOpen()
+	defer fsys.opClose(oph)
 
 	// Grab the inode.
 	node, ok, err := fsys.mdb.LookupByInode(ctx, oph, int64(op.Inode))
@@ -331,6 +338,9 @@ func (fsys *Filesys) SetInodeAttributes(ctx context.Context, op *fuseops.SetInod
 		file = node.(File)
 	case Dir:
 		// can't modify directory attributes
+		return syscall.EPERM
+	}
+	if !fsys.checkProjectPermissions(file.ProjId, PERM_VIEW) {
 		return syscall.EPERM
 	}
 
@@ -422,8 +432,8 @@ func (fsys *Filesys) ForgetInode(ctx context.Context, op *fuseops.ForgetInodeOp)
 func (fsys *Filesys) MkDir(ctx context.Context, op *fuseops.MkDirOp) error {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
-	oph := fsys.OpOpen()
-	defer fsys.OpClose(oph)
+	oph := fsys.opOpen()
+	defer fsys.opClose(oph)
 
 	if fsys.options.Verbose {
 		fsys.log("CreateDir(%s)", op.Name)
@@ -450,6 +460,10 @@ func (fsys *Filesys) MkDir(ctx context.Context, op *fuseops.MkDirOp) error {
 		// The directory already exists
 		return fuse.EEXIST
 	}
+	if !fsys.checkProjectPermissions(parentDir.ProjId, PERM_CONTRIBUTE) {
+		return syscall.EPERM
+	}
+
 
 	// The mode must be 777 for fuse to work properly
 	// We -ignore- the mode set by the user.
@@ -506,8 +520,8 @@ func (fsys *Filesys) MkDir(ctx context.Context, op *fuseops.MkDirOp) error {
 func (fsys *Filesys) RmDir(ctx context.Context, op *fuseops.RmDirOp) error {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
-	oph := fsys.OpOpen()
-	defer fsys.OpClose(oph)
+	oph := fsys.opOpen()
+	defer fsys.opClose(oph)
 
 	if fsys.options.Verbose {
 		fsys.log("Remove Dir(%s)", op.Name)
@@ -533,6 +547,9 @@ func (fsys *Filesys) RmDir(ctx context.Context, op *fuseops.RmDirOp) error {
 	if !ok {
 		// The directory does not exist
 		return fuse.ENOENT
+	}
+	if !fsys.checkProjectPermissions(parentDir.ProjId, PERM_CONTRIBUTE) {
+		return syscall.EPERM
 	}
 
 	var childDir Dir
@@ -599,8 +616,8 @@ func (fsys *Filesys) insertIntoDirHandleTable(dh *DirHandle) fuseops.HandleID {
 func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) error {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
-	oph := fsys.OpOpen()
-	defer fsys.OpClose(oph)
+	oph := fsys.opOpen()
+	defer fsys.opClose(oph)
 
 	if fsys.options.Verbose {
 		fsys.log("CreateFile(%s)", op.Name)
@@ -628,6 +645,9 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	if ok {
 		// The file already exists
 		return fuse.EEXIST
+	}
+	if !fsys.checkProjectPermissions(parentDir.ProjId, PERM_UPLOAD) {
+		return syscall.EPERM
 	}
 
 	// we now know that the parent directory exists, and the file
@@ -797,8 +817,8 @@ func (fsys *Filesys) renameDir(
 func (fsys *Filesys) Rename(ctx context.Context, op *fuseops.RenameOp) error {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
-	oph := fsys.OpOpen()
-	defer fsys.OpClose(oph)
+	oph := fsys.opOpen()
+	defer fsys.opClose(oph)
 
 	if fsys.options.Verbose {
 		fsys.log("Rename (inode=%d name=%s) -> (inode=%d, name=%s)",
@@ -852,6 +872,9 @@ a rename. You will need to issue a separate remove operation prior to rename.
 `)
 		return syscall.EPERM
 	}
+	if !fsys.checkProjectPermissions(oldParentDir.ProjId, PERM_CONTRIBUTE) {
+		return syscall.EPERM
+	}
 
 	oldDir := filepath.Clean(oldParentDir.FullPath + "/" + op.OldName)
 	if oldDir == "/" {
@@ -901,8 +924,8 @@ a rename. You will need to issue a separate remove operation prior to rename.
 func (fsys *Filesys) Unlink(ctx context.Context, op *fuseops.UnlinkOp) error {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
-	oph := fsys.OpOpen()
-	defer fsys.OpClose(oph)
+	oph := fsys.opOpen()
+	defer fsys.opClose(oph)
 
 	if fsys.options.Verbose {
 		fsys.log("Unlink(%s)", op.Name)
@@ -926,6 +949,9 @@ func (fsys *Filesys) Unlink(ctx context.Context, op *fuseops.UnlinkOp) error {
 	if !ok {
 		// The file does not exist
 		return fuse.ENOENT
+	}
+	if !fsys.checkProjectPermissions(parentDir.ProjId, PERM_CONTRIBUTE) {
+		return syscall.EPERM
 	}
 
 	var fileToRemove File
@@ -1024,8 +1050,8 @@ func (fsys *Filesys) readEntireDir(ctx context.Context, oph *OpHandle, dir Dir) 
 func (fsys *Filesys) OpenDir(ctx context.Context, op *fuseops.OpenDirOp) error {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
-	oph := fsys.OpOpen()
-	defer fsys.OpClose(oph)
+	oph := fsys.opOpen()
+	defer fsys.opClose(oph)
 
 	// the parent is supposed to be a directory
 	dir, ok, err := fsys.mdb.LookupDirByInode(ctx, oph, int64(op.Inode))
@@ -1143,8 +1169,8 @@ func (fsys *Filesys) openRegularFile(ctx context.Context, oph *OpHandle, op *fus
 func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
-	oph := fsys.OpOpen()
-	defer fsys.OpClose(oph)
+	oph := fsys.opOpen()
+	defer fsys.opClose(oph)
 
 	if fsys.options.Verbose {
 		fsys.log("OpenFile inode=%d", op.Inode)
@@ -1410,8 +1436,8 @@ func (fsys *Filesys) SyncFile(ctx context.Context, op *fuseops.SyncFileOp) error
 func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseFileHandleOp) error {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
-	oph := fsys.OpOpen()
-	defer fsys.OpClose(oph)
+	oph := fsys.opOpen()
+	defer fsys.opClose(oph)
 
 	fh, ok := fsys.fhTable[op.Handle]
 	if !ok {
@@ -1520,8 +1546,8 @@ func (fsys *Filesys) xattrParseName(name string) (string, string, error) {
 func (fsys *Filesys) RemoveXattr(ctx context.Context, op *fuseops.RemoveXattrOp) error {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
-	oph := fsys.OpOpen()
-	defer fsys.OpClose(oph)
+	oph := fsys.opOpen()
+	defer fsys.opClose(oph)
 
 	if fsys.options.Verbose {
 		fsys.log("RemoveXattr %d", op.Inode)
@@ -1607,8 +1633,8 @@ func (fsys *Filesys) getXattrFill(op *fuseops.GetXattrOp, val_str string) error 
 func (fsys *Filesys) GetXattr(ctx context.Context, op *fuseops.GetXattrOp) error {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
-	oph := fsys.OpOpen()
-	defer fsys.OpClose(oph)
+	oph := fsys.opOpen()
+	defer fsys.opClose(oph)
 
 	if fsys.options.Verbose {
 		fsys.log("GetXattr %d", op.Inode)
@@ -1668,8 +1694,8 @@ func (fsys *Filesys) GetXattr(ctx context.Context, op *fuseops.GetXattrOp) error
 func (fsys *Filesys) ListXattr(ctx context.Context, op *fuseops.ListXattrOp) error {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
-	oph := fsys.OpOpen()
-	defer fsys.OpClose(oph)
+	oph := fsys.opOpen()
+	defer fsys.opClose(oph)
 
 	if fsys.options.Verbose {
 		fsys.log("ListXattr %d", op.Inode)
@@ -1719,8 +1745,8 @@ func (fsys *Filesys) ListXattr(ctx context.Context, op *fuseops.ListXattrOp) err
 func (fsys *Filesys) SetXattr(ctx context.Context, op *fuseops.SetXattrOp) error {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
-	oph := fsys.OpOpen()
-	defer fsys.OpClose(oph)
+	oph := fsys.opOpen()
+	defer fsys.opClose(oph)
 
 	if fsys.options.Verbose {
 		fsys.log("SetXattr %d", op.Inode)

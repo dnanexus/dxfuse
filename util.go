@@ -43,6 +43,14 @@ const (
 	fileReadWriteMode = 0644
 )
 
+const (
+	// Permissions
+	PERM_VIEW = 1
+	PERM_UPLOAD = 2
+	PERM_CONTRIBUTE = 3
+	PERM_ADMINISTER = 4
+)
+
 // A URL generated with the /file-xxxx/download API call, that is
 // used to download file ranges.
 type DxDownloadURL struct {
@@ -95,6 +103,9 @@ type Filesys struct {
 
 	// A way to send external commands to the filesystem
 	cmdSrv *CmdServer
+
+	// description for each mounted project
+	projId2Desc map[string]DxDescribePrj
 
 	// all open files
 	fhCounter uint64
