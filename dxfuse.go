@@ -153,8 +153,9 @@ func (fsys *Filesys) Shutdown() {
 	// stop the running threads in the prefetch module
 	fsys.pgs.Shutdown()
 
-	// complete pending uploads
-	if !fsys.options.ReadOnly {
+	// Stop the synchronization daemon. Do not complete
+	// outstanding operations.
+	if fsys.sybx != nil {
 		fsys.sybx.Shutdown()
 	}
 }
@@ -228,7 +229,7 @@ func (fsys *Filesys) translateError(err error) error {
 }
 
 func (fsys *Filesys) StatFS(ctx context.Context, op *fuseops.StatFSOp) error {
-	return nil
+	return fuse.ENOSYS
 }
 
 func (fsys *Filesys) calcExpirationTime(a fuseops.InodeAttributes) time.Time {
@@ -524,7 +525,7 @@ func (fsys *Filesys) RmDir(ctx context.Context, op *fuseops.RmDirOp) error {
 	defer fsys.opClose(oph)
 
 	if fsys.options.Verbose {
-		fsys.log("Remove Dir(%s)", op.Name)
+		fsys.log("RemoveDir(%s)", op.Name)
 	}
 
 	// the parent is supposed to be a directory
@@ -551,6 +552,18 @@ func (fsys *Filesys) RmDir(ctx context.Context, op *fuseops.RmDirOp) error {
 	if !fsys.checkProjectPermissions(parentDir.ProjId, PERM_CONTRIBUTE) {
 		return syscall.EPERM
 	}
+	// Erase all objects queued for deletion from the platform.
+	//
+	// This avoid the following race condition:
+	//  - Directory A has file B.txt (A/B.txt).
+	//  - The user removes B.txt, and then A.
+	//    rm B.txt
+	//    rmdir A
+	//  - The removal of B.txt is delayed, on not propagated to the platform.
+	//    Because B.txt is still on the platform, we get an error when removing A,
+	//    because it is not empty.
+	//
+	fsys.sybx.CmdDeleteDeadObjects(false)
 
 	var childDir Dir
 	switch childNode.(type) {

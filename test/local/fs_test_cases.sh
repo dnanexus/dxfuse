@@ -427,12 +427,12 @@ function fs_test_cases {
 
     echo "create/remove directory"
     create_remove_dir "yes" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$base_dir/T3
-    create_remove_dir "no" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$base_dir/T3
+#    create_remove_dir "no" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$base_dir/T3
 
-    echo "mkdir rmdir"
-    rmdir_non_empty $mountpoint/$projName/$base_dir/T4
-    rmdir_not_exist $mountpoint/$projName/$base_dir/T4
-    mkdir_existing  $mountpoint/$projName/$base_dir/T4
+#    echo "mkdir rmdir"
+#    rmdir_non_empty $mountpoint/$projName/$base_dir/T4
+#    rmdir_not_exist $mountpoint/$projName/$base_dir/T4
+#    mkdir_existing  $mountpoint/$projName/$base_dir/T4
 
 #    echo "file create remove"
 #    file_create_existing "$mountpoint/$projName"

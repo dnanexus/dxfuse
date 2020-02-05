@@ -52,7 +52,6 @@ type SyncDbDx struct {
 	projId2Desc         map[string]DxDescribePrj
 	fileUpdateQueue     chan FileUpdateReq
 	chunkQueue          chan *Chunk
-	deadObjectsQueue    chan []DeadFile
 	enableSweep         bool
 	wg                  sync.WaitGroup
 	mutex              *sync.Mutex
@@ -118,24 +117,17 @@ func (sybx *SyncDbDx) log(a string, args ...interface{}) {
 
 func (sybx *SyncDbDx) startBackgroundWorkers() {
 	sybx.fileUpdateQueue = make(chan FileUpdateReq)
-	sybx.deadObjectsQueue = make(chan []DeadFile)
 
 	// Create a bunch of threads to update files and metadata
 	for i := 0; i < numFileThreads; i++ {
 		sybx.wg.Add(1)
 		go sybx.updateFileWorker()
 	}
-
-	sybx.wg.Add(1)
-	go sybx.deadObjectsRemover()
 }
 
 func (sybx *SyncDbDx) stopBackgroundWorkers() {
 	// signal all upload and modification threads to stop
 	close(sybx.fileUpdateQueue)
-
-	// stop also the object-removal thread
-	close(sybx.deadObjectsQueue)
 
 	// Note: we don't close the chunkQeue
 
@@ -143,7 +135,6 @@ func (sybx *SyncDbDx) stopBackgroundWorkers() {
 	sybx.wg.Wait()
 
 	sybx.fileUpdateQueue = nil
-	sybx.deadObjectsQueue = nil
 }
 
 func (sybx *SyncDbDx) Shutdown() {
@@ -652,23 +643,10 @@ func (sybx *SyncDbDx) deleteObjects(deadFiles []DeadFile) error {
 	return nil
 }
 
-// Threads that continuously polls for objects to delete, and removes them
-// from the local disk and the platform. These are primarily files that
-// the user removed.
-func (sybx *SyncDbDx) deadObjectsRemover() {
-	for true {
-		deadFiles, ok := <- sybx.deadObjectsQueue
-		if !ok {
-			sybx.wg.Done()
-			return
-		}
-		sybx.deleteObjects(deadFiles)
-	}
-}
-
-// query the database, find all the files that have been
-// deleted, and enqueue them for deletion from the platform.
-func (sybx *SyncDbDx) enqueueDeadObjects() error {
+// query the database, find all the files that have been deleted, and
+// removes them from the local disk and the platform. These are
+// primarily files that the user removed.
+func (sybx *SyncDbDx) deleteDeadObjects() error {
 	deadFiles, err := sybx.mdb.DeadObjectsGetAllAndReset()
 	if err != nil {
 		return err
@@ -679,8 +657,8 @@ func (sybx *SyncDbDx) enqueueDeadObjects() error {
 		}
 		return nil
 	}
-	sybx.deadObjectsQueue <- deadFiles
-	return nil
+
+	return sybx.deleteObjects(deadFiles)
 }
 
 func (sybx *SyncDbDx) sweep() error {
@@ -690,7 +668,7 @@ func (sybx *SyncDbDx) sweep() error {
 
 	// query the database, find all the files that have been
 	// deleted, and remove them from the platform.
-	if err := sybx.enqueueDeadObjects(); err != nil {
+	if err := sybx.deleteDeadObjects(); err != nil {
 		return err
 	}
 
@@ -728,10 +706,12 @@ func (sybx *SyncDbDx) periodicSync() {
 	}
 }
 
-func (sybx *SyncDbDx) CmdDeleteDeadObjects() error {
-	sybx.mutex.Lock()
-	defer sybx.mutex.Unlock()
-	return sybx.enqueueDeadObjects()
+func (sybx *SyncDbDx) CmdDeleteDeadObjects(lock bool) error {
+	if lock {
+		sybx.mutex.Lock()
+		defer sybx.mutex.Unlock()
+	}
+	return sybx.deleteDeadObjects()
 }
 
 func (sybx *SyncDbDx) CmdSync() error {
