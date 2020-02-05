@@ -7,9 +7,6 @@ dxDirOnProject="mini"
 baseDir=$HOME/dxfuse_test
 mountpoint=${baseDir}/MNT
 
-dxfuseDir=$mountpoint/$projName/$dxDirOnProject
-dxpyDir=${baseDir}/dxCopy/$dxDirOnProject
-
 # Directories created during the test
 writeable_dirs=()
 ######################################################################
@@ -35,7 +32,7 @@ function teardown {
 }
 
 # trap any errors and cleanup
-trap teardown EXIT
+#trap teardown EXIT
 
 ######################################################################
 
@@ -102,6 +99,9 @@ function write_files {
 
     echo "copying large files"
     cp $src_dir/*  $write_dir/
+
+    echo "synchronizing the filesystem"
+    sudo $dxfuse -sync
 
     # compare resulting files
     echo "comparing files"
@@ -440,57 +440,6 @@ function move_dir_to_file {
     rm -f Y.txt
 }
 
-function faux_dirs_move {
-    local root_dir=$1
-    cd $root_dir
-
-    tree $root_dir
-
-    # cannot move faux directories
-    set +e
-    (mv $root_dir/1 $root_dir/2 ) >& /dev/null
-    rc=$?
-    if [[ $rc == 0 ]]; then
-        echo "Error, could not a faux directory"
-    fi
-
-    # cannot move files into a faux directory
-    (mv -f $root_dir/NewYork.txt $root_dir/1) >& /dev/null
-    rc=$?
-    if [[ $rc == 0 ]]; then
-        echo "Error, could move a file into a faux directory"
-    fi
-    set -e
-}
-
-function faux_dirs_remove {
-    local root_dir=$1
-    cd $root_dir
-
-    # can move a file out of a faux directory
-    mkdir $root_dir/T
-    mv $root_dir/1/NewYork.txt $root_dir/T
-    rm -rf $root_dir/T
-
-    echo "removing faux dir 1"
-    rm -rf $root_dir/1
-}
-
-
-function populate_faux_dir {
-    local faux_dir=$1
-
-    echo "deep dish pizza and sky trains" > /tmp/XXX
-    echo "nice play chunk" > /tmp/YYY
-    echo "no more chewing on shoes!" > /tmp/ZZZ
-    echo "you just won a trip to the Caribbean" > /tmp/VVV
-
-    dx upload /tmp/XXX -p --destination $projName:/$faux_dir/Chicago.txt >& /dev/null
-    dx upload /tmp/YYY -p --destination $projName:/$faux_dir/Chicago.txt >& /dev/null
-    dx upload /tmp/ZZZ -p --destination $projName:/$faux_dir/NewYork.txt >& /dev/null
-    dx upload /tmp/VVV -p --destination $projName:/$faux_dir/NewYork.txt >& /dev/null
-    rm -f /tmp/XXX /tmp/YYY /tmp/ZZZ /tmp/VVV
-}
 
 function dir_and_file_with_the_same_name {
     local root_dir=$1
@@ -524,19 +473,15 @@ function fs_test_cases {
     # generate random alphanumeric strings
     base_dir=$(cat /dev/urandom | env LC_CTYPE=C LC_ALL=C tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
     base_dir="base_$base_dir"
-#    faux_dir=$(cat /dev/urandom | env LC_CTYPE=C LC_ALL=C tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
-#    faux_dir="faux_$faux_dir"
-#    expr_dir=$(cat /dev/urandom | env LC_CTYPE=C LC_ALL=C tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
-#    expr_dir="expr_$expr_dir"
-#    writeable_dirs=($base_dir $faux_dir $expr_dir)
-    writeable_dirs=($base_dir)
+    expr_dir=$(cat /dev/urandom | env LC_CTYPE=C LC_ALL=C tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+    expr_dir="expr_$expr_dir"
+    writeable_dirs=($base_dir $expr_dir)
     for d in ${writeable_dirs[@]}; do
         dx rm -r $projName:/$d >& /dev/null || true
     done
 
     dx mkdir $projName:/$base_dir
-#    populate_faux_dir $faux_dir
-#    dx mkdir $projName:/$expr_dir
+    dx mkdir $projName:/$expr_dir
 
     target_dir=$base_dir/T1
     dx mkdir $projName:/$target_dir
@@ -553,8 +498,8 @@ function fs_test_cases {
     echo "can write to a small file"
     check_file_write_content $mountpoint/$projName $target_dir
 
-#    echo "can write several files to a directory"
-#    write_files $mountpoint/$projName/$dxDirOnProject/large $mountpoint/$projName/$target_dir
+    echo "can write several files to a directory"
+    write_files $mountpoint/$projName/$dxDirOnProject/large $mountpoint/$projName/$target_dir
 
     echo "can't write to read-only project"
     write_to_read_only_project
@@ -564,16 +509,16 @@ function fs_test_cases {
 
     echo "create directory"
     create_dir $mountpoint/$projName/$dxDirOnProject/small  $mountpoint/$projName/$base_dir/T2
-#
-#    echo "create/remove directory"
-#    create_remove_dir "yes" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$base_dir/T3
-#    create_remove_dir "no" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$base_dir/T3
-#
-#    echo "mkdir rmdir"
-#    rmdir_non_empty $mountpoint/$projName/$base_dir/T4
-#    rmdir_not_exist $mountpoint/$projName/$base_dir/T4
-#    mkdir_existing  $mountpoint/$projName/$base_dir/T4
-#
+
+    echo "create/remove directory"
+    create_remove_dir "yes" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$base_dir/T3
+    create_remove_dir "no" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$base_dir/T3
+
+    echo "mkdir rmdir"
+    rmdir_non_empty $mountpoint/$projName/$base_dir/T4
+    rmdir_not_exist $mountpoint/$projName/$base_dir/T4
+    mkdir_existing  $mountpoint/$projName/$base_dir/T4
+
 #    echo "file create remove"
 #    file_create_existing "$mountpoint/$projName"
 #    file_remove_non_exist "$mountpoint/$projName"
@@ -606,12 +551,6 @@ function fs_test_cases {
 #    echo "checking illegal directory moves"
 #    move_non_existent_dir "$mountpoint/$projName"
 #    move_dir_to_file "$mountpoint/$projName"
-#
-#    echo "faux dirs cannot be moved"
-#    faux_dirs_move $mountpoint/$projName/$faux_dir
-#
-#    echo "faux dir operations"
-#    faux_dirs_remove $mountpoint/$projName/$faux_dir
 #
 #    echo "directory and file with the same name"
 #    dir_and_file_with_the_same_name $mountpoint/$projName

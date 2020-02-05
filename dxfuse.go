@@ -1166,6 +1166,8 @@ func (fsys *Filesys) openRegularFile(ctx context.Context, oph *OpHandle, op *fus
 	return fh, nil
 }
 
+// Note: What happens if the file is opened for writing?
+//
 func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
@@ -1558,6 +1560,9 @@ func (fsys *Filesys) RemoveXattr(ctx context.Context, op *fuseops.RemoveXattrOp)
 	if err != nil {
 		return err
 	}
+	if !fsys.checkProjectPermissions(file.ProjId, PERM_CONTRIBUTE) {
+		return syscall.EPERM
+	}
 
 	// look for the attribute
 	namespace, attrName, err := fsys.xattrParseName(op.Name)
@@ -1768,7 +1773,14 @@ func (fsys *Filesys) SetXattr(ctx context.Context, op *fuseops.SetXattrOp) error
 		file = node.(File)
 	case Dir:
 		// directories do not have attributes
+		//
+		// Note: we may want to change this for directories
+		// representing projects. This would allow reporting project
+		// tags and properties.
 		return syscall.EINVAL
+	}
+	if !fsys.checkProjectPermissions(file.ProjId, PERM_CONTRIBUTE) {
+		return syscall.EPERM
 	}
 
 	// Check if the property already exists

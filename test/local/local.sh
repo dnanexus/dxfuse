@@ -14,3 +14,6 @@ echo "current dir=$CRNT_DIR"
 
 source $CRNT_DIR/fs_test_cases.sh
 fs_test_cases
+
+#source $CRNT_DIR/faux_dirs.sh
+#faux_dirs
