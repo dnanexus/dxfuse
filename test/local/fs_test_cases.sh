@@ -32,85 +32,9 @@ function teardown {
 }
 
 # trap any errors and cleanup
-#trap teardown EXIT
+trap teardown EXIT
 
 ######################################################################
-
-# copy a file and check that platform has the correct content
-#
-function check_file_write_content {
-    local top_dir=$1
-    local target_dir=$2
-    local write_dir=$top_dir/$target_dir
-    local content="nothing much"
-
-    echo "write_dir = $write_dir"
-
-    # create a small file through the filesystem interface
-    echo $content > $write_dir/A.txt
-    ls -l $write_dir/A.txt
-
-    echo "synchronizing the filesystem"
-    sudo $dxfuse -sync
-
-    echo "file is closed"
-    dx ls -l $projName:/$target_dir/A.txt
-
-    # compare the data
-    local content2=$(dx cat $projName:/$target_dir/A.txt)
-    if [[ "$content" == "$content2" ]]; then
-        echo "correct"
-    else
-        echo "bad content"
-        echo "should be: $content"
-        echo "found: $content2"
-    fi
-
-
-    # create an empty file
-    touch $write_dir/B.txt
-    ls -l $write_dir/B.txt
-
-    echo "synchronizing the filesystem"
-    sudo $dxfuse -sync
-
-    echo "file is closed"
-    dx ls -l $projName:/$target_dir/B.txt
-
-    # compare the data
-    local content3=$(dx cat $projName:/$target_dir/B.txt)
-    if [[ "$content3" == "" ]]; then
-        echo "correct"
-    else
-        echo "bad content"
-        echo "should be empty"
-        echo "found: $content3"
-    fi
-}
-
-# copy files inside the mounted filesystem
-#
-function write_files {
-    local src_dir=$1
-    local write_dir=$2
-
-    echo "write_dir = $write_dir"
-    ls -l $write_dir
-
-    echo "copying large files"
-    cp $src_dir/*  $write_dir/
-
-    echo "synchronizing the filesystem"
-    sudo $dxfuse -sync
-
-    # compare resulting files
-    echo "comparing files"
-    local files=$(find $src_dir -type f)
-    for f in $files; do
-        b_name=$(basename $f)
-        diff $f $write_dir/$b_name
-    done
-}
 
 # check that we can't write to VIEW only project
 #
@@ -184,8 +108,8 @@ function create_remove_dir {
     tree $write_dir
 
     if [[ $flag == "yes" ]]; then
-        echo "letting the files complete uploading"
-        sleep 10
+        echo "synchronizing the filesystem"
+        $dxfuse -sync
     fi
 
     echo "removing directory recursively"
@@ -483,9 +407,6 @@ function fs_test_cases {
     dx mkdir $projName:/$base_dir
     dx mkdir $projName:/$expr_dir
 
-    target_dir=$base_dir/T1
-    dx mkdir $projName:/$target_dir
-
     # Start the dxfuse daemon in the background, and wait for it to initilize.
     echo "Mounting dxfuse"
     flags=""
@@ -495,20 +416,14 @@ function fs_test_cases {
     sudo -E $dxfuse -uid $(id -u) -gid $(id -g) $flags $mountpoint dxfuse_test_data dxfuse_test_read_only ArchivedStuff
     sleep 1
 
-    echo "can write to a small file"
-    check_file_write_content $mountpoint/$projName $target_dir
-
-    echo "can write several files to a directory"
-    write_files $mountpoint/$projName/$dxDirOnProject/large $mountpoint/$projName/$target_dir
-
-    echo "can't write to read-only project"
-    write_to_read_only_project
-
-    echo "archived files"
-    archived_files $mountpoint/ArchivedStuff
-
-    echo "create directory"
-    create_dir $mountpoint/$projName/$dxDirOnProject/small  $mountpoint/$projName/$base_dir/T2
+#    echo "can't write to read-only project"
+#    write_to_read_only_project
+#
+#    echo "archived files"
+#    archived_files $mountpoint/ArchivedStuff
+#
+#    echo "create directory"
+#    create_dir $mountpoint/$projName/$dxDirOnProject/small  $mountpoint/$projName/$base_dir/T2
 
     echo "create/remove directory"
     create_remove_dir "yes" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$base_dir/T3

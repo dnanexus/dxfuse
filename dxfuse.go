@@ -46,7 +46,7 @@ func NewDxfuse(
 		dxEnv : dxEnv,
 		options: options,
 		dbFullPath : DatabaseFile,
-		mutex : sync.Mutex{},
+		mutex : &sync.Mutex{},
 		httpClientPool: httpIoPool,
 		ops : NewDxOps(dxEnv, options),
 		fhCounter : 1,

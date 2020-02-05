@@ -12,6 +12,9 @@ echo "current dir=$CRNT_DIR"
 #source $CRNT_DIR/manifest_test.sh
 #manifest_test
 
+#source $CRNT_DIR/file_write_slow.sh
+#file_write_slow
+
 source $CRNT_DIR/fs_test_cases.sh
 fs_test_cases
 

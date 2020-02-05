@@ -44,6 +44,9 @@ func (ops *DxOps) DxFolderNew(
 	httpClient *retryablehttp.Client,
 	projId string,
 	folder string) error {
+	if ops.options.Verbose {
+		ops.log("new-folder %s:%s", projId, folder)
+	}
 
 	var request RequestFolderNew
 	request.ProjId = projId
@@ -88,6 +91,9 @@ func (ops *DxOps) DxFolderRemove(
 	httpClient *retryablehttp.Client,
 	projId string,
 	folder string) error {
+	if ops.options.Verbose {
+		ops.log("remove-folder %s:%s", projId, folder)
+	}
 
 	var request RequestFolderRemove
 	request.ProjId = projId
@@ -182,6 +188,9 @@ func (ops *DxOps) DxFileNew(
 	projId string,
 	fname string,
 	folder string) (string, error) {
+	if ops.options.Verbose {
+		ops.log("file-new %s:%s/%s", projId, folder, fname)
+	}
 
 	var request RequestNewFile
 	request.ProjId = projId
@@ -212,6 +221,9 @@ func (ops *DxOps) DxFileCloseAndWait(
 	ctx context.Context,
 	httpClient *retryablehttp.Client,
 	fid string) error {
+	if ops.options.Verbose {
+		ops.log("file close-and-wait %s", fid)
+	}
 
 	_, err := dxda.DxAPI(
 		ctx,
@@ -334,6 +346,9 @@ func (ops *DxOps) DxRename(
 	projId string,
 	fileId string,
 	newName string) error {
+	if ops.options.Verbose {
+		ops.log("file rename %s:%s %s", projId, fileId, newName)
+	}
 
 	var request RequestRename
 	request.ProjId = projId

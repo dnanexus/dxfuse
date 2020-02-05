@@ -1567,7 +1567,7 @@ func (mdb *MetadataDb) UpdateFileTagsAndProperties(
 	sqlStmt := fmt.Sprintf(`
 		UPDATE data_objects
                 SET tags = '%s', properties = '%s', dirty_metadata = '1'
-		WHERE inode = '%s';`,
+		WHERE inode = '%d';`,
 		mTags, mProps, file.Inode)
 
 	if _, err := oph.txn.Exec(sqlStmt); err != nil {

@@ -53,9 +53,9 @@ type SyncDbDx struct {
 	fileUpdateQueue     chan FileUpdateReq
 	chunkQueue          chan *Chunk
 	deadObjectsQueue    chan []DeadFile
-	disableSweep        bool
+	enableSweep         bool
 	wg                  sync.WaitGroup
-	mutex               sync.Mutex
+	mutex              *sync.Mutex
 	mdb                *MetadataDb
 	ops                *DxOps
 	nonce              *Nonce
@@ -71,20 +71,35 @@ func NewSyncDbDx(
 	projId2Desc map[string]DxDescribePrj,
 	httpClientPool chan(*retryablehttp.Client),
 	mdb *MetadataDb,
-	mutex sync.Mutex) *SyncDbDx {
+	mutex *sync.Mutex) *SyncDbDx {
+	// the chunk queue size should be at least the size of the thread
+	// pool.
+	chunkQueueSize := MaxInt(numBulkDataThreads, chunkMaxQueueSize)
+
+	// limit the size of the chunk queue, so we don't
+	// have too many chunks stored in memory.
+	chunkQueue := make(chan *Chunk, chunkQueueSize)
 
 	sybx := &SyncDbDx{
 		dxEnv : dxEnv,
 		options : options,
 		projId2Desc : projId2Desc,
 		fileUpdateQueue : nil,
-		chunkQueue : nil,
-		disableSweep : false,
+		chunkQueue : chunkQueue,
+		enableSweep : true,
 		mutex : mutex,
 		mdb : mdb,
 		ops : NewDxOps(dxEnv, options),
 		nonce : NewNonce(),
 		httpClientPool : httpClientPool,
+	}
+
+	// bunch of background threads to upload bulk file data.
+	//
+	// These are never closed, because they are used during synchronization.
+	// When we sync the filesystem, we upload all the files.
+	for i := 0; i < numBulkDataThreads; i++ {
+		go sybx.bulkDataWorker()
 	}
 
 	sybx.startBackgroundWorkers()
@@ -103,27 +118,12 @@ func (sybx *SyncDbDx) log(a string, args ...interface{}) {
 
 func (sybx *SyncDbDx) startBackgroundWorkers() {
 	sybx.fileUpdateQueue = make(chan FileUpdateReq)
-
-	// the chunk queue size should be at least the size of the thread
-	// pool.
-	chunkQueueSize := MaxInt(numBulkDataThreads, chunkMaxQueueSize)
-
-	// limit the size of the chunk queue, so we don't
-	// have too many chunks stored in memory.
-	sybx.chunkQueue = make(chan *Chunk, chunkQueueSize)
-
 	sybx.deadObjectsQueue = make(chan []DeadFile)
 
 	// Create a bunch of threads to update files and metadata
 	for i := 0; i < numFileThreads; i++ {
 		sybx.wg.Add(1)
 		go sybx.updateFileWorker()
-	}
-
-	// bunch of background threads to upload bulk file data
-	for i := 0; i < numBulkDataThreads; i++ {
-		sybx.wg.Add(1)
-		go sybx.bulkDataWorker()
 	}
 
 	sybx.wg.Add(1)
@@ -133,22 +133,28 @@ func (sybx *SyncDbDx) startBackgroundWorkers() {
 func (sybx *SyncDbDx) stopBackgroundWorkers() {
 	// signal all upload and modification threads to stop
 	close(sybx.fileUpdateQueue)
-	close(sybx.chunkQueue)
 
 	// stop also the object-removal thread
 	close(sybx.deadObjectsQueue)
 
+	// Note: we don't close the chunkQeue
+
 	// wait for all of them to complete
 	sybx.wg.Wait()
+
+	sybx.fileUpdateQueue = nil
+	sybx.deadObjectsQueue = nil
 }
 
 func (sybx *SyncDbDx) Shutdown() {
 	// disable to sweep thread
 	sybx.mutex.Lock()
-	sybx.disableSweep = false
+	sybx.enableSweep = false
 	sybx.mutex.Unlock()
 
 	sybx.stopBackgroundWorkers()
+
+	close(sybx.chunkQueue)
 }
 
 // A worker dedicated to performing data-upload operations
@@ -159,7 +165,6 @@ func (sybx *SyncDbDx) bulkDataWorker() {
 	for true {
 		chunk, ok := <- sybx.chunkQueue
 		if !ok {
-			sybx.wg.Done()
 			return
 		}
 		if sybx.options.Verbose {
@@ -304,6 +309,7 @@ func (sybx *SyncDbDx) uploadFileData(
 		sybx.chunkQueue <- chunk
 		fileParts = append(fileParts, chunk)
 
+
 		ofs += upReq.partSize
 		cIndex++
 	}
@@ -375,7 +381,6 @@ func (sybx *SyncDbDx) uploadFileDataAndWait(
 func (sybx *SyncDbDx) updateFileData(
 	client *retryablehttp.Client,
 	upReq FileUpdateReq) (string, error) {
-
 	// create the file object on the platform.
 	fileId, err := sybx.ops.DxFileNew(
 		context.TODO(), client, sybx.nonce.String(),
@@ -384,6 +389,7 @@ func (sybx *SyncDbDx) updateFileData(
 		upReq.dfi.ProjFolder)
 	if err != nil {
 		sybx.log("Error in creating file (%s:%s/%s) on dnanexus: %s",
+			upReq.dfi.ProjId, upReq.dfi.ProjFolder,	upReq.dfi.Name,
 			err.Error())
 		return "", err
 	}
@@ -713,7 +719,7 @@ func (sybx *SyncDbDx) periodicSync() {
 		time.Sleep(sweepPeriodicTime)
 
 		sybx.mutex.Lock()
-		if (!sybx.disableSweep) {
+		if sybx.enableSweep {
 			if err := sybx.sweep(); err != nil {
 				sybx.log("Error in sweep: %s", err.Error())
 			}
@@ -735,7 +741,7 @@ func (sybx *SyncDbDx) CmdSync() error {
 		sybx.log("Error in sweep: %s", err.Error())
 		return err
 	}
-	sybx.disableSweep = true
+	sybx.enableSweep = false
 	sybx.mutex.Unlock()
 
 	// now wait for the objects to be created and the data uploaded
@@ -745,7 +751,7 @@ func (sybx *SyncDbDx) CmdSync() error {
 	sybx.startBackgroundWorkers()
 
 	sybx.mutex.Lock()
-	sybx.disableSweep = false
+	sybx.enableSweep = true
 	sybx.mutex.Unlock()
 	return nil
 }

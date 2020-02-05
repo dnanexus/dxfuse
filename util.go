@@ -83,7 +83,7 @@ type Filesys struct {
 	dbFullPath string
 
 	// Lock for protecting shared access to the database
-	mutex sync.Mutex
+	mutex *sync.Mutex
 
 	// a pool of http clients, for short requests, such as file creation,
 	// or file describe.
