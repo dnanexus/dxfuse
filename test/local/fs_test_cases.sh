@@ -74,14 +74,8 @@ function check_file_write_content {
     touch $write_dir/B.txt
     ls -l $write_dir/B.txt
 
-    # wait for the file to achieve the closed state
-    while true; do
-        file_state=$(dx describe $projName:/$target_dir/B.txt --json | grep state | awk '{ gsub("[,\"]", "", $2); print $2 }')
-        if [[ "$file_state" == "closed" ]]; then
-            break
-        fi
-        sleep 2
-    done
+    echo "synchronizing the filesystem"
+    sudo $dxfuse -sync
 
     echo "file is closed"
     dx ls -l $projName:/$target_dir/B.txt
@@ -562,14 +556,14 @@ function fs_test_cases {
 #    echo "can write several files to a directory"
 #    write_files $mountpoint/$projName/$dxDirOnProject/large $mountpoint/$projName/$target_dir
 
-#    echo "can't write to read-only project"
-#    write_to_read_only_project
-#
-#    echo "archived files"
-#    archived_files $mountpoint/ArchivedStuff
-#
-#    echo "create directory"
-#    create_dir $mountpoint/$projName/$dxDirOnProject/small  $mountpoint/$projName/$base_dir/T2
+    echo "can't write to read-only project"
+    write_to_read_only_project
+
+    echo "archived files"
+    archived_files $mountpoint/ArchivedStuff
+
+    echo "create directory"
+    create_dir $mountpoint/$projName/$dxDirOnProject/small  $mountpoint/$projName/$base_dir/T2
 #
 #    echo "create/remove directory"
 #    create_remove_dir "yes" $mountpoint/$projName/$dxDirOnProject/small $mountpoint/$projName/$base_dir/T3

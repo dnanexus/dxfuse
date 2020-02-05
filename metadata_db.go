@@ -553,8 +553,11 @@ func (mdb *MetadataDb) LookupDirByInode(ctx context.Context, oph *OpHandle, inod
 
 // Find information on a directory by searching on its full name.
 //
-func (mdb *MetadataDb) LookupDirByName(oph *OpHandle, dirname string) (string, string, error) {
+func (mdb *MetadataDb) lookupDirByName(oph *OpHandle, dirname string) (string, string, error) {
 	parentDir, basename := splitPath(dirname)
+	if mdb.options.Verbose {
+		mdb.log("lookupDirByName (%s)", dirname)
+	}
 
 	// Extract information for all the subdirectories
 	sqlStmt := fmt.Sprintf(`
@@ -562,8 +565,8 @@ func (mdb *MetadataDb) LookupDirByName(oph *OpHandle, dirname string) (string, s
                         FROM directories as dirs
                         JOIN namespace as nm
                         ON dirs.inode = nm.inode
-			WHERE nm.parent = '%s' AND nm.name = '%s';`,
-		parentDir, basename, nsDirType)
+			WHERE nm.parent = '%s' AND nm.name = '%s' ;`,
+		parentDir, basename)
 	rows, err := oph.txn.Query(sqlStmt)
 	if err != nil {
 		return "", "", err
@@ -701,6 +704,8 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 func (mdb *MetadataDb) createDataObject(
 	oph *OpHandle,
 	kind int,
+	dirtyData bool,
+	dirtyMetadata bool,
 	projId string,
 	state string,
 	archivalState string,
@@ -729,9 +734,10 @@ func (mdb *MetadataDb) createDataObject(
 	// Create an entry for the file
 	sqlStmt := fmt.Sprintf(`
  	        INSERT INTO data_objects
-		VALUES ('%d', '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%s', '%s', '%s', '0', '0');`,
+		VALUES ('%d', '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%s', '%s', '%s', '%d', '%d');`,
 		kind, objId, projId, state, archivalState, inode, size, ctime, mtime, int(mode),
-		mTags, mProps, inlineData)
+		mTags, mProps, inlineData,
+		boolToInt(dirtyData), boolToInt(dirtyMetadata))
 	if _, err := oph.txn.Exec(sqlStmt); err != nil {
 		mdb.log(err.Error())
 		mdb.log("Error inserting into data objects table")
@@ -924,6 +930,8 @@ func (mdb *MetadataDb) populateDir(
 		_, err := mdb.createDataObject(
 			oph,
 			kind,
+			false,
+			false,
 			o.ProjId,
 			o.State,
 			o.ArchivalState,
@@ -1190,6 +1198,8 @@ func (mdb *MetadataDb) PopulateRoot(ctx context.Context, oph *OpHandle, manifest
 		_, err := mdb.createDataObject(
 			oph,
 			FK_Regular,
+			false,
+			false,
 			fl.ProjId,
 			"closed",
 			fl.ArchivalState,
@@ -1257,6 +1267,8 @@ func (mdb *MetadataDb) CreateFile(
 	inode, err := mdb.createDataObject(
 		oph,
 		FK_Regular,
+		true,  // file is dirty, it should be uploaded.
+		false,
 		dir.ProjId,
 		"closed",
 		"live",
@@ -1264,7 +1276,7 @@ func (mdb *MetadataDb) CreateFile(
 		0,    /* the file is empty */
 		nowSeconds,
 		nowSeconds,
-		nil,  // A local file doesn't have tags or properties
+		nil,  // A local file initially doesn't have tags or properties
 		nil,
 		mode,
 		dir.FullPath,
@@ -1613,11 +1625,21 @@ func (mdb *MetadataDb) DirtyFilesGetAllAndReset() ([]DirtyFileInfo, error) {
 	// directory it lives under, and which project-folder this
 	// corresponds to.
 	sqlStmt := fmt.Sprintf(`
- 		        SELECT dos.kind, dos.inode, dos.dirty_data, dos.dirty_metadata, dos.id, dos.size, dos.inline_data, dos.tags, dos.properties, namespace.name, namespace.parent
+ 		        SELECT dos.kind,
+                               dos.inode,
+                               dos.dirty_data as dirty_data,
+                               dos.dirty_metadata as dirty_metadata,
+                               dos.id,
+                               dos.size,
+                               dos.inline_data,
+                               dos.tags,
+                               dos.properties,
+                               namespace.name,
+                               namespace.parent
                         FROM data_objects as dos
                         JOIN namespace
                         ON dos.inode = namespace.inode
-			WHERE dos.dirty_data = '1' OR dos.dirty_metadata = '1';`)
+			WHERE dirty_data = '1' OR dirty_metadata = '1' ;`)
 	rows, err := oph.txn.Query(sqlStmt)
 	if err != nil {
 		mdb.log("DirtyFilesGetAllAndReset err=%s", err.Error())
@@ -1630,29 +1652,31 @@ func (mdb *MetadataDb) DirtyFilesGetAllAndReset() ([]DirtyFileInfo, error) {
 		var kind int
 		var dirtyData int
 		var dirtyMetadata int
+		var tags string
+		var props string
 
 		rows.Scan(&kind, &f.Inode, &dirtyData, &dirtyMetadata, &f.Id, &f.FileSize, &f.LocalPath,
-			&f.Tags, &f.Properties, &f.Name, &f.Directory)
+			&tags, &props, &f.Name, &f.Directory)
 		f.dirtyData = intToBool(dirtyData)
 		f.dirtyMetadata = intToBool(dirtyMetadata)
+		f.Tags = tagsUnmarshal(tags)
+		f.Properties = propertiesUnmarshal(props)
 
 		if kind != FK_Regular {
 			log.Panicf("Non regular file has dirty data; kind=%d %v", kind, f)
-			//mdb.log("Non regular file has dirty data, skipping. kind=%d %v", kind, f)
-			//continue
 		}
 		fAr = append(fAr, f)
 	}
 	rows.Close()
 
 	// Figure out the project folder for each file
-	for _, dfi := range(fAr) {
-		projId, projFolder, err := mdb.LookupDirByName(oph, dfi.Directory)
+	for i, _ := range(fAr) {
+		projId, projFolder, err := mdb.lookupDirByName(oph, fAr[i].Directory)
 		if err != nil {
 			return nil, err
 		}
-		dfi.ProjId = projId
-		dfi.ProjFolder = projFolder
+		fAr[i].ProjId = projId
+		fAr[i].ProjFolder = projFolder
 	}
 
 	// erase the flag from the entire table
@@ -1664,6 +1688,5 @@ func (mdb *MetadataDb) DirtyFilesGetAllAndReset() ([]DirtyFileInfo, error) {
 		mdb.log("Error erasing dirty_data|dirty_metadata flags (%s)", err.Error())
 		return nil, err
 	}
-
 	return fAr, nil
 }

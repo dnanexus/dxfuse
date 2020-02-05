@@ -70,6 +70,7 @@ func NewSyncDbDx(
 	dxEnv dxda.DXEnvironment,
 	projId2Desc map[string]DxDescribePrj,
 	httpClientPool chan(*retryablehttp.Client),
+	mdb *MetadataDb,
 	mutex sync.Mutex) *SyncDbDx {
 
 	sybx := &SyncDbDx{
@@ -80,6 +81,7 @@ func NewSyncDbDx(
 		chunkQueue : nil,
 		disableSweep : false,
 		mutex : mutex,
+		mdb : mdb,
 		ops : NewDxOps(dxEnv, options),
 		nonce : NewNonce(),
 		httpClientPool : httpClientPool,
@@ -565,7 +567,7 @@ func (sybx *SyncDbDx) updateFileWorker() {
 func (sybx *SyncDbDx) enqueueUpdateFileReq(dfi DirtyFileInfo) error {
 	projDesc, ok := sybx.projId2Desc[dfi.ProjId]
 	if !ok {
-		log.Panicf("project %s not found", dfi.ProjId)
+		log.Panicf("project (%s) not found", dfi.ProjId)
 	}
 
 	partSize, err := sybx.calcPartSize(projDesc.UploadParams, dfi.FileSize)
@@ -666,6 +668,9 @@ func (sybx *SyncDbDx) enqueueDeadObjects() error {
 		return err
 	}
 	if deadFiles == nil || len(deadFiles) == 0 {
+		if sybx.options.Verbose {
+			sybx.log("found no dead objects to remove")
+		}
 		return nil
 	}
 	sybx.deadObjectsQueue <- deadFiles
@@ -709,8 +714,7 @@ func (sybx *SyncDbDx) periodicSync() {
 
 		sybx.mutex.Lock()
 		if (!sybx.disableSweep) {
-			err := sybx.sweep()
-			if err != nil {
+			if err := sybx.sweep(); err != nil {
 				sybx.log("Error in sweep: %s", err.Error())
 			}
 		}
@@ -728,6 +732,7 @@ func (sybx *SyncDbDx) CmdSync() error {
 	sybx.mutex.Lock()
 	if err := sybx.sweep(); err != nil {
 		sybx.mutex.Unlock()
+		sybx.log("Error in sweep: %s", err.Error())
 		return err
 	}
 	sybx.disableSweep = true

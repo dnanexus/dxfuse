@@ -239,12 +239,12 @@ type DirtyFileInfo struct {
 	Id            string
 	FileSize      int64
 	LocalPath     string
+	Tags          []string
+	Properties    map[string]string
 	Name          string
 	Directory     string
 	ProjFolder    string
 	ProjId        string
-	Tags          []string
-	Properties    map[string]string
 }
 
 // Files can be opened in read-only mode, or read-write mode.

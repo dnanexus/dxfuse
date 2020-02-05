@@ -115,10 +115,7 @@ func NewDxfuse(
 	}
 
 	// initialize sync daemon
-	fsys.sybx = NewSyncDbDx(options, dxEnv, projId2Desc, fsys.httpClientPool, fsys.mutex)
-
-	// Provide the upload module with a reference to the database.
-	fsys.sybx.mdb = mdb
+	fsys.sybx = NewSyncDbDx(options, dxEnv, projId2Desc, fsys.httpClientPool, mdb, fsys.mutex)
 
 	fsys.cmdSrv = NewCmdServer(options, fsys.sybx)
 	InitCmdServer(fsys.cmdSrv)
