@@ -19,22 +19,29 @@ const (
 type CmdServer struct {
 	options  Options
 	sybx    *SyncDbDx
+	inbound *net.TCPListener
+}
+
+// A separate structure used for exporting through RPC
+type CmdServerBox struct {
+	cmdSrv *CmdServer
 }
 
 func NewCmdServer(options Options, sybx *SyncDbDx) *CmdServer {
 	cmdServer := &CmdServer{
 		options: options,
 		sybx : sybx,
+		inbound : nil,
 	}
 	return cmdServer
 }
 
 // write a log message, and add a header
-func (csrv *CmdServer) log(a string, args ...interface{}) {
+func (cmdSrv *CmdServer) log(a string, args ...interface{}) {
 	LogMsg("CmdServer", a, args...)
 }
 
-func InitCmdServer(csrv *CmdServer) {
+func (cmdSrv *CmdServer) Init() {
 	addy, err := net.ResolveTCPAddr("tcp", fmt.Sprintf(":%d", CmdPort))
 	if err != nil {
 		log.Fatal(err)
@@ -44,22 +51,31 @@ func InitCmdServer(csrv *CmdServer) {
 	if err != nil {
 		log.Fatal(err)
 	}
+	cmdSrv.inbound = inbound
 
-	rpc.Register(csrv)
+	cmdSrvBox := &CmdServerBox{
+		cmdSrv : cmdSrv,
+	}
+	rpc.Register(cmdSrvBox)
 	go rpc.Accept(inbound)
 
-	csrv.log("started command server, accepting external commands")
+	cmdSrv.log("started command server, accepting external commands")
+}
+
+func (cmdSrv *CmdServer) Close() {
+	cmdSrv.inbound.Close()
 }
 
 // Note: all export functions from this module have to have this format.
 // Nothing else will work with the RPC package.
-func (csrv *CmdServer) GetLine(arg string, reply *bool) error {
-	csrv.log("Received line %s", arg)
+func (box *CmdServerBox) GetLine(arg string, reply *bool) error {
+	cmdSrv := box.cmdSrv
+	cmdSrv.log("Received line %s", arg)
 	switch arg {
 	case "sync":
-		csrv.sybx.CmdSync()
+		cmdSrv.sybx.CmdSync()
 	default:
-		csrv.log("Unknown command")
+		cmdSrv.log("Unknown command")
 	}
 
 	*reply = true

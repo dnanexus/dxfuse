@@ -79,4 +79,6 @@ function dx_download_compare {
     sleep 1
 
     dx_download_compare_body
+
+    teardown
 }

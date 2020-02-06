@@ -118,8 +118,9 @@ func NewDxfuse(
 	// initialize sync daemon
 	fsys.sybx = NewSyncDbDx(options, dxEnv, projId2Desc, mdb, fsys.mutex)
 
+	// create an endpoint for communicating with the user
 	fsys.cmdSrv = NewCmdServer(options, fsys.sybx)
-	InitCmdServer(fsys.cmdSrv)
+	fsys.cmdSrv.Init()
 
 	return fsys, nil
 }
@@ -152,6 +153,9 @@ func (fsys *Filesys) Shutdown() {
 
 	// stop the running threads in the prefetch module
 	fsys.pgs.Shutdown()
+
+	// close the command server, this frees up the port
+	fsys.cmdSrv.Close()
 
 	// Stop the synchronization daemon. Do not complete
 	// outstanding operations.

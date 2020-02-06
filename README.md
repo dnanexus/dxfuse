@@ -118,7 +118,7 @@ go build -o /go/bin/dxfuse /go/src/github.com/dnanexus/dxfuse/cli/main.go
 
 To mount a dnanexus project `mammals` on local directory `/home/jonas/foo` do:
 ```
-sudo dxfuse -uid $(id -u) -gid $(id -g) /home/jonas/foo mammals
+sudo -E dxfuse -uid $(id -u) -gid $(id -g) /home/jonas/foo mammals
 ```
 
 The bootstrap process has some asynchrony, so it could take it a
@@ -128,12 +128,12 @@ the `verbose` flag. Debugging output is written to the log, which is
 placed at `/var/log/dxfuse.log`. The maximal verbosity level is 2.
 
 ```
-sudo dxfuse -verbose 1 MOUNT-POINT PROJECT-NAME
+sudo -E dxfuse -verbose 1 MOUNT-POINT PROJECT-NAME
 ```
 
 Project ids can be used instead of project names. To mount several projects, say, `mammals`, `fish`, and `birds`, do:
 ```
-sudo dxfuse /home/jonas/foo mammals fish birds
+sudo -E dxfuse /home/jonas/foo mammals fish birds
 ```
 
 This will create the directory hierarchy:

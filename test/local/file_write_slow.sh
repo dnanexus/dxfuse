@@ -3,7 +3,6 @@
 
 projName="dxfuse_test_data"
 dxfuse="$GOPATH/bin/dxfuse"
-dxDirOnProject="mini"
 baseDir=$HOME/dxfuse_test
 mountpoint=${baseDir}/MNT
 
@@ -167,7 +166,7 @@ function file_write_slow {
     check_file_write_content $mountpoint/$projName $target_dir
 
     echo "can write several large files to a directory"
-    write_files $mountpoint/$projName/$dxDirOnProject/large $mountpoint/$projName/$target_dir
+    write_files $mountpoint/$projName/large_files $mountpoint/$projName/$target_dir
 
     teardown
 }
