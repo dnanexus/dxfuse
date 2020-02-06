@@ -63,14 +63,8 @@ function check_file_write_content {
     echo $content > $write_dir/A.txt
     ls -l $write_dir/A.txt
 
-    # wait for the file to achieve the closed state
-    while true; do
-        file_state=$(dx describe $projName:/$target_dir/A.txt --json | grep state | awk '{ gsub("[,\"]", "", $2); print $2 }')
-        if [[ "$file_state" == "closed" ]]; then
-            break
-        fi
-        sleep 2
-    done
+    echo "synchronizing the filesystem"
+    sudo $dxfuse -sync
 
     echo "file is closed"
     dx ls -l $projName:/$target_dir/A.txt
@@ -90,14 +84,8 @@ function check_file_write_content {
     touch $write_dir/B.txt
     ls -l $write_dir/B.txt
 
-    # wait for the file to achieve the closed state
-    while true; do
-        file_state=$(dx describe $projName:/$target_dir/B.txt --json | grep state | awk '{ gsub("[,\"]", "", $2); print $2 }')
-        if [[ "$file_state" == "closed" ]]; then
-            break
-        fi
-        sleep 2
-    done
+    echo "synchronizing the filesystem"
+    sudo $dxfuse -sync
 
     echo "file is closed"
     dx ls -l $projName:/$target_dir/B.txt
@@ -500,16 +488,6 @@ function faux_dirs_remove {
 
 
 
-function hard_links {
-    local root_dir=$1
-    cd $root_dir
-
-    ln $mountpoint/dxfuse_test_read_only/doc/approaches.md .
-    stat approaches.md
-    rm -f approaches.md
-}
-
-
 function populate_faux_dir {
     local faux_dir=$1
 
@@ -535,11 +513,11 @@ function archived_files {
     local root_dir=$1
 
     num_files=$(ls -1 $root_dir | wc -l)
-    if [[ $num_files != 2 ]]; then
-        echo "Should see two live files. Instead, can see $num_files files."
+    if [[ $num_files != 3 ]]; then
+        echo "Should see 3 files. Instead, can see $num_files files."
         exit 1
     else
-        echo "correct, can see two live files"
+        echo "correct, can see 3 files"
     fi
 }
 
@@ -643,9 +621,6 @@ main() {
 
     echo "faux dir operations"
     faux_dirs_remove $mountpoint/$projName/$faux_dir
-
-    echo "hard links"
-    hard_links $mountpoint/$projName/$faux_dir
 
     echo "directory and file with the same name"
     dir_and_file_with_the_same_name $mountpoint/$projName

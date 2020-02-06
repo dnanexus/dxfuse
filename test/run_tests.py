@@ -128,7 +128,6 @@ def run_local_test():
         sys.exit(1)
 
 def run_correctness(dx_proj, itype, verbose):
-    run_local_test()
     correctness = lookup_applet("correctness", dx_proj, "/applets")
     bam_diff = lookup_applet("bam_diff", dx_proj, "/applets")
     correctness_downloads = lookup_applet("correctness_downloads", dx_proj, "/applets")
@@ -146,7 +145,7 @@ def main():
     argparser = argparse.ArgumentParser(description="Run benchmarks on several instance types for dxfuse")
     argparser.add_argument("--project", help="DNAnexus project",
                            default="dxfuse_test_data")
-    argparser.add_argument("--test", help="which testing suite to run [bench, correct, bio]",
+    argparser.add_argument("--test", help="which testing suite to run [bench, bio, correct, local]",
                            default="correctness")
     argparser.add_argument("--size", help="how large should the test be? [small, large]",
                            default="small")
@@ -179,6 +178,8 @@ def main():
         run_correctness(dx_proj, instance_types[0], args.verbose)
     elif args.test.startswith("bio"):
         run_biotools(dx_proj, instance_types[0], args.verbose)
+    elif args.test.startswith("local"):
+        run_local_test()
     else:
         print("Unknown test {}".format(args.test))
         exit(1)
