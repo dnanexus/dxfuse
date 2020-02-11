@@ -198,7 +198,8 @@ func (mdb *MetadataDb) init2(txn *sql.Tx) error {
                 mode int,
                 tags text,
                 properties text,
-                inline_data text,
+                symlink text,
+                local_path text,
                 dirty_data int,
                 dirty_metadata int,
                 PRIMARY KEY (inode)
@@ -372,7 +373,7 @@ func (mdb *MetadataDb) allocInodeNum() int64 {
 func (mdb *MetadataDb) lookupDataObjectByInode(oph *OpHandle, oname string, inode int64) (File, bool, error) {
 	// point lookup in the files table
 	sqlStmt := fmt.Sprintf(`
- 		        SELECT kind,id,proj_id,state,archival_state,size,ctime,mtime,mode,tags,properties,inline_data
+ 		        SELECT kind,id,proj_id,state,archival_state,size,ctime,mtime,mode,tags,properties,symlink,local_path
                         FROM data_objects
 			WHERE inode = '%d';`,
 		inode)
@@ -395,7 +396,7 @@ func (mdb *MetadataDb) lookupDataObjectByInode(oph *OpHandle, oname string, inod
 		var props string
 		var tags string
 		rows.Scan(&f.Kind, &f.Id, &f.ProjId, &f.State, &f.ArchivalState, &f.Size, &ctime, &mtime, &f.Mode,
-			&tags, &props, &f.InlineData)
+			&tags, &props, &f.Symlink, &f.LocalPath)
 		f.Ctime = SecondsToTime(ctime)
 		f.Mtime = SecondsToTime(mtime)
 		f.Tags = tagsUnmarshal(tags)
@@ -640,7 +641,7 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 
 	// Extract information for all the files
 	sqlStmt = fmt.Sprintf(`
- 		        SELECT dos.kind, dos.id, dos.proj_id, dos.state, dos.archival_state, dos.inode, dos.size, dos.ctime, dos.mtime, dos.mode, dos.tags, dos.properties, dos.inline_data, namespace.name
+ 		        SELECT dos.kind, dos.id, dos.proj_id, dos.state, dos.archival_state, dos.inode, dos.size, dos.ctime, dos.mtime, dos.mode, dos.tags, dos.properties, dos.symlink, dos.local_path, namespace.name
                         FROM data_objects as dos
                         JOIN namespace
                         ON dos.inode = namespace.inode
@@ -662,8 +663,9 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 		var tags string
 		var props string
 		var mode int
-		rows.Scan(&f.Kind,&f.Id, &f.ProjId, &f.State, &f.ArchivalState, &f.Inode, &f.Size, &ctime, &mtime, &mode,
-			&tags, &props, &f.InlineData,&f.Name)
+		rows.Scan(&f.Kind,&f.Id, &f.ProjId, &f.State, &f.ArchivalState, &f.Inode,
+			&f.Size, &ctime, &mtime, &mode,
+			&tags, &props, &f.Symlink, &f.LocalPath, &f.Name)
 		f.Ctime = SecondsToTime(ctime)
 		f.Mtime = SecondsToTime(mtime)
 		f.Tags = tagsUnmarshal(tags)
@@ -701,7 +703,8 @@ func (mdb *MetadataDb) createDataObject(
 	mode os.FileMode,
 	parentDir string,
 	fname string,
-	inlineData string) (int64, error) {
+	symlink string,
+	localPath string) (int64, error) {
 	if mdb.options.VerboseLevel > 1 {
 		mdb.log("createDataObject %s:%s %s", projId, objId,
 			filepath.Clean(parentDir + "/" + fname))
@@ -717,9 +720,9 @@ func (mdb *MetadataDb) createDataObject(
 	// Create an entry for the file
 	sqlStmt := fmt.Sprintf(`
  	        INSERT INTO data_objects
-		VALUES ('%d', '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%s', '%s', '%s', '%d', '%d');`,
+		VALUES ('%d', '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%s', '%s', '%s', '%s', '%d', '%d');`,
 		kind, objId, projId, state, archivalState, inode, size, ctime, mtime, int(mode),
-		mTags, mProps, inlineData,
+		mTags, mProps, symlink, localPath,
 		boolToInt(dirtyData), boolToInt(dirtyMetadata))
 	if _, err := oph.txn.Exec(sqlStmt); err != nil {
 		mdb.log(err.Error())
@@ -868,7 +871,7 @@ func (mdb *MetadataDb) kindOfFile(o DxDescribeDataObject) int {
 	return kind
 }
 
-func inlineDataOfFile(kind int, o DxDescribeDataObject) string {
+func symlinkOfFile(kind int, o DxDescribeDataObject) string {
 	if kind == FK_Regular && len(o.SymlinkPath) > 0 {
 		// A symbolic link
 		kind = FK_Symlink
@@ -908,7 +911,7 @@ func (mdb *MetadataDb) populateDir(
 
 	for _, o := range dxObjs {
 		kind := mdb.kindOfFile(o)
-		inlineData := inlineDataOfFile(kind, o)
+		symlink := symlinkOfFile(kind, o)
 
 		_, err := mdb.createDataObject(
 			oph,
@@ -927,7 +930,8 @@ func (mdb *MetadataDb) populateDir(
 			fileReadWriteMode,
 			dirPath,
 			o.Name,
-			inlineData)
+			symlink,
+			"")
 		if err != nil {
 			return oph.RecordError(err)
 		}
@@ -1195,6 +1199,7 @@ func (mdb *MetadataDb) PopulateRoot(ctx context.Context, oph *OpHandle, manifest
 			fileReadOnlyMode,
 			fl.Parent,
 			fl.Fname,
+			"",
 			"")
 		if err != nil {
 			mdb.log(err.Error())
@@ -1264,6 +1269,7 @@ func (mdb *MetadataDb) CreateFile(
 		mode,
 		dir.FullPath,
 		fname,
+		"",
 		localPath)
 	if err != nil {
 		mdb.log("CreateFile error creating data object")
@@ -1282,7 +1288,8 @@ func (mdb *MetadataDb) CreateFile(
 		Ctime : SecondsToTime(nowSeconds),
 		Mtime : SecondsToTime(nowSeconds),
 		Mode : mode,
-		InlineData : localPath,
+		Symlink: "",
+		LocalPath : localPath,
 	}, nil
 }
 
@@ -1566,7 +1573,7 @@ func (mdb *MetadataDb) DirtyFilesGetAllAndReset() ([]DirtyFileInfo, error) {
                                dos.dirty_metadata as dirty_metadata,
                                dos.id,
                                dos.size,
-                               dos.inline_data,
+                               dos.local_path,
                                dos.tags,
                                dos.properties,
                                namespace.name,

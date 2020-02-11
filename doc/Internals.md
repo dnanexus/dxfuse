@@ -19,7 +19,8 @@ The `data_objects` table maintains information for files, applets, workflows, an
 | mode            | int      | Unix permission bits |
 | tags            | text     | DNAx tags for this object, encoded as a JSON array |
 | properties      | text     | DNAx properties for this object, encoded as JSON  |
-| inline\_data    | text     | holds the path for a symlink, if it has a local copy, this is the path |
+| symlink         | text     | holds the path for a symlink (if symlink) |
+| local\_path     | text     | if file has a local copy, this is the path |
 | dirty\_data     | int      | has the data been modified? (only files) |
 | dirty\_metadata | int      | have the tags or properties been modified? |
 

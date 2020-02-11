@@ -206,8 +206,10 @@ type File struct {
 	Properties map[string]string
 
 	// for a symlink, it holds the path.
+	Symlink   string
+
 	// For a regular file, a path to a local copy (if any).
-	InlineData string
+	LocalPath string
 }
 
 func (f File) GetAttrs() (a fuseops.InodeAttributes) {
@@ -232,7 +234,7 @@ type DeadFile struct {
 	Id         string  // Required to build a download URL
 	ProjId     string  // Note: this could be a container
 	Inode      int64
-	InlineData string
+	LocalPath  string
 }
 
 // Information required to upload file data to the platform.

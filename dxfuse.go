@@ -376,8 +376,7 @@ func (fsys *Filesys) SetInodeAttributes(ctx context.Context, op *fuseops.SetInod
 
 	if op.Size != nil && *op.Size != oldSize {
 		// The size changed, truncate the file
-		localPath := file.InlineData
-		if err := os.Truncate(localPath, int64(*op.Size)); err != nil {
+		if err := os.Truncate(file.LocalPath, int64(*op.Size)); err != nil {
 			fsys.log("Error truncating inode=%d from %d to %d",
 				op.Inode, oldSize, op.Size)
 			return err
@@ -1149,19 +1148,24 @@ func (fsys *Filesys) ReleaseDirHandle(ctx context.Context, op *fuseops.ReleaseDi
 // ===
 // File handling
 //
-func (fsys *Filesys) openRegularFile(ctx context.Context, oph *OpHandle, op *fuseops.OpenFileOp, f File) (*FileHandle, error) {
-	if f.InlineData != "" {
+func (fsys *Filesys) openRegularFile(
+	ctx context.Context,
+	oph *OpHandle,
+	op *fuseops.OpenFileOp,
+	f File) (*FileHandle, error) {
+
+	if f.LocalPath != "" {
 		// a regular file that has a local copy
-		reader, err := os.Open(f.InlineData)
+		reader, err := os.Open(f.LocalPath)
 		if err != nil {
-			fsys.log("Could not open local file %s, err=%s", f.InlineData, err.Error())
+			fsys.log("Could not open local file %s, err=%s", f.LocalPath, err.Error())
 			return nil, err
 		}
 		fh := &FileHandle{
 			fKind: RO_LocalCopy,
 			f : f,
 			url: nil,
-			localPath : &f.InlineData,
+			localPath : &f.LocalPath,
 			fd : reader,
 		}
 
@@ -1254,7 +1258,7 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 			fKind : RO_Remote,
 			f : file,
 			url : &DxDownloadURL{
-				URL : file.InlineData,
+				URL : file.Symlink,
 				Headers : nil,
 			},
 			localPath : nil,
