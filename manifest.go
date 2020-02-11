@@ -22,6 +22,7 @@ type ManifestFile struct {
 
 	// These may not be provided by the user. Then, we
 	// need to query DNAx for the information.
+	State         string  `json:"state,omitempty"`
 	ArchivalState string  `json:"archivalState,omitempty"`
 	Fname   string        `json:"fname,omitempty"`
 	Size    int64         `json:"size,omitempty"`
@@ -300,7 +301,9 @@ func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnviron
 	// Make a list of all the files that are missing details
 	fileIds := make(map[string]bool)
 	for _, fl := range m.Files {
-		if fl.Fname == "" ||
+		if fl.State == "" ||
+			fl.ArchivalState == "" ||
+			fl.Fname == "" ||
 			fl.Size == 0 ||
 			fl.CtimeSeconds == 0 ||
 			fl.MtimeSeconds == 0 {
@@ -330,6 +333,7 @@ func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnviron
 			if fl.Fname == "" {
 				fl.Fname = fDesc.Name
 			}
+			fl.State = fDesc.State
 			fl.ArchivalState = fDesc.ArchivalState
 			fl.Size = fDesc.Size
 			fl.CtimeSeconds = fDesc.CtimeSeconds
