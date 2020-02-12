@@ -166,6 +166,13 @@ func (fsys *Filesys) Shutdown() {
 
 // check if a user has sufficient permissions to read/write a project
 func (fsys *Filesys) checkProjectPermissions(projId string, requiredPerm int) bool {
+	if fsys.options.ReadOnly {
+		// if the filesystem is mounted read-only, we
+		// allow only operations that require VIEW level access
+		if requiredPerm > PERM_VIEW {
+			return false
+		}
+	}
 	pDesc := fsys.projId2Desc[projId]
 	return pDesc.Level >= requiredPerm
 }
@@ -369,7 +376,7 @@ func (fsys *Filesys) SetInodeAttributes(ctx context.Context, op *fuseops.SetInod
 		attrs.Mtime = *op.Mtime
 	}
 	// we don't handle atime
-	if err := fsys.mdb.UpdateFile(ctx, oph, file, int64(attrs.Size), attrs.Mtime, attrs.Mode); err != nil {
+	if err := fsys.mdb.UpdateFileAttrs(ctx, oph, file, int64(attrs.Size), attrs.Mtime, attrs.Mode); err != nil {
 		fsys.log("database error in OpenFile %s", err.Error())
 		return fuse.EIO
 	}
@@ -468,7 +475,6 @@ func (fsys *Filesys) MkDir(ctx context.Context, op *fuseops.MkDirOp) error {
 	if !fsys.checkProjectPermissions(parentDir.ProjId, PERM_CONTRIBUTE) {
 		return syscall.EPERM
 	}
-
 
 	// The mode must be 777 for fuse to work properly
 	// We -ignore- the mode set by the user.
@@ -616,6 +622,14 @@ func (fsys *Filesys) insertIntoDirHandleTable(dh *DirHandle) fuseops.HandleID {
 	return did
 }
 
+// Create a file in a protected directory, used only
+// by dxfuse.
+func (fsys *Filesys) createLocalPath(filename string) string {
+	cnt := atomic.AddUint64(&fsys.tmpFileCounter, 1)
+	localPath := fmt.Sprintf("%s/%d_%s", CreatedFilesDir, cnt, filename)
+	return localPath
+}
+
 // A CreateRequest asks to create and open a file (not a directory).
 //
 func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) error {
@@ -658,11 +672,8 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	// we now know that the parent directory exists, and the file
 	// does not.
 
-	// Create a temporary file in a protected directory, used only
-	// by dxfuse.
-	cnt := atomic.AddUint64(&fsys.tmpFileCounter, 1)
-	localPath := fmt.Sprintf("%s/%d_%s", CreatedFilesDir, cnt, op.Name)
-
+	// Create a local file to hold the data
+	localPath := fsys.createLocalPath(op.Name)
 	file, err := fsys.mdb.CreateFile(ctx, oph, &parentDir, op.Name, op.Mode, localPath)
 	if err != nil {
 		return err
@@ -704,7 +715,6 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 		fKind : RW_File,
 		f : file,
 		url : nil,
-		localPath : &localPath,
 		fd : writer,
 	}
 	op.Handle = fsys.insertIntoFileHandleTable(&fh)
@@ -1156,16 +1166,15 @@ func (fsys *Filesys) openRegularFile(
 
 	if f.LocalPath != "" {
 		// a regular file that has a local copy
-		reader, err := os.Open(f.LocalPath)
+		reader, err := os.OpenFile(f.LocalPath, os.O_RDWR, 0644)
 		if err != nil {
 			fsys.log("Could not open local file %s, err=%s", f.LocalPath, err.Error())
 			return nil, err
 		}
 		fh := &FileHandle{
-			fKind: RO_LocalCopy,
+			fKind: RW_File,
 			f : f,
 			url: nil,
-			localPath : &f.LocalPath,
 			fd : reader,
 		}
 
@@ -1190,7 +1199,6 @@ func (fsys *Filesys) openRegularFile(
 		fKind: RO_Remote,
 		f : f,
 		url: &u,
-		localPath : nil,
 		fd : nil,
 	}
 
@@ -1261,7 +1269,6 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 				URL : file.Symlink,
 				Headers : nil,
 			},
-			localPath : nil,
 			fd : nil,
 		}
 	default:
@@ -1397,38 +1404,140 @@ func (fsys *Filesys) ReadFile(ctx context.Context, op *fuseops.ReadFileOp) error
 	}
 }
 
+// download an entire file from a URL onto a local path
+func (fsys *Filesys) downloadEntireFile(
+	oph *OpHandle,
+	url DxDownloadURL,
+	fileSize int64,
+	localPath string) error {
+	if fsys.options.Verbose {
+		fsys.log("reading entire file len=%d path=%s", fileSize, localPath)
+	}
 
-func (fsys *Filesys) findWritableFileHandle(handle fuseops.HandleID) (*FileHandle, error) {
-	fsys.mutex.Lock()
-	defer fsys.mutex.Unlock()
+	headers := make(map[string]string)
 
-	// Here, we start from the file handle
-	fh,ok := fsys.fhTable[handle]
-	if !ok {
-		// invalid file handle. It doesn't exist in the table
-		return nil, fuse.EINVAL
+	// Copy the immutable headers
+	for key, value := range url.Headers {
+		headers[key] = value
 	}
-	if fh.fKind != RW_File {
-		// This file isn't open for writing
-		return nil, syscall.EPERM
+	headers["Range"] = fmt.Sprintf("bytes=%d-%d", 0, fileSize-1)
+
+	// Safety procedure to force timeout to prevent hanging
+	ctx, cancel := context.WithCancel(context.TODO())
+	timer := time.AfterFunc(readRequestTimeout, func() {
+		cancel()
+	})
+	defer timer.Stop()
+
+	for tCnt := 0; tCnt < NumRetriesDefault; tCnt++ {
+		data, err := dxda.DxHttpRequest(ctx, oph.httpClient, 1, "GET", url.URL, headers, []byte("{}"))
+		if err != nil {
+			return err
+		}
+
+		recvLen := int64(len(data))
+		if recvLen != fileSize {
+			// retry (only) in the case of short read
+			fsys.log("received length is wrong, got %d, expected %d. Retrying.",
+				recvLen, fileSize)
+			continue
+		}
+
+		// copy data into file
+		fd, err := os.OpenFile(localPath, os.O_RDWR, 0644)
+		defer fd.Close()
+
+		nBytes, err := fd.Write(data)
+		if err != nil {
+			fsys.log("Failed to write to file")
+			return err
+		}
+		if int64(nBytes) != fileSize {
+			fsys.log("Failed to write entire file, %d < %d", nBytes, fileSize)
+			return fuse.EIO
+		}
+		return nil
 	}
-	if fh.fd == nil {
-		log.Panic("file descriptor is empty")
+
+	fsys.log("failed to download file %s", localPath)
+	return fuse.EIO
+}
+
+// This is tricky. We have a remote file that we want
+// to update. This requires:
+// 1. downloading the entire file
+// 2. changing the file-handle
+//
+// This conversion is one way.
+//
+// The download could be long for large files, so we
+// may need to either limit file size, or
+func (fsys *Filesys) convertRemoteFileToLocal(fh *FileHandle) error {
+	if fsys.options.Verbose {
+		fsys.log("We need to first download this file")
 	}
-	return fh, nil
+	oph := fsys.opOpen()
+	defer fsys.opClose(oph)
+
+	localPath := fsys.createLocalPath(fh.f.Name)
+	if err := fsys.downloadEntireFile(oph, *fh.url, fh.f.Size, localPath); err != nil {
+		fsys.log("failed to download file %s %s:%s",
+			fh.f.Name, fh.f.Id, fh.f.ProjId, err.Error())
+		return oph.RecordError(err)
+	}
+
+	err := fsys.mdb.UpdateFileLocalPath(context.TODO(), oph, fh.f, localPath)
+	if err != nil {
+		fsys.log("database error in updating file for write %s", err.Error())
+		return oph.RecordError(fuse.EIO)
+	}
+
+	// I -think- we don't need to hold the lock here, because
+	// the file-handle is used only by one thread.
+	fh.fKind = RW_File
+	fh.f.LocalPath = localPath
+	fh.url = nil
+	fd, err := os.OpenFile(localPath, os.O_RDWR, 0644)
+	if err != nil {
+		fsys.log("Error opening path %s for writing", localPath, err.Error())
+		return err
+	}
+	fh.fd = fd
+	return nil
 }
 
 // Writes to files.
 //
-// A file is created locally, and writes go to the local location. When
-// the file is closed, it becomes read only, and is then uploaded to the cloud.
+// If the file has not been downloaded yet, we need to first download it.
+//
+// Note:
+// 1. the file-open operation doesn't state if the file is going to be opened for
+//    reading or writing.
+// 2. Do we need to update the file attributes in the database? (size, mtime, ctime)
 func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) error {
-	fh,err := fsys.findWritableFileHandle(op.Handle)
-	if err != nil {
-		return err
+	// Find the file handle
+	fsys.mutex.Lock()
+	fh,ok := fsys.fhTable[op.Handle]
+	if !ok {
+		// invalid file handle. It doesn't exist in the table
+		fsys.mutex.Unlock()
+		return fuse.EINVAL
 	}
+	fsys.mutex.Unlock()
+
+	if fh.fKind == RO_Remote {
+		if fh.f.Size > WritableFileSizeLimit {
+			fsys.log("File size is %d, which is larger than the limit we allow for writable files (%d)",
+				fh.f.Size, WritableFileSizeLimit)
+			return syscall.EACCES
+		}
+		if err := fsys.convertRemoteFileToLocal(fh); err != nil {
+			return err
+		}
+	}
+
 	// we are not holding the global lock while we are doing IO
-	_, err = fh.fd.WriteAt(op.Data, op.Offset)
+	_, err := fh.fd.WriteAt(op.Data, op.Offset)
 	return err
 }
 
@@ -1496,8 +1605,8 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 		}
 
 		// flush and close the local file
-		// We leave the local file in place. This allows reading from
-		// it, without accessing the network.
+		// We leave the local file in place. This allows read/write
+		// without additional network transfers.
 		if err := fh.fd.Sync(); err != nil {
 			return err
 		}
@@ -1506,12 +1615,7 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 		}
 		fh.fd = nil
 
-		// make this file read only
-		if err := os.Chmod(*fh.localPath, fileReadOnlyMode); err != nil {
-			return err
-		}
-
-		fInfo, err := os.Lstat(*fh.localPath)
+		fInfo, err := os.Lstat(fh.f.LocalPath)
 		if err != nil {
 			return err
 		}
@@ -1519,18 +1623,11 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 		modTime := fInfo.ModTime()
 
 		// update database entry
-		if err := fsys.mdb.UpdateFile(ctx, oph, fh.f, fileSize, modTime, fileReadOnlyMode); err != nil {
+		if err := fsys.mdb.UpdateFileAttrs(ctx, oph, fh.f, fileSize, modTime, fileReadWriteMode); err != nil {
 			fsys.log("database error in OpenFile %s", err.Error())
 			return fuse.EIO
 		}
 		// the sync daemon will upload the file asynchronously
-		return nil
-
-	case RO_LocalCopy:
-		// Read-only file with a local copy
-		if fh.fd != nil {
-			fh.fd.Close()
-		}
 		return nil
 
 	default:

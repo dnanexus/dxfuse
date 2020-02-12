@@ -16,6 +16,11 @@ import (
 )
 
 const (
+	KiB                   = 1024
+	MiB                   = 1024 * KiB
+	GiB                   = 1024 * MiB
+)
+const (
 	CreatedFilesDir = "/var/dxfuse/created_files"
 	DatabaseFile       = "/var/dxfuse/metadata.db"
 	HttpClientPoolSize = 4
@@ -24,15 +29,11 @@ const (
 	MaxNumFileHandles  = 1000 * 1000
 	NumRetriesDefault  = 3
 	Version            = "v0.19"
+	WritableFileSizeLimit = 1 * MiB
 )
 const (
 	InodeInvalid       = 0
 	InodeRoot          = fuseops.RootInodeID  // This is an OS constant
-)
-const (
-	KiB                   = 1024
-	MiB                   = 1024 * KiB
-	GiB                   = 1024 * MiB
 )
 const (
 	// It turns out that in order for regular users to be able to create file,
@@ -262,9 +263,12 @@ type DirtyFileInfo struct {
 
 // Files can be opened in read-only mode, or read-write mode.
 const (
-	RO_Remote = 1     // read only file that is on the cloud
-	RW_File = 2       // newly created file
-	RO_LocalCopy = 3  // read only file that has a local copy
+	// read only file that is on the cloud
+	RO_Remote = 1
+
+	// file that has a local copy and can be modified.
+	// updates will be propagated with the background daemon.
+	RW_File = 2
 )
 
 type FileHandle struct {
@@ -275,9 +279,6 @@ type FileHandle struct {
 	// URL used for downloading file ranges.
 	// Used for read-only files.
 	url *DxDownloadURL
-
-	// Local file copy, may be empty.
-	localPath *string
 
 	// 1. Used for reading from an immutable local copy
 	// 2. Used for writing to newly created files.

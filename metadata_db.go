@@ -1321,7 +1321,7 @@ func (mdb *MetadataDb) Unlink(ctx context.Context, oph *OpHandle, file File) err
 	return nil
 }
 
-func (mdb *MetadataDb) UpdateFile(
+func (mdb *MetadataDb) UpdateFileAttrs(
 	ctx context.Context,
 	oph *OpHandle,
 	f File,
@@ -1345,6 +1345,29 @@ func (mdb *MetadataDb) UpdateFile(
 	}
 	return nil
 }
+
+func (mdb *MetadataDb) UpdateFileLocalPath(
+	ctx context.Context,
+	oph *OpHandle,
+	f File,
+	localPath string) error {
+	if mdb.options.Verbose {
+		mdb.log("Update file=%v localPath=%s", f, localPath)
+	}
+	sqlStmt := fmt.Sprintf(`
+ 		        UPDATE data_objects
+                        SET local_path = '%s'
+			WHERE inode = '%d';`,
+		localPath, f.Inode)
+
+	if _, err := oph.txn.Exec(sqlStmt); err != nil {
+		mdb.log(err.Error())
+		mdb.log("UpdateFileLocalPath error executing transaction")
+		return oph.RecordError(err)
+	}
+	return nil
+}
+
 
 
 // Move a file
