@@ -179,6 +179,7 @@ function file_create_existing {
     cd $write_dir
 
     echo "happy days" > hello.txt
+    chmod 444 hello.txt
 
     set +e
     (echo "nothing much" > hello.txt) >& /tmp/cmd_results.txt

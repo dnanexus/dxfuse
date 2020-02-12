@@ -52,7 +52,8 @@ type SyncDbDx struct {
 	projId2Desc         map[string]DxDescribePrj
 	fileUpdateQueue     chan FileUpdateReq
 	chunkQueue          chan *Chunk
-	enableSweep         bool
+	sweepStopChan       chan struct{}
+	sweepMutex          sync.Mutex
 	wg                  sync.WaitGroup
 	mutex              *sync.Mutex
 	mdb                *MetadataDb
@@ -80,7 +81,8 @@ func NewSyncDbDx(
 		projId2Desc : projId2Desc,
 		fileUpdateQueue : nil,
 		chunkQueue : chunkQueue,
-		enableSweep : true,
+		sweepStopChan : nil,
+		sweepMutex : sync.Mutex{},
 		mutex : mutex,
 		mdb : mdb,
 		ops : NewDxOps(dxEnv, options),
@@ -97,10 +99,6 @@ func NewSyncDbDx(
 
 	sybx.startBackgroundWorkers()
 
-	// start a periodic thread to synchronize the database with
-	// the platform
-	go sybx.periodicSync()
-
 	return sybx
 }
 
@@ -110,20 +108,24 @@ func (sybx *SyncDbDx) log(a string, args ...interface{}) {
 }
 
 func (sybx *SyncDbDx) startBackgroundWorkers() {
-	sybx.fileUpdateQueue = make(chan FileUpdateReq)
-
 	// Create a bunch of threads to update files and metadata
+	sybx.fileUpdateQueue = make(chan FileUpdateReq)
 	for i := 0; i < numFileThreads; i++ {
 		sybx.wg.Add(1)
 		go sybx.updateFileWorker()
 	}
+
+	// start a periodic thread to synchronize the database with
+	// the platform
+	sybx.wg.Add(1)
+	sybx.sweepStopChan = make(chan struct{})
+	go sybx.periodicSync()
 }
 
 func (sybx *SyncDbDx) stopBackgroundWorkers() {
 	// signal all upload and modification threads to stop
 	close(sybx.fileUpdateQueue)
-
-	// Note: we don't close the chunkQeue
+	close(sybx.sweepStopChan)
 
 	// wait for all of them to complete
 	sybx.wg.Wait()
@@ -132,11 +134,6 @@ func (sybx *SyncDbDx) stopBackgroundWorkers() {
 }
 
 func (sybx *SyncDbDx) Shutdown() {
-	// disable to sweep thread
-	sybx.mutex.Lock()
-	sybx.enableSweep = false
-	sybx.mutex.Unlock()
-
 	sybx.stopBackgroundWorkers()
 
 	close(sybx.chunkQueue)
@@ -372,6 +369,15 @@ func (sybx *SyncDbDx) updateFileData(
 		upReq.dfi.ProjId,
 		upReq.dfi.Name,
 		upReq.dfi.ProjFolder)
+
+	// Update the database with the new ID.
+	//
+	// TODO: the file may have been deleted while it was being uploaded.
+	// I don't think this case is fully covered.
+	sybx.mutex.Lock()
+	sybx.mdb.UpdateInodeFileId(upReq.dfi.Inode, fileId)
+	sybx.mutex.Unlock()
+
 	if err != nil {
 		sybx.log("Error in creating file (%s:%s/%s) on dnanexus: %s",
 			upReq.dfi.ProjId, upReq.dfi.ProjFolder,	upReq.dfi.Name,
@@ -387,12 +393,6 @@ func (sybx *SyncDbDx) updateFileData(
 			fileId, err.Error())
 		return "", err
 	}
-
-	// Update the database with the new ID.
-	//
-	// TODO: the file may have been deleted while it was being uploaded.
-	// this will cause a failure here.
-	sybx.mdb.UpdateInodeFileId(upReq.dfi.Inode, fileId)
 
 	// Erase the old file-id.
 	if upReq.dfi.Id == "" {
@@ -584,15 +584,25 @@ to the platform due to part size constraints. Error=%s`,
 }
 
 func (sybx *SyncDbDx) sweep() error {
+	// we want just one sweep operation running at
+	// any one time
+	sybx.sweepMutex.Lock()
+	defer sybx.sweepMutex.Unlock()
+
 	if sybx.options.Verbose {
 		sybx.log("syncing database and platform [")
 	}
 
-	// find all the dirty files
+	// find all the dirty files. We need to lock
+	// the database while we are doing this.
+	sybx.mutex.Lock()
 	dirtyFiles, err := sybx.mdb.DirtyFilesGetAllAndReset()
 	if err != nil {
+		sybx.mutex.Unlock()
 		return err
 	}
+	sybx.mutex.Unlock()
+
 	if sybx.options.Verbose {
 		sybx.log("%d dirty files", len(dirtyFiles))
 	}
@@ -610,27 +620,28 @@ func (sybx *SyncDbDx) sweep() error {
 
 func (sybx *SyncDbDx) periodicSync() {
 	for true {
+		// we need to wake up often to check if
+		// the sweep has been disabled.
 		time.Sleep(sweepPeriodicTime)
 
-		sybx.mutex.Lock()
-		if sybx.enableSweep {
-			if err := sybx.sweep(); err != nil {
-				sybx.log("Error in sweep: %s", err.Error())
-			}
+		select {
+		default:
+			// DO work
+		case <- sybx.sweepStopChan:
+			sybx.wg.Done()
 		}
-		sybx.mutex.Unlock()
+
+		if err := sybx.sweep(); err != nil {
+			sybx.log("Error in sweep: %s", err.Error())
+		}
 	}
 }
 
 func (sybx *SyncDbDx) CmdSync() error {
-	sybx.mutex.Lock()
 	if err := sybx.sweep(); err != nil {
-		sybx.mutex.Unlock()
 		sybx.log("Error in sweep: %s", err.Error())
 		return err
 	}
-	sybx.enableSweep = false
-	sybx.mutex.Unlock()
 
 	// now wait for the objects to be created and the data uploaded
 	sybx.stopBackgroundWorkers()
@@ -638,8 +649,5 @@ func (sybx *SyncDbDx) CmdSync() error {
 	// start the background work again, now that everything is done
 	sybx.startBackgroundWorkers()
 
-	sybx.mutex.Lock()
-	sybx.enableSweep = true
-	sybx.mutex.Unlock()
 	return nil
 }
