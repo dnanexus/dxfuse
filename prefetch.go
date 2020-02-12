@@ -5,9 +5,11 @@ package dxfuse
 // we need to do is check the map.
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"math/bits"
+	"os"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -382,6 +384,52 @@ func (pgs *PrefetchGlobalState) readData(client *retryablehttp.Client, ioReq IoR
 
 	pgs.log("Did not received the data for IO [%d -- %d]", ioReq.startByte, ioReq.endByte)
 	return nil, fmt.Errorf("Did not receive the data")
+}
+
+// Download an entire file, and write it to disk.
+func (pgs *PrefetchGlobalState) DownloadEntireFile(
+	client *retryablehttp.Client,
+	f File,
+	url DxDownloadURL,
+	fd *os.File,
+	localPath string) error {
+	if pgs.verboseLevel >= 1 {
+		pgs.log("Downloading entire file %s to %s", f.Name, localPath)
+	}
+
+	endOfs := f.Size - 1
+	startByte := int64(0)
+	for startByte <= endOfs {
+		endByte := MinInt64(startByte + pgs.prefetchMaxIoSize - 1, endOfs)
+		iovLen := endByte - startByte + 1
+
+		// read one chunk of the file
+		uniqueId := atomic.AddUint64(&pgs.ioCounter, 1)
+		ioReq := IoReq{
+			hid : 0, // Invalid handle, shouldn't be in a table
+			f : f,
+			url : url,
+			ioSize : iovLen,
+			startByte : startByte,
+			endByte : endByte,
+			id : uniqueId,
+		}
+
+		data, err := pgs.readData(client, ioReq)
+		if err != nil {
+			return err
+		}
+		n, err := fd.WriteAt(data, startByte)
+		if err != nil {
+			return err
+		}
+		if int64(n) != iovLen {
+			return errors.New("Length of local io-write is wrong")
+		}
+
+		startByte += pgs.prefetchMaxIoSize
+	}
+	return nil
 }
 
 // Find the index for this chunk in the cache. The chunks may be different

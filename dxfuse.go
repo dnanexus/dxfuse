@@ -1166,7 +1166,7 @@ func (fsys *Filesys) openRegularFile(
 
 	if f.LocalPath != "" {
 		// a regular file that has a local copy
-		reader, err := os.OpenFile(f.LocalPath, os.O_RDWR, 0644)
+		reader, err := os.OpenFile(f.LocalPath, os.O_RDWR|os.O_CREATE, 0644)
 		if err != nil {
 			fsys.log("Could not open local file %s, err=%s", f.LocalPath, err.Error())
 			return nil, err
@@ -1444,7 +1444,7 @@ func (fsys *Filesys) downloadEntireFile(
 		}
 
 		// copy data into file
-		fd, err := os.OpenFile(localPath, os.O_RDWR, 0644)
+		fd, err := os.OpenFile(localPath, os.O_RDWR|os.O_CREATE, 0644)
 		defer fd.Close()
 
 		nBytes, err := fd.Write(data)
@@ -1472,38 +1472,38 @@ func (fsys *Filesys) downloadEntireFile(
 //
 // The download could be long for large files, so we
 // may need to either limit file size, or
-func (fsys *Filesys) convertRemoteFileToLocal(fh *FileHandle) error {
+func (fsys *Filesys) convertRemoteFileToLocal(filename string, fh *FileHandle) (string, error) {
 	if fsys.options.Verbose {
 		fsys.log("We need to first download this file")
 	}
 	oph := fsys.opOpen()
 	defer fsys.opClose(oph)
 
-	localPath := fsys.createLocalPath(fh.f.Name)
-	if err := fsys.downloadEntireFile(oph, *fh.url, fh.f.Size, localPath); err != nil {
+	// create the local file
+	localPath := fsys.createLocalPath(filename)
+	fd, err := os.OpenFile(localPath, os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		return "", nil
+	}
+	defer fd.Close()
+
+	if err := fsys.pgs.DownloadEntireFile(oph.httpClient, fh.f, *fh.url, fd, localPath); err != nil {
 		fsys.log("failed to download file %s %s:%s",
 			fh.f.Name, fh.f.Id, fh.f.ProjId, err.Error())
-		return oph.RecordError(err)
+		return "", oph.RecordError(err)
 	}
 
-	err := fsys.mdb.UpdateFileLocalPath(context.TODO(), oph, fh.f, localPath)
+	// update the database, match the file with its local path
+	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
+
+	err = fsys.mdb.UpdateFileLocalPath(context.TODO(), oph, fh.f, localPath)
 	if err != nil {
 		fsys.log("database error in updating file for write %s", err.Error())
-		return oph.RecordError(fuse.EIO)
+		return "", oph.RecordError(fuse.EIO)
 	}
 
-	// I -think- we don't need to hold the lock here, because
-	// the file-handle is used only by one thread.
-	fh.fKind = RW_File
-	fh.f.LocalPath = localPath
-	fh.url = nil
-	fd, err := os.OpenFile(localPath, os.O_RDWR, 0644)
-	if err != nil {
-		fsys.log("Error opening path %s for writing", localPath, err.Error())
-		return err
-	}
-	fh.fd = fd
-	return nil
+	return localPath, nil
 }
 
 // Writes to files.
@@ -1531,9 +1531,22 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 				fh.f.Size, WritableFileSizeLimit)
 			return syscall.EACCES
 		}
-		if err := fsys.convertRemoteFileToLocal(fh); err != nil {
+		localPath, err := fsys.convertRemoteFileToLocal(fh.f.Name, fh)
+		if err != nil {
 			return err
 		}
+
+		fd, err := os.OpenFile(localPath, os.O_RDWR, 0644)
+		if err != nil {
+			return err
+		}
+
+		fsys.mutex.Lock()
+		fh.fKind = RW_File
+		fh.f.LocalPath = localPath
+		fh.url = nil
+		fh.fd = fd
+		fsys.mutex.Unlock()
 	}
 
 	// we are not holding the global lock while we are doing IO
