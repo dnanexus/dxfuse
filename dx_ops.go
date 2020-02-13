@@ -12,6 +12,11 @@ import (
 	"github.com/hashicorp/go-retryablehttp"
 )
 
+const (
+	fileCloseWaitTime = 5 * time.Second
+	fileCloseMaxWaitTime = 10 * time.Minute
+)
+
 type DxOps struct {
 	dxEnv   dxda.DXEnvironment
 	options  Options
