@@ -4,7 +4,7 @@ aws : copy_all
 	dx build benchmark -f --destination dxfuse_test_data:/applets/benchmark
 	dx build correctness -f --destination dxfuse_test_data:/applets/correctness
 	dx build correctness_downloads -f --destination dxfuse_test_data:/applets/correctness_downloads
-	dx build bam_diff -f --destination dxfuse_test_data:/applets/bam_diff
+	dx build bio_tools -f --destination dxfuse_test_data:/applets/bio_tools
 
 azure: dxfuse copy_all
 	dx build benchmark -f --destination dxfuse_azure_westus:/applets/benchmark
@@ -28,7 +28,7 @@ correct_downloads: dxfuse
 	cp -f /go/bin/dxfuse correctness_downloads/resources/usr/bin/
 
 bio : dxfuse
-	cp -f /go/bin/dxfuse bam_diff/resources/usr/bin/
+	cp -f /go/bin/dxfuse bio_tools/resources/usr/bin/
 
 clean :
 	rm -f dxfuse
