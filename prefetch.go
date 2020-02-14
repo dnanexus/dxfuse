@@ -112,7 +112,7 @@ type PrefetchFileMetadata struct {
 	hid                  fuseops.HandleID
 	inode                int64
 	id                   string
-	size                int64
+	size                 int64
 	url                  DxDownloadURL
 	state                int
 
@@ -211,14 +211,6 @@ func (pfm *PrefetchFileMetadata) cancelIOs() {
 	}
 }
 
-func (pfm *PrefetchFileMetadata) reset() {
-	pfm.log("access is not sequential, reseting stream state inode=%d", pfm.inode)
-	pfm.cancelIOs()
-	pfm.hiUserAccessOfs = 0
-	pfm.state = PFM_NIL
-	pfm.cache = Cache{}
-}
-
 // write a log message, and add a header
 func (pgs *PrefetchGlobalState) log(a string, args ...interface{}) {
 	LogMsg("prefetch", a, args...)
@@ -285,6 +277,16 @@ func NewPrefetchGlobalState(verboseLevel int, dxEnv dxda.DXEnvironment) *Prefetc
 	return pgs
 }
 
+func (pgs *PrefetchGlobalState) resetPfm(pfm *PrefetchFileMetadata) {
+	if pgs.verbose {
+		pfm.log("access is not sequential, reseting stream state inode=%d", pfm.inode)
+	}
+	pfm.cancelIOs()
+	pfm.hiUserAccessOfs = 0
+	pfm.state = PFM_NIL
+	pfm.cache = Cache{}
+}
+
 func (pgs *PrefetchGlobalState) Shutdown() {
 	// signal all prefetch threads to stop
 	close(pgs.ioQueue)
@@ -303,7 +305,7 @@ func (pgs *PrefetchGlobalState) Shutdown() {
 	for _, hid := range allHandles {
 		pfm := pgs.getAndLockPfm(hid)
 		if pfm != nil {
-			pfm.reset()
+			pgs.resetPfm(pfm)
 			pfm.mutex.Unlock()
 		}
 	}
@@ -393,7 +395,7 @@ func (pgs *PrefetchGlobalState) DownloadEntireFile(
 	url DxDownloadURL,
 	fd *os.File,
 	localPath string) error {
-	if pgs.verboseLevel >= 1 {
+	if pgs.verbose {
 		pgs.log("Downloading entire file (inode=%d) to %s", inode, localPath)
 	}
 
@@ -568,7 +570,7 @@ func (pgs *PrefetchGlobalState) tableCleanupWorker() {
 				if !pgs.isWorthIt(pfm, now) {
 					// This stream isn't worth it, release
 					// the cache resources
-					pfm.reset()
+					pgs.resetPfm(pfm)
 				}
 				pfm.mutex.Unlock()
 			}
@@ -674,7 +676,7 @@ func (pgs *PrefetchGlobalState) RemoveStreamEntry(hid fuseops.HandleID) {
 		}
 
 		// wake up any waiting synchronous user IOs
-		pfm.reset()
+		pgs.resetPfm(pfm)
 		pfm.mutex.Unlock()
 
 		// remove from the table
@@ -1058,7 +1060,7 @@ func (pgs *PrefetchGlobalState) CacheLookup(hid fuseops.HandleID, startOfs int64
 		// No data is cached. Only detecting if there is sequential access.
 		ok := pgs.markAccessedAndMaybeStartPrefetch(pfm, startOfs, endOfs)
 		if !ok {
-			pfm.reset()
+			pgs.resetPfm(pfm)
 		}
 		return 0
 
@@ -1069,7 +1071,7 @@ func (pgs *PrefetchGlobalState) CacheLookup(hid fuseops.HandleID, startOfs int64
 		if retCode == DATA_OUTSIDE_CACHE {
 			// The file is not accessed sequentially.
 			// zero out the cache and start over.
-			pfm.reset()
+			pgs.resetPfm(pfm)
 		}
 		return len
 

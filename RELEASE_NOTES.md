@@ -1,10 +1,13 @@
 # Release Notes
 
 ## v0.19
-- *Experimental support for overwriting files*
-- Removed support for hard links. The combination of hard-links, cloning on DNAx, and writable files is too complex at the moment.
+- *Experimental support for overwriting files*. There is a limit of 16 MiB on a file that is undergoes modification. This is because it needs to first be downloaded in its entirety, before allowing any changes. It will then be uploaded to the platform. This is an expensive operation that is required because DNAnexus files are immutable.
+
+- Removed support for hard links. The combination of hard-links, cloning on DNAx, and writable files does not work at the moment.
+
 - Improvements to extended attributes (xattrs). The testing tool we use is `xattr`, which is native on MacOS (OSX), and can be installed with `sudo apt-get install xattr` on Linux. Xattrs can be written and removed.
-- Tags and properties are namespaced. For example, if `zebra.txt` is a normal text file with no DNAx tags or properties then `xattr -l` will print out all the tags, properties, and extra attributes that have no POSIX equivalent. This is split into three namespaces: _base_, _prop_, and _tag_.
+
+Tags and properties are namespaced. For example, if `zebra.txt` is a normal text file with no DNAx tags or properties then `xattr -l` will print out all the tags, properties, and extra attributes that have no POSIX equivalent. This is split into three namespaces: _base_, _prop_, and _tag_.
 
 ```
 $ xattr -l zebra.txt
