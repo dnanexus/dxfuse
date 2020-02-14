@@ -6,8 +6,7 @@
 projName="dxfuse_test_data"
 
 # larger test for a cloud worker
-#dxDirOnProject="correctness"
-dxDirOnProject="mini"
+dxDirOnProject="correctness"
 
 baseDir=$HOME/dxfuse_test
 mountpoint=${baseDir}/MNT

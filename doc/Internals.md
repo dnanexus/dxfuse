@@ -1,4 +1,4 @@
-## The Database Schema
+# The Database Schema
 
 A local sqlite3 database is used to store filesystem information
 discovered by querying DNAnexus.
@@ -7,20 +7,22 @@ The `data_objects` table maintains information for files, applets, workflows, an
 
 | field name      | SQL type | description |
 | ---             | ---      | --          |
-| inode           | bigint   | local filesystem i-node, cannot change |
 | kind            | int      | type of file: regular, symbolic link, other |
 | id              | text     | The DNAx object-id |
 | proj\_id        | text     | A project id for the file |
 | state           | text     | the file state (open/closing/closed) |
 | archival\_state | text     | archival state of this file |
+| inode           | bigint   | local filesystem i-node, cannot change |
 | size            | bigint   | size of the file in bytes |
 | ctime           | bigint   | creation time |
 | mtime           | bigint   | modification time |
 | mode            | int      | Unix permission bits |
-| nlink           | int      | number of hard links to this file |
 | tags            | text     | DNAx tags for this object, encoded as a JSON array |
 | properties      | text     | DNAx properties for this object, encoded as JSON  |
-| inline\_data    | text     | holds the path for a symlink, if it has a local copy, this is the path |
+| symlink         | text     | holds the path for a symlink (if symlink) |
+| local\_path     | text     | if file has a local copy, this is the path |
+| dirty\_data     | int      | has the data been modified? (only files) |
+| dirty\_metadata | int      | have the tags or properties been modified? |
 
 It stores `stat` information on a data object, and maps it to an
 inode.  The inode is the primary key, and it cannot change once
@@ -35,6 +37,12 @@ The `archival_state` is relevant for files only. It can have one of
 four values: `live`, `archival`, `archived`, `unarchiving`. A file can
 be accessed only when it is in the `live` state.
 
+The `state` can be one of `open`, `closing`, `closed`. It applies to all data objects.
+
+The `id` will be empty when a file is first created. It will be populated when it is first
+uploaded to the platform. Every update the id will change. This is because DNAx files are immutable,
+and changing, even a single byte, requires rewriting the entire file, generating a new id.
+
 The `namespace` table stores information on the directory structure.
 
 | field name | SQL type | description |
@@ -42,7 +50,7 @@ The `namespace` table stores information on the directory structure.
 | parent     | text | the parent folder |
 | name       | text | directory/file name |
 | obj\_type  | int  | directory=1, data-object=2 |
-| inode      | bigint  | local filesystem i-node, cannot change |
+| inode      | bigint | local filesystem i-node, cannot change |
 
 For example, directory `/A/B/C` is represented with the record:
 ```
@@ -122,26 +130,20 @@ A hard link is an entry in the namespace that points to an existing data object.
 single i-node can have multiple namespace entries, so it cannot serve as a primary key.
 
 
-## Sequential Prefetch
+# Sequential Prefetch
 
 Performing prefetch for sequential streams incurs overhead and costs
 memory. The goal of the prefetch module is: *if a file is read from start to finish, we want to be
 able to read it in large network requests*. What follows is a simplified description of the algorithm.
 
 In order for a file to be eligible for streaming it has to be at
-8MiB. A bitmap is maintained for areas accessed. If the first metabyte
+8MiB. A bitmap is maintained for areas accessed. If a complete metabyte
 is accessed, prefetch is started. This entails sending multiple
 asynchronous IO to fetch 4MiB of data. As long as the data
 is fully read, prefetch continues. If a file is not accessed for more
-than five minutes, or, access is outside the prefetched area, the process stops.
+than five minutes, or, access is outside the prefetched area, the process halts. It will start again if sequential access is detected down the road.
 
-## File upload and creation
-
-It is possible to create new files. These are written to the local disk, and uploaded when they
-are closed. Since DNAnexus files are immutable, once a file is closed, it becomes read only. The local
-copy is not erased, it is accessed when performing read IOs.
-
-## Manifest
+# Manifest
 
 The *manifest* option specifies the initial snapshot of the filesystem
 tree as a JSON file. The database is initialized from this snapshot,
@@ -202,3 +204,33 @@ will create the directory structure:
 ```
 
 Browsing through directory `Cards/J`, is equivalent to traversing the remote `proj-1019001:/Joker` folder.
+
+
+# File creation and modification
+
+dxfuse allows creating new files and modifing existing files,
+inspite of the fact that only immutable files exist on DNAx. The
+mismatch between what the filesystem allows (updating a file), and
+what is available natively on the platform makes the update operation
+expensive.
+
+When a file is first created it is written to the local disk and
+marked dirty in the database. In order to modify an existing file it
+is downloaded in its entirety to the local disk, modified locally, and
+marked dirty. A background daemon scans the database periodically and
+uploads dirty files to the platform. If a file `foo` already exists as
+object `file-xxxx`, a new version of it is uploaded, and when done,
+the database is modified to point to the new version. It is then
+possible to either erase the old version, or keep it as an old
+snapshot.
+
+There are situations where you want the background process to
+synchronously update all modified and newly created files. For example, before shutting down a machine,
+or unmounting the filesystem. This can be done by issuing the command:
+```
+$ dxfuse -sync
+```
+
+Metadata such as xattrs is updated with a similar scheme. The database
+is updated, and the inode is marked `dirtyMetadata`. The background daemon then
+updates the attributes asynchronously.

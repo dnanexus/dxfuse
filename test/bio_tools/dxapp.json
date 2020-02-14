@@ -1,6 +1,6 @@
 {
-  "name": "bam_diff",
-  "summary": "check that bam diff works with dxfuse",
+  "name": "bio_tools",
+  "summary": "check that various bioinformatics tools work well with dxfuse",
   "dxapi": "1.0.0",
   "version": "0.0.1",
   "inputSpec": [
@@ -13,15 +13,23 @@
   "outputSpec": [
     {
       "name" : "runtime_bam_diff",
-      "class" : "string"
+      "class" : "string",
+      "optional" : true
     },
     {
       "name" : "num_lines",
-      "class" : "int"
+      "class" : "int",
+      "optional" : true
     },
     {
       "name" : "runtime_sambamba",
-      "class" : "string"
+      "class" : "string",
+      "optional" : true
+    },
+    {
+      "name" : "runtime_samtools_split",
+      "class" : "string",
+      "optional" : true
     }
   ],
   "runSpec": {

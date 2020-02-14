@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"path/filepath"
 	"os"
 	"strings"
@@ -60,10 +61,37 @@ func (mdb *MetadataDb) log(a string, args ...interface{}) {
 	LogMsg("metadata_db", a, args...)
 }
 
-// open a transaction
 func (mdb *MetadataDb) BeginTxn() (*sql.Tx, error) {
 	return mdb.db.Begin()
 }
+
+func (mdb *MetadataDb) opOpen() *OpHandle {
+	txn, err := mdb.db.Begin()
+	if err != nil {
+		log.Panic("Could not open transaction")
+	}
+
+	return &OpHandle{
+		httpClient : nil,
+		txn : txn,
+		err : nil,
+	}
+}
+
+func (mdb *MetadataDb) opClose(oph *OpHandle) {
+	if oph.err == nil {
+		err := oph.txn.Commit()
+		if err != nil {
+			log.Panic("could not commit transaction")
+		}
+	} else {
+		err := oph.txn.Rollback()
+		if err != nil {
+			log.Panic("could not rollback transaction")
+		}
+	}
+}
+
 
 // Construct a local sql database that holds metadata for
 // a large number of dx:files. This metadata_db will be consulted
@@ -83,20 +111,6 @@ func splitPath(fullPath string) (parentDir string, basename string) {
 	} else {
 		return filepath.Dir(fullPath), filepath.Base(fullPath)
 	}
-}
-
-func boolToInt(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
-}
-
-func intToBool(x int) bool {
-	if x > 0 {
-		return true
-	}
-	return false
 }
 
 // Marshal a DNAx object tags to/from a string that
@@ -183,10 +197,12 @@ func (mdb *MetadataDb) init2(txn *sql.Tx) error {
                 ctime bigint,
                 mtime bigint,
                 mode int,
-                nlink int,
                 tags text,
                 properties text,
-                inline_data text,
+                symlink text,
+                local_path text,
+                dirty_data int,
+                dirty_metadata int,
                 PRIMARY KEY (inode)
 	);
 	`
@@ -196,14 +212,22 @@ func (mdb *MetadataDb) init2(txn *sql.Tx) error {
 	}
 
 	sqlStmt = `
-	CREATE INDEX id_index
-	ON data_objects (id);
+	CREATE INDEX idx_dirty_data
+	ON data_objects (dirty_data);
 	`
 	if _, err := txn.Exec(sqlStmt); err != nil {
 		mdb.log(err.Error())
-		return fmt.Errorf("Could not create index id_index on table data_objects")
+		return fmt.Errorf("Could not create index on dirty_data column in table data_objects")
 	}
 
+	sqlStmt = `
+	CREATE INDEX idx_dirty_metadata
+	ON data_objects (dirty_metadata);
+	`
+	if _, err := txn.Exec(sqlStmt); err != nil {
+		mdb.log(err.Error())
+		return fmt.Errorf("Could not create index on dirty_metdata column in table data_objects")
+	}
 
 	// Create a table for the namespace relationships. All members of a directory
 	// are listed here under their parent. Linking all the tables are the inode numbers.
@@ -326,6 +350,13 @@ func (mdb *MetadataDb) Init() error {
 	return nil
 }
 
+func (mdb *MetadataDb) Shutdown() {
+	if err := mdb.db.Close(); err != nil {
+		mdb.log(err.Error())
+		mdb.log("Error closing the sqlite database %s", mdb.dbFullPath)
+	}
+}
+
 // Allocate an inode number. These must remain stable during the
 // lifetime of the mount.
 //
@@ -333,43 +364,6 @@ func (mdb *MetadataDb) Init() error {
 func (mdb *MetadataDb) allocInodeNum() int64 {
 	mdb.inodeCnt += 1
 	return mdb.inodeCnt
-}
-
-// search for a file by Id. If the file exists, return its inode and link-count. Otherwise,
-// return 0, 0.
-func (mdb *MetadataDb) lookupDataObjectById(oph *OpHandle, fId string) (int64, int, bool, error) {
-	// point lookup in the files table
-	sqlStmt := fmt.Sprintf(`
- 		        SELECT inode,nlink
-                        FROM data_objects
-			WHERE id = '%s';`,
-		fId)
-	rows, err := oph.txn.Query(sqlStmt)
-	if err != nil {
-		mdb.log("lookupDataObjectById fId=%s err=%s", fId, err.Error())
-		return InodeInvalid, 0, false, oph.RecordError(err)
-	}
-
-	var nlink int
-	var inode int64
-	numRows := 0
-	for rows.Next() {
-		rows.Scan(&inode, &nlink)
-		numRows++
-	}
-	rows.Close()
-
-	switch numRows {
-	case 0:
-		// this file doesn't exist in the database
-		return InodeInvalid, 0, false, nil
-	case 1:
-		// correct, there is exactly one such file
-		return inode, nlink, true, nil
-	default:
-		log.Panicf("Found %d data-objects with Id %s", numRows, fId)
-		return 0, 0, false, nil
-	}
 }
 
 // search for a file with a particular inode
@@ -380,7 +374,7 @@ func (mdb *MetadataDb) lookupDataObjectById(oph *OpHandle, fId string) (int64, i
 func (mdb *MetadataDb) lookupDataObjectByInode(oph *OpHandle, oname string, inode int64) (File, bool, error) {
 	// point lookup in the files table
 	sqlStmt := fmt.Sprintf(`
- 		        SELECT kind,id,proj_id,state,archival_state,size,ctime,mtime,mode,nlink,tags,properties,inline_data
+ 		        SELECT kind,id,proj_id,state,archival_state,size,ctime,mtime,mode,tags,properties,symlink,local_path, dirty_data, dirty_metadata
                         FROM data_objects
 			WHERE inode = '%d';`,
 		inode)
@@ -402,12 +396,16 @@ func (mdb *MetadataDb) lookupDataObjectByInode(oph *OpHandle, oname string, inod
 		var mtime int64
 		var props string
 		var tags string
-		rows.Scan(&f.Kind, &f.Id, &f.ProjId, &f.State, &f.ArchivalState, &f.Size, &ctime, &mtime, &f.Mode, &f.Nlink,
-			&tags, &props, &f.InlineData)
+		var dirtyData int
+		var dirtyMetadata int
+		rows.Scan(&f.Kind, &f.Id, &f.ProjId, &f.State, &f.ArchivalState, &f.Size, &ctime, &mtime, &f.Mode,
+			&tags, &props, &f.Symlink, &f.LocalPath, &dirtyData, &dirtyMetadata)
 		f.Ctime = SecondsToTime(ctime)
 		f.Mtime = SecondsToTime(mtime)
 		f.Tags = tagsUnmarshal(tags)
 		f.Properties = propertiesUnmarshal(props)
+		f.dirtyData = intToBool(dirtyData)
+		f.dirtyMetadata = intToBool(dirtyMetadata)
 		numRows++
 	}
 	rows.Close()
@@ -420,7 +418,7 @@ func (mdb *MetadataDb) lookupDataObjectByInode(oph *OpHandle, oname string, inod
 		// found exactly one file
 		return f, true, nil
 	default:
-		log.Panicf("Found %d data-objects with name %s", numRows, oname)
+		log.Panicf("Found %d data-objects with inode=%d (name %s)", numRows, inode, oname)
 		return File{}, false, nil
 	}
 }
@@ -487,8 +485,7 @@ func (mdb *MetadataDb) lookupDirByInode(oph *OpHandle, parent string, dname stri
 
 // search for a file with a particular inode.
 //
-// Note: a file with multiple hard links will appear several times.
-func (mdb *MetadataDb) LookupByInodeAll(ctx context.Context, oph *OpHandle, inode int64) ([]Node, error) {
+func (mdb *MetadataDb) LookupByInode(ctx context.Context, oph *OpHandle, inode int64) (Node, bool, error) {
 	// point lookup in the namespace table
 	sqlStmt := fmt.Sprintf(`
  		        SELECT parent,name,obj_type
@@ -497,85 +494,111 @@ func (mdb *MetadataDb) LookupByInodeAll(ctx context.Context, oph *OpHandle, inod
 		inode)
 	rows, err := oph.txn.Query(sqlStmt)
 	if err != nil {
-		mdb.log("LookupByInodeAll: error in query  err=%s", err.Error())
-		return nil, oph.RecordError(err)
+		mdb.log("LookupByInode: error in query  err=%s", err.Error())
+		return nil, false, oph.RecordError(err)
 	}
-	var parents []string
-	var names []string
-	var obj_types []int
+	var parent string
+	var name string
+	var obj_type int
+	numRows := 0
 	for rows.Next() {
-		var p string
-		var n string
-		var o int
-		rows.Scan(&p, &n, &o)
-
-		parents = append(parents, p)
-		names = append(names, n)
-		obj_types = append(obj_types, o)
+		rows.Scan(&parent, &name, &obj_type)
+		numRows++
 	}
 	rows.Close()
-
-	if len(parents) == 0 {
-		return nil, nil
+	if numRows == 0 {
+		return nil, false, nil
+	}
+	if numRows > 1 {
+		log.Panicf("More than one node with inode=%d", inode)
+		return nil, false, nil
 	}
 
-	var nodes []Node
-	for i, obj_type := range(obj_types) {
-		var node Node
-		var ok bool
-		var err error
-
-		switch obj_type {
-		case nsDirType:
-			node, ok, err = mdb.lookupDirByInode(oph, parents[i], names[i], inode)
-		case nsDataObjType:
-			// This is important for a file with multiple hard links. The
-			// parent directory determines which project the file belongs to.
-			node, ok, err = mdb.lookupDataObjectByInode(oph, names[i], inode)
-		default:
-			log.Panicf("Invalid type %d in namespace table", obj_type)
-		}
-
-		if err != nil {
-			return nil, err
-		}
-		if ok {
-			nodes = append(nodes, node)
-		}
+	switch obj_type {
+	case nsDirType:
+		return mdb.lookupDirByInode(oph, parent, name, inode)
+	case nsDataObjType:
+		// This is important for a file with multiple hard links. The
+		// parent directory determines which project the file belongs to.
+		return mdb.lookupDataObjectByInode(oph, name, inode)
+	default:
+		log.Panicf("Invalid type %d in namespace table", obj_type)
+		return nil, false, nil
 	}
-	return nodes, nil
 }
 
 func (mdb *MetadataDb) LookupDirByInode(ctx context.Context, oph *OpHandle, inode int64) (Dir, bool, error) {
-	nodes,err := mdb.LookupByInodeAll(ctx, oph, inode)
+	node, ok, err := mdb.LookupByInode(ctx, oph, inode)
+	if !ok {
+		return Dir{}, false, err
+	}
 	if err != nil {
 		return Dir{}, false, err
 	}
 
-	switch len(nodes) {
-	case 0:
-		return Dir{}, false, nil
-	case 1:
-		dir := nodes[0].(Dir)
-		return dir, true, nil
-	default:
-		log.Panicf("found multiple directories for inode=%d", inode)
-		return Dir{}, false, nil
-	}
+	dir := node.(Dir)
+	return dir, true, nil
 }
 
-// Return one of the hits for an inode. A file that has multiple hard links will appear
-// multiple times, and we return only the first hit.
-func (mdb *MetadataDb) LookupByInode(ctx context.Context, oph *OpHandle, inode int64) (Node, bool, error) {
-	nodes, err := mdb.LookupByInodeAll(ctx, oph, inode)
+// Find information on a directory by searching on its full name.
+//
+func (mdb *MetadataDb) lookupDirByName(oph *OpHandle, dirname string) (string, string, error) {
+	parentDir, basename := splitPath(dirname)
+	if mdb.options.Verbose {
+		mdb.log("lookupDirByName (%s)", dirname)
+	}
+
+	// Extract information for all the subdirectories
+	sqlStmt := fmt.Sprintf(`
+ 		        SELECT dirs.proj_id, dirs.proj_folder, nm.obj_type
+                        FROM directories as dirs
+                        JOIN namespace as nm
+                        ON dirs.inode = nm.inode
+			WHERE nm.parent = '%s' AND nm.name = '%s' ;`,
+		parentDir, basename)
+	rows, err := oph.txn.Query(sqlStmt)
 	if err != nil {
-		return File{}, false, oph.RecordError(err)
+		return "", "", err
 	}
-	if len(nodes) == 0 {
-		return File{}, false, nil
+
+	numRows := 0
+	var projId string
+	var projFolder string
+	var objType int
+	for rows.Next() {
+		numRows++
+		rows.Scan(&projId, &projFolder, &objType)
+		if objType != nsDirType {
+			log.Panicf("looking for a directory, but found a file")
+		}
 	}
-	return nodes[0], true, nil
+	rows.Close()
+
+	if numRows != 1 {
+		log.Panicf("looking for directory %s, and found %d of them",
+			dirname, numRows)
+	}
+	return projId, projFolder, nil
 }
+
+// We wrote a new version of this file, creating a new file-id.
+func (mdb *MetadataDb) UpdateInodeFileId(inode int64, fileId string) error {
+	oph := mdb.opOpen()
+	defer mdb.opClose(oph)
+
+	sqlStmt := fmt.Sprintf(`
+ 		        UPDATE data_objects
+                        SET id = '%s'
+			WHERE inode = '%d';`,
+		fileId, inode)
+	if _, err := oph.txn.Exec(sqlStmt); err != nil {
+		mdb.log("UpdateInodeFileId Error updating data_object table, %s",
+			err.Error())
+		return err
+	}
+	return nil
+}
+
 
 // The directory is in the database, read it in its entirety.
 func (mdb *MetadataDb) directoryReadAllEntries(
@@ -623,7 +646,7 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 
 	// Extract information for all the files
 	sqlStmt = fmt.Sprintf(`
- 		        SELECT dos.kind, dos.id, dos.proj_id, dos.state, dos.archival_state, dos.inode, dos.size, dos.ctime, dos.mtime, dos.mode, dos.nlink, dos.tags, dos.properties, dos.inline_data, namespace.name
+ 		        SELECT dos.kind, dos.id, dos.proj_id, dos.state, dos.archival_state, dos.inode, dos.size, dos.ctime, dos.mtime, dos.mode, dos.tags, dos.properties, dos.symlink, dos.local_path, dos.dirty_data, dos.dirty_metadata, namespace.name
                         FROM data_objects as dos
                         JOIN namespace
                         ON dos.inode = namespace.inode
@@ -645,13 +668,18 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 		var tags string
 		var props string
 		var mode int
-		rows.Scan(&f.Kind,&f.Id, &f.ProjId, &f.State, &f.ArchivalState, &f.Inode, &f.Size, &ctime, &mtime, &mode, &f.Nlink,
-			&tags, &props, &f.InlineData,&f.Name)
+		var dirtyData int
+		var dirtyMetadata int
+		rows.Scan(&f.Kind,&f.Id, &f.ProjId, &f.State, &f.ArchivalState, &f.Inode,
+			&f.Size, &ctime, &mtime, &mode,
+			&tags, &props, &f.Symlink, &f.LocalPath, &dirtyData, &dirtyMetadata, &f.Name)
 		f.Ctime = SecondsToTime(ctime)
 		f.Mtime = SecondsToTime(mtime)
 		f.Tags = tagsUnmarshal(tags)
 		f.Properties = propertiesUnmarshal(props)
 		f.Mode = os.FileMode(mode)
+		f.dirtyData = intToBool(dirtyData)
+		f.dirtyMetadata = intToBool(dirtyMetadata)
 
 		files[f.Name] = f
 	}
@@ -665,16 +693,13 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 // several use cases:
 //  1) Create a singleton file from the manifest
 //  2) Create a new file, and upload it later to the platform
+//     (the file-id will be the empty string "")
 //  3) Discover a file in a directory, which may actually be a link to another file.
-const (
-	CDO_MUST_BE_NEW = 1
-	CDO_ALREADY_EXISTS = 2
-	CDO_NEUTRAL = 3
-)
 func (mdb *MetadataDb) createDataObject(
 	oph *OpHandle,
-	flag int,
 	kind int,
+	dirtyData bool,
+	dirtyMetadata bool,
 	projId string,
 	state string,
 	archivalState string,
@@ -687,63 +712,34 @@ func (mdb *MetadataDb) createDataObject(
 	mode os.FileMode,
 	parentDir string,
 	fname string,
-	inlineData string) (int64, error) {
+	symlink string,
+	localPath string) (int64, error) {
 	if mdb.options.VerboseLevel > 1 {
 		mdb.log("createDataObject %s:%s %s", projId, objId,
 			filepath.Clean(parentDir + "/" + fname))
 	}
+	// File doesn't exist, we need to choose a new inode number.
+	// Note: it is on stable storage, and will not change.
+	inode := mdb.allocInodeNum()
 
-	inode, nlink, ok, err := mdb.lookupDataObjectById(oph, objId)
-	if err != nil {
-		return 0, err
-	}
+	// marshal tags and properties
+	mTags := tagsMarshal(tags)
+	mProps := propertiesMarshal(properties)
 
-	if !ok {
-		if flag == CDO_ALREADY_EXISTS {
-			log.Panicf("Object %s:%s should already exists, but does not",
-				projId, objId)
-		}
-
-		// File doesn't exist, we need to choose a new inode number.
-		// NOte: it is on stable storage, and will not change.
-		inode = mdb.allocInodeNum()
-
-		// marshal tags and properties
-		mTags := tagsMarshal(tags)
-		mProps := propertiesMarshal(properties)
-
-		// Create an entry for the file
-		sqlStmt := fmt.Sprintf(`
- 		        INSERT INTO data_objects
-			VALUES ('%d', '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%d', '%s', '%s', '%s');`,
-			kind, objId, projId, state, archivalState, inode, size, ctime, mtime, int(mode), 1,
-			mTags, mProps,
-			inlineData)
-		if _, err := oph.txn.Exec(sqlStmt); err != nil {
-			mdb.log(err.Error())
-			mdb.log("Error inserting into data objects table")
-			return 0, oph.RecordError(err)
-		}
-	} else {
-		if flag == CDO_MUST_BE_NEW {
-			log.Panicf("Object %s:%s must not be already in the database",
-				projId, objId)
-		}
-
-		// File already exists, we need to increase the link count
-		sqlStmt := fmt.Sprintf(`
- 		        UPDATE data_objects
-                        SET nlink = '%d'
-			WHERE id = '%s';`,
-			nlink + 1, objId)
-		if _, err := oph.txn.Exec(sqlStmt); err != nil {
-			mdb.log("Error updating data_object table, incrementing the link number err=%s",
-				err.Error())
-			return 0, oph.RecordError(err)
-		}
-	}
-
+	// Create an entry for the file
 	sqlStmt := fmt.Sprintf(`
+ 	        INSERT INTO data_objects
+		VALUES ('%d', '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%s', '%s', '%s', '%s', '%d', '%d');`,
+		kind, objId, projId, state, archivalState, inode, size, ctime, mtime, int(mode),
+		mTags, mProps, symlink, localPath,
+		boolToInt(dirtyData), boolToInt(dirtyMetadata))
+	if _, err := oph.txn.Exec(sqlStmt); err != nil {
+		mdb.log(err.Error())
+		mdb.log("Error inserting into data objects table")
+		return 0, oph.RecordError(err)
+	}
+
+	sqlStmt = fmt.Sprintf(`
  		        INSERT INTO namespace
 			VALUES ('%s', '%s', '%d', '%d');`,
 		parentDir, fname, nsDataObjType, inode)
@@ -884,7 +880,7 @@ func (mdb *MetadataDb) kindOfFile(o DxDescribeDataObject) int {
 	return kind
 }
 
-func inlineDataOfFile(kind int, o DxDescribeDataObject) string {
+func symlinkOfFile(kind int, o DxDescribeDataObject) string {
 	if kind == FK_Regular && len(o.SymlinkPath) > 0 {
 		// A symbolic link
 		kind = FK_Symlink
@@ -924,12 +920,13 @@ func (mdb *MetadataDb) populateDir(
 
 	for _, o := range dxObjs {
 		kind := mdb.kindOfFile(o)
-		inlineData := inlineDataOfFile(kind, o)
+		symlink := symlinkOfFile(kind, o)
 
 		_, err := mdb.createDataObject(
 			oph,
-			CDO_NEUTRAL,
 			kind,
+			false,
+			false,
 			o.ProjId,
 			o.State,
 			o.ArchivalState,
@@ -942,7 +939,8 @@ func (mdb *MetadataDb) populateDir(
 			fileReadWriteMode,
 			dirPath,
 			o.Name,
-			inlineData)
+			symlink,
+			"")
 		if err != nil {
 			return oph.RecordError(err)
 		}
@@ -1000,7 +998,7 @@ func (mdb *MetadataDb) directoryReadFromDNAx(
 	}
 
 	// describe all (closed) files
-	dxDir, err := DxDescribeFolder(ctx, oph.httpClient, &mdb.dxEnv, projId, projFolder, true)
+	dxDir, err := DxDescribeFolder(ctx, oph.httpClient, &mdb.dxEnv, projId, projFolder)
 	if err != nil {
 		fmt.Printf(err.Error())
 		fmt.Printf("reading directory frmo DNAx error")
@@ -1195,8 +1193,9 @@ func (mdb *MetadataDb) PopulateRoot(ctx context.Context, oph *OpHandle, manifest
 	for _, fl := range manifest.Files {
 		_, err := mdb.createDataObject(
 			oph,
-			CDO_NEUTRAL,
 			FK_Regular,
+			false,
+			false,
 			fl.ProjId,
 			"closed",
 			fl.ArchivalState,
@@ -1209,6 +1208,7 @@ func (mdb *MetadataDb) PopulateRoot(ctx context.Context, oph *OpHandle, manifest
 			fileReadOnlyMode,
 			fl.Parent,
 			fl.Fname,
+			"",
 			"")
 		if err != nil {
 			mdb.log(err.Error())
@@ -1246,7 +1246,6 @@ func (mdb *MetadataDb) CreateFile(
 	ctx context.Context,
 	oph *OpHandle,
 	dir *Dir,
-	fileId string,
 	fname string,
 	mode os.FileMode,
 	localPath string) (File, error) {
@@ -1255,23 +1254,31 @@ func (mdb *MetadataDb) CreateFile(
 			dir.FullPath, fname, localPath, dir.ProjId)
 	}
 
+	// We are creating a fake DNAx file on the local machine.
+	// Its state doesn't quite make sense:
+	// 1. live, that means not archived
+	// 2. closed,
+	// 3. empty, without any data
+	// 4. no object ID
 	nowSeconds := time.Now().Unix()
 	inode, err := mdb.createDataObject(
 		oph,
-		CDO_MUST_BE_NEW,
 		FK_Regular,
+		true,  // file is dirty, it should be uploaded.
+		false,
 		dir.ProjId,
 		"closed",
 		"live",
-		fileId,
+		"",  // no file-id yet
 		0,    /* the file is empty */
 		nowSeconds,
 		nowSeconds,
-		nil,  // A local file doesn't have tags or properties
+		nil,  // A local file initially doesn't have tags or properties
 		nil,
 		mode,
 		dir.FullPath,
 		fname,
+		"",
 		localPath)
 	if err != nil {
 		mdb.log("CreateFile error creating data object")
@@ -1281,7 +1288,7 @@ func (mdb *MetadataDb) CreateFile(
 	// 3. return a File structure
 	return File{
 		Kind: FK_Regular,
-		Id : fileId,
+		Id : "",
 		ProjId : dir.ProjId,
 		ArchivalState : "live",
 		Name : fname,
@@ -1290,128 +1297,69 @@ func (mdb *MetadataDb) CreateFile(
 		Ctime : SecondsToTime(nowSeconds),
 		Mtime : SecondsToTime(nowSeconds),
 		Mode : mode,
-		Nlink : 1,
-		InlineData : localPath,
+		Symlink: "",
+		LocalPath : localPath,
 	}, nil
 }
 
-// We know that
-// 1) the parent directory exists and is populated
-// 2) the target file
-// 3) the source i-node exists
-func (mdb *MetadataDb) CreateLink(ctx context.Context, oph *OpHandle, srcFile File, dstParent Dir, name string) (File, error) {
-	// insert into the database
-	_, err := mdb.createDataObject(
-		oph,
-		CDO_ALREADY_EXISTS,
-		FK_Regular,
-		dstParent.ProjId,
-		srcFile.State,
-		srcFile.ArchivalState,
-		srcFile.Id,
-		srcFile.Size,
-		int64(srcFile.Ctime.Second()),
-		int64(srcFile.Mtime.Second()),
-		nil,  // cloning does not copy the tags or properties
-		nil,
-		srcFile.Mode,
-		dstParent.FullPath,
-		name,
-		"")
-	if err != nil {
-		mdb.log("CreateLink error creating data object")
-		return File{}, oph.RecordError(err)
-	}
-
-	// 3. return a File structure
-	return File{
-		Kind: FK_Regular,
-		Id : srcFile.Id,
-		ProjId : dstParent.ProjId,
-		ArchivalState : srcFile.ArchivalState,
-		Name : name,
-		Size : srcFile.Size,
-		Inode : srcFile.Inode,
-		Ctime : srcFile.Ctime,
-		Mtime : srcFile.Mtime,
-		Mode : srcFile.Mode,
-		Nlink : srcFile.Nlink + 1,
-		InlineData : "",
-	}, nil
-}
-
-// reduce link count by one. If it reaches zero, delete the file.
-//
 // TODO: take into account the case of ForgetInode, and files that are open, but unlinked.
+//
+// on this file system, since we don't keep track of link count, this amount to removing the file.
 func (mdb *MetadataDb) Unlink(ctx context.Context, oph *OpHandle, file File) error {
-	nlink := file.Nlink - 1
-	if nlink > 0 {
-		// reduce one from the link count. It is still positive,
-		// so there is nothing else to do
-		sqlStmt := fmt.Sprintf(`
-  		           UPDATE data_objects
-                           SET nlink = '%d'
-                           WHERE inode = '%d'`,
-			nlink, file.Inode)
-		if _, err := oph.txn.Exec(sqlStmt); err != nil {
-			mdb.log(err.Error())
-			mdb.log("could not reduce the link count for inode=%d to %d",
-				file.Inode, nlink)
-			return oph.RecordError(err)
-		}
-	} else {
-		// the link hit zero, we can remove the file
-		sqlStmt := fmt.Sprintf(`
+	sqlStmt := fmt.Sprintf(`
                            DELETE FROM namespace
                            WHERE inode='%d';`,
+		file.Inode)
+	if _, err := oph.txn.Exec(sqlStmt); err != nil {
+		mdb.log(err.Error())
+		mdb.log("could not delete row for inode=%d from the namespace table",
 			file.Inode)
-		if _, err := oph.txn.Exec(sqlStmt); err != nil {
-			mdb.log(err.Error())
-			mdb.log("could not delete row for inode=%d from the namespace table",
-				file.Inode)
-			return oph.RecordError(err)
-		}
+		return oph.RecordError(err)
+	}
 
-		sqlStmt = fmt.Sprintf(`
+	sqlStmt = fmt.Sprintf(`
                            DELETE FROM data_objects
                            WHERE inode='%d';`,
+		file.Inode)
+	if _, err := oph.txn.Exec(sqlStmt); err != nil {
+		mdb.log(err.Error())
+		mdb.log("could not delete row for inode=%d from the data_objects table",
 			file.Inode)
-		if _, err := oph.txn.Exec(sqlStmt); err != nil {
-			mdb.log(err.Error())
-			mdb.log("could not delete row for inode=%d from the data_objects table",
-				file.Inode)
-			return oph.RecordError(err)
-		}
-
-		if file.Kind == RW_File || file.Kind == RO_LocalCopy {
-			// remove the file data so it does not take up space on disk.
-			// This might be undergoing upload at the moment. Removing the local
-			// file will cause the download to fail early, which is what we
-			// want.
-			if err := os.Remove(file.InlineData); err != nil {
-				mdb.log(err.Error())
-			}
-		}
+		return oph.RecordError(err)
 	}
 	return nil
 }
 
-func (mdb *MetadataDb) UpdateFile(
+func (mdb *MetadataDb) UpdateFileAttrs(
 	ctx context.Context,
 	oph *OpHandle,
-	f File,
+	inode int64,
 	fileSize int64,
 	modTime time.Time,
-	mode os.FileMode) error {
-	if mdb.options.Verbose {
-		mdb.log("Update file=%v size=%d mode=%d", f, fileSize, mode)
-	}
+	mode *os.FileMode) error {
 	modTimeSec := modTime.Unix()
-	sqlStmt := fmt.Sprintf(`
+
+	sqlStmt := ""
+	if mode == nil {
+		// don't update the mode
+		if mdb.options.Verbose {
+			mdb.log("Update inode=%d size=%d", inode, fileSize)
+		}
+		sqlStmt = fmt.Sprintf(`
  		        UPDATE data_objects
-                        SET size = '%d', mtime='%d', mode='%d'
+                        SET size = '%d', mtime='%d', dirty_data='1'
 			WHERE inode = '%d';`,
-		fileSize, modTimeSec, int(mode), f.Inode)
+			fileSize, modTimeSec, inode)
+	} else {
+		if mdb.options.Verbose {
+			mdb.log("Update inode=%d size=%d mode=%d", inode, fileSize, mode)
+		}
+		sqlStmt = fmt.Sprintf(`
+ 		        UPDATE data_objects
+                        SET size = '%d', mtime='%d', mode='%d', dirty_data='1'
+			WHERE inode = '%d';`,
+			fileSize, modTimeSec, int(*mode), inode)
+	}
 
 	if _, err := oph.txn.Exec(sqlStmt); err != nil {
 		mdb.log(err.Error())
@@ -1420,6 +1368,29 @@ func (mdb *MetadataDb) UpdateFile(
 	}
 	return nil
 }
+
+func (mdb *MetadataDb) UpdateFileLocalPath(
+	ctx context.Context,
+	oph *OpHandle,
+	inode int64,
+	localPath string) error {
+	if mdb.options.Verbose {
+		mdb.log("Update inode=%d localPath=%s", inode, localPath)
+	}
+	sqlStmt := fmt.Sprintf(`
+ 		        UPDATE data_objects
+                        SET local_path = '%s'
+			WHERE inode = '%d';`,
+		localPath, inode)
+
+	if _, err := oph.txn.Exec(sqlStmt); err != nil {
+		mdb.log(err.Error())
+		mdb.log("UpdateFileLocalPath error executing transaction")
+		return oph.RecordError(err)
+	}
+	return nil
+}
+
 
 
 // Move a file
@@ -1620,9 +1591,9 @@ func (mdb *MetadataDb) UpdateFileTagsAndProperties(
 	// update the database
 	sqlStmt := fmt.Sprintf(`
 		UPDATE data_objects
-                SET tags='%s', properties='%s'
-		WHERE id = '%s';`,
-		mTags, mProps, file.Id)
+                SET tags = '%s', properties = '%s', dirty_metadata = '1'
+		WHERE inode = '%d';`,
+		mTags, mProps, file.Inode)
 
 	if _, err := oph.txn.Exec(sqlStmt); err != nil {
 		mdb.log(err.Error())
@@ -1632,9 +1603,97 @@ func (mdb *MetadataDb) UpdateFileTagsAndProperties(
 	return nil
 }
 
-func (mdb *MetadataDb) Shutdown() {
-	if err := mdb.db.Close(); err != nil {
-		mdb.log(err.Error())
-		mdb.log("Error closing the sqlite database %s", mdb.dbFullPath)
+// Get a list of all the dirty files, and reset the table. The files can be modified again,
+// which will set the flag to true.
+func (mdb *MetadataDb) DirtyFilesGetAndReset(flag int) ([]DirtyFileInfo, error) {
+	oph := mdb.opOpen()
+	defer mdb.opClose(oph)
+
+	var loThreshSec int64 = 0
+	switch flag {
+	case DIRTY_FILES_ALL:
+		// we want to find all dirty files
+		loThreshSec = math.MaxInt64
+	case DIRTY_FILES_INACTIVE:
+		// we only want recently inactive files. Otherwise,
+		// we'll be writing way too much.
+		loThreshSec = time.Now().Unix()
+		loThreshSec -= int64(FileWriteInactivityThresh.Seconds())
 	}
+
+	// join all the tables so we can get the file attributes, the
+	// directory it lives under, and which project-folder this
+	// corresponds to.
+	sqlStmt := fmt.Sprintf(`
+ 		        SELECT dos.kind,
+                               dos.inode,
+                               dos.dirty_data as dirty_data,
+                               dos.dirty_metadata as dirty_metadata,
+                               dos.id,
+                               dos.size,
+                               dos.mtime as mtime,
+                               dos.local_path,
+                               dos.tags,
+                               dos.properties,
+                               namespace.name,
+                               namespace.parent
+                        FROM data_objects as dos
+                        JOIN namespace
+                        ON dos.inode = namespace.inode
+			WHERE (dirty_data = '1' OR dirty_metadata = '1') AND (mtime < '%d') ;`,
+		loThreshSec)
+
+	rows, err := oph.txn.Query(sqlStmt)
+	if err != nil {
+		mdb.log("DirtyFilesGetAllAndReset err=%s", err.Error())
+		return nil, err
+	}
+
+	var fAr []DirtyFileInfo
+	for rows.Next() {
+		var f DirtyFileInfo
+		var kind int
+		var dirtyData int
+		var dirtyMetadata int
+		var tags string
+		var props string
+
+		rows.Scan(&kind, &f.Inode, &dirtyData, &dirtyMetadata, &f.Id,
+			&f.FileSize,
+			&f.Mtime,
+			&f.LocalPath, &tags, &props, &f.Name, &f.Directory)
+		f.dirtyData = intToBool(dirtyData)
+		f.dirtyMetadata = intToBool(dirtyMetadata)
+		f.Tags = tagsUnmarshal(tags)
+		f.Properties = propertiesUnmarshal(props)
+
+		if kind != FK_Regular {
+			log.Panicf("Non regular file has dirty data; kind=%d %v", kind, f)
+		}
+		fAr = append(fAr, f)
+	}
+	rows.Close()
+
+	// Figure out the project folder for each file
+	for i, _ := range(fAr) {
+		projId, projFolder, err := mdb.lookupDirByName(oph, fAr[i].Directory)
+		if err != nil {
+			return nil, err
+		}
+		fAr[i].ProjId = projId
+		fAr[i].ProjFolder = projFolder
+	}
+
+	// erase the flag from the entire table
+	sqlStmt = fmt.Sprintf(`
+ 	        UPDATE data_objects
+                SET dirty_data = '0', dirty_metadata = '0'
+		WHERE (dirty_data = '1' OR dirty_metadata = '1') AND (mtime < '%d') ;`,
+		loThreshSec)
+
+	if _, err := oph.txn.Exec(sqlStmt); err != nil {
+		mdb.log("Error erasing dirty_data|dirty_metadata flags (%s)", err.Error())
+		return nil, err
+	}
+	return fAr, nil
 }

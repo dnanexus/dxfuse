@@ -22,6 +22,7 @@ type ManifestFile struct {
 
 	// These may not be provided by the user. Then, we
 	// need to query DNAx for the information.
+	State         string  `json:"state,omitempty"`
 	ArchivalState string  `json:"archivalState,omitempty"`
 	Fname   string        `json:"fname,omitempty"`
 	Size    int64         `json:"size,omitempty"`
@@ -300,7 +301,9 @@ func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnviron
 	// Make a list of all the files that are missing details
 	fileIds := make(map[string]bool)
 	for _, fl := range m.Files {
-		if fl.Fname == "" ||
+		if fl.State == "" ||
+			fl.ArchivalState == "" ||
+			fl.Fname == "" ||
 			fl.Size == 0 ||
 			fl.CtimeSeconds == 0 ||
 			fl.MtimeSeconds == 0 {
@@ -311,7 +314,7 @@ func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnviron
 	for fId, _  := range fileIds {
 		fileIdList = append(fileIdList, fId)
 	}
-	dataObjs, err := DxDescribeBulkObjects(ctx, tmpHttpClient, &dxEnv, fileIdList, true)
+	dataObjs, err := DxDescribeBulkObjects(ctx, tmpHttpClient, &dxEnv, fileIdList)
 	if err != nil {
 		return err
 	}
@@ -321,10 +324,16 @@ func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnviron
 		fl := &m.Files[i]
 		fDesc, ok := dataObjs[fl.FileId]
 		if ok {
+			if fDesc.State != "closed" {
+				return fmt.Errorf("File %s is not closed, it is %s",
+					fDesc.Id, fDesc.State)
+			}
+
 			// This file was missing details
 			if fl.Fname == "" {
 				fl.Fname = fDesc.Name
 			}
+			fl.State = fDesc.State
 			fl.ArchivalState = fDesc.ArchivalState
 			fl.Size = fDesc.Size
 			fl.CtimeSeconds = fDesc.CtimeSeconds

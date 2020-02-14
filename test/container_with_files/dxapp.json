@@ -1,0 +1,34 @@
+{
+  "name": "container_with_files",
+  "summary": "create a container with files",
+  "dxapi": "1.0.0",
+  "version": "0.0.1",
+  "inputSpec": [
+    {
+      "name": "verbose",
+      "class": "boolean",
+      "optional": true
+    }
+  ],
+  "outputSpec": [
+    {
+      "name" : "foo",
+      "class" : "file"
+    },
+    {
+      "name" : "bar",
+      "class" : "file"
+    }
+  ],
+  "runSpec": {
+    "interpreter": "bash",
+    "file": "code.sh",
+    "distribution": "Ubuntu",
+    "release": "16.04",
+    "timeoutPolicy" : {
+      "*" : {
+        "hours" : 1
+      }
+    }
+  }
+}

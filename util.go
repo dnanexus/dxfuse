@@ -5,34 +5,33 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"sync"
 	"time"
 
-	"github.com/dnanexus/dxda"
 	"github.com/hashicorp/go-retryablehttp"
 
-	"github.com/jacobsa/fuse/fuseutil"
 	"github.com/jacobsa/fuse/fuseops"
 )
 
 const (
-	CreatedFilesDir = "/var/dxfuse/created_files"
-	DatabaseFile       = "/var/dxfuse/metadata.db"
-	HttpClientPoolSize = 4
-	LogFile            = "/var/log/dxfuse.log"
-	MaxDirSize         = 10 * 1000
-	MaxNumFileHandles  = 1000 * 1000
-	NumRetriesDefault  = 3
-	Version            = "v0.19"
+	KiB                   = 1024
+	MiB                   = 1024 * KiB
+	GiB                   = 1024 * MiB
+)
+const (
+	CreatedFilesDir     = "/var/dxfuse/created_files"
+	DatabaseFile        = "/var/dxfuse/metadata.db"
+	HttpClientPoolSize  = 4
+	FileWriteInactivityThresh = 5 * time.Minute
+	WritableFileSizeLimit = 16 * MiB
+	LogFile             = "/var/log/dxfuse.log"
+	MaxDirSize          = 10 * 1000
+	MaxNumFileHandles   = 1000 * 1000
+	NumRetriesDefault   = 3
+	Version             = "v0.19"
 )
 const (
 	InodeInvalid       = 0
 	InodeRoot          = fuseops.RootInodeID  // This is an OS constant
-)
-const (
-	KiB                   = 1024
-	MiB                   = 1024 * KiB
-	GiB                   = 1024 * MiB
 )
 const (
 	// It turns out that in order for regular users to be able to create file,
@@ -41,6 +40,19 @@ const (
 	dirReadWriteMode = 0777 | os.ModeDir
 	fileReadOnlyMode = 0444
 	fileReadWriteMode = 0644
+)
+const (
+	// flags for writing files to disk
+	DIRTY_FILES_ALL = 14       // all modified files
+	DIRTY_FILES_INACTIVE = 15  // only files there were unmodified recently
+)
+
+const (
+	// Permissions
+	PERM_VIEW = 1
+	PERM_UPLOAD = 2
+	PERM_CONTRIBUTE = 3
+	PERM_ADMINISTER = 4
 )
 
 // A URL generated with the /file-xxxx/download API call, that is
@@ -58,55 +70,6 @@ type Options struct {
 	Gid                 uint32
 }
 
-
-type Filesys struct {
-	// inherit empty implementations for all the filesystem
-	// methods we do not implement
-	fuseutil.NotImplementedFileSystem
-
-	// configuration information for accessing dnanexus servers
-	dxEnv dxda.DXEnvironment
-
-	// various options
-	options Options
-
-	// A file holding a sqlite3 database with all the files and
-	// directories collected thus far.
-	dbFullPath string
-
-	// Lock for protecting shared access to the database
-	mutex sync.Mutex
-
-	// a pool of http clients, for short requests, such as file creation,
-	// or file describe.
-	httpClientPool    chan(*retryablehttp.Client)
-
-	// metadata database
-	mdb *MetadataDb
-
-	// prefetch state for all files
-	pgs *PrefetchGlobalState
-
-	// background upload state
-	fugs *FileUploadGlobalState
-
-	// API to dx
-	ops *DxOps
-
-	// all open files
-	fhCounter uint64
-	fhTable map[fuseops.HandleID]*FileHandle
-
-	// all open directories
-	dhCounter uint64
-	dhTable map[fuseops.HandleID]*DirHandle
-
-	nonce *Nonce
-	tmpFileCounter uint64
-
-	// is the the system shutting down (unmounting)
-	shutdownCalled bool
-}
 
 // A node is a generalization over files and directories
 type Node interface {
@@ -166,6 +129,9 @@ const (
 
 // A Unix file can stand for any DNAx data object. For example, it could be a workflow or an applet.
 // We distinguish between them based on the Id (file-xxxx, applet-xxxx, workflow-xxxx, ...).
+//
+// Note: this struct is immutable by convention. The up-to-date data is always on the database,
+// not in memory.
 type File struct {
 	Kind       int     // Kind of object this is
 	Id         string  // Required to build a download URL
@@ -185,7 +151,6 @@ type File struct {
 	Ctime      time.Time
 	Mtime      time.Time
 	Mode       os.FileMode  // uint32
-	Nlink      int
 	Uid        uint32
 	Gid        uint32
 
@@ -194,13 +159,19 @@ type File struct {
 	Properties map[string]string
 
 	// for a symlink, it holds the path.
+	Symlink   string
+
 	// For a regular file, a path to a local copy (if any).
-	InlineData string
+	LocalPath string
+
+	// is the file modified
+	dirtyData bool
+	dirtyMetadata bool
 }
 
 func (f File) GetAttrs() (a fuseops.InodeAttributes) {
 	a.Size = uint64(f.Size)
-	a.Nlink = uint32(f.Nlink)
+	a.Nlink = 1
 	a.Mtime = f.Mtime
 	a.Ctime = f.Ctime
 	a.Mode = f.Mode
@@ -214,34 +185,37 @@ func (f File) GetInode() fuseops.InodeID {
 	return fuseops.InodeID(f.Inode)
 }
 
-
-// Files can be opened in read-only mode, or read-write mode.
-const (
-	RO_Remote = 1     // read only file that is on the cloud
-	RW_File = 2       // newly created file
-	RO_LocalCopy = 3  // read only file that has a local copy
-)
-
-type FileHandle struct {
-	fKind int
-	f File
-	hid fuseops.HandleID
-
-	// URL used for downloading file ranges.
-	// Used for read-only files.
-	url *DxDownloadURL
-
-	// Local file copy, may be empty.
-	localPath *string
-
-	// 1. Used for reading from an immutable local copy
-	// 2. Used for writing to newly created files.
-	fd *os.File
+// A file that is scheduled for removal
+type DeadFile struct {
+	Kind       int     // Kind of object this is
+	Id         string  // Required to build a download URL
+	ProjId     string  // Note: this could be a container
+	Inode      int64
+	LocalPath  string
 }
 
-type DirHandle struct {
-	d Dir
-	entries []fuseutil.Dirent
+// Information required to upload file data to the platform.
+// It also includes updated tags and properties of a data-object.
+//
+// Not that not only files have attributes, applets and workflows
+// have them too.
+//
+type DirtyFileInfo struct {
+	Inode         int64
+	dirtyData     bool
+	dirtyMetadata bool
+
+	// will be "" for files created locally, and not uploaded yet
+	Id            string
+	FileSize      int64
+	Mtime         int64
+	LocalPath     string
+	Tags          []string
+	Properties    map[string]string
+	Name          string
+	Directory     string
+	ProjFolder    string
+	ProjId        string
 }
 
 // A handle used when operating on a filesystem
@@ -327,4 +301,25 @@ func BytesToString(numBytes int64) string {
 		return fmt.Sprintf("%dB", numBytes)
 	}
 	return fmt.Sprintf("%d%s", digits[msd], byteModifier[msd])
+}
+
+func check(value bool) {
+	if !value {
+		log.Panicf("assertion failed")
+		os.Exit(1)
+	}
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+func intToBool(x int) bool {
+	if x > 0 {
+		return true
+	}
+	return false
 }

@@ -7,7 +7,7 @@ function manifest_test {
 
     mkdir -p $mountpoint
 
-    sudo -E $dxfuse -verbose 2 -uid $(id -u) -gid $(id -g) $mountpoint $CRNT_DIR/two_files.json
+    sudo -E $dxfuse -uid $(id -u) -gid $(id -g) $mountpoint $CRNT_DIR/two_files.json
     sleep 1
 
     tree $mountpoint

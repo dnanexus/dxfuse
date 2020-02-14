@@ -128,25 +128,24 @@ def run_local_test():
         sys.exit(1)
 
 def run_correctness(dx_proj, itype, verbose):
-    run_local_test()
     correctness = lookup_applet("correctness", dx_proj, "/applets")
-    bam_diff = lookup_applet("bam_diff", dx_proj, "/applets")
+    bio_tools = lookup_applet("bio_tools", dx_proj, "/applets")
     correctness_downloads = lookup_applet("correctness_downloads", dx_proj, "/applets")
     jobs1 = launch_jobs(dx_proj, correctness, [itype], verbose)
-    jobs2 = launch_jobs(dx_proj, bam_diff, [itype], verbose)
+    jobs2 = launch_jobs(dx_proj, bio_tools, [itype], verbose)
     jobs3 = launch_jobs(dx_proj, correctness_downloads, [itype], verbose)
     wait_for_completion(jobs1 + jobs2 + jobs3)
 
 def run_biotools(dx_proj, itype, verbose):
-    bam_diff = lookup_applet("bam_diff", dx_proj, "/applets")
-    jobs2 = launch_jobs(dx_proj, bam_diff, [itype], verbose)
+    bio_tools = lookup_applet("bio_tools", dx_proj, "/applets")
+    jobs = launch_jobs(dx_proj, bio_tools, [itype], verbose)
     wait_for_completion(jobs)
 
 def main():
     argparser = argparse.ArgumentParser(description="Run benchmarks on several instance types for dxfuse")
     argparser.add_argument("--project", help="DNAnexus project",
                            default="dxfuse_test_data")
-    argparser.add_argument("--test", help="which testing suite to run [bench, correct, bio]",
+    argparser.add_argument("--test", help="which testing suite to run [bench, bio, correct, local]",
                            default="correctness")
     argparser.add_argument("--size", help="how large should the test be? [small, large]",
                            default="small")
@@ -179,6 +178,8 @@ def main():
         run_correctness(dx_proj, instance_types[0], args.verbose)
     elif args.test.startswith("bio"):
         run_biotools(dx_proj, instance_types[0], args.verbose)
+    elif args.test.startswith("local"):
+        run_local_test()
     else:
         print("Unknown test {}".format(args.test))
         exit(1)

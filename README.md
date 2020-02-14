@@ -36,16 +36,22 @@ is dropped, and a warning is emitted to the log.
 dxfuse approximates a normal POSIX filesystem, but does not always have the same semantics. For example:
 1. Metadata like last access time are not supported
 2. Directories have approximate create/modify times. This is because DNAx does not keep such attributes for directories.
-3. Files are immutable, which means that they cannot be overwritten.
-4. A newly written file is located locally. When it is closed, it becomes read-only, and is uploaded to the cloud.
 
 There are several limitations currently:
 - Primarily intended for Linux, but can be used on OSX
-- Intended to operate on platform workers
 - Limits directories to 10,000 elements
 - Updates to the project emanating from other machines are not reflected locally
 - Rename does not allow removing the target file or directory. This is because this cannot be
   done automatically by dnanexus.
+- Does not support hard links
+
+Updates to files are batched and asynchronously applied to the cloud
+object system. For example, if `foo.txt` is updated, the changes will
+not be immediately visible to another user looking at the platform
+object directly. Because platform files are immutable, even a minor
+modification requires rewriting the entire file, creating a new
+version. This is an inherent limitation, making file update
+inefficient.
 
 ## Implementation
 
@@ -87,21 +93,32 @@ download methods were (1) `dx cat`, and (2) `cat` from a dxfuse mount point.
 # Building
 
 To build the code from source, you'll need, at the very least, the `go` and `git` tools.
-Assuming the go directory is `/go`, then, clone the code with:
+install dependencies:
 ```
+go get github.com/google/subcommands
+go get golang.org/x/sync/semaphore
+go install github.com/google/subcommands
+go get github.com/dnanexus/dxda
+go install github.com/dnanexus/dxda
+go install github.com/dnanexus/dxda/cmd/dx-download-
+```
+
+Assuming the go directory is `/go`, clone the code with:
+```
+cd /go/src/github.com/dnanexus/dxfuse
 git clone git@github.com:dnanexus/dxfuse.git
 ```
 
 Build the code:
 ```
-go build -o /go/bin/dxfuse /go/src/github.com/dnanexus/cmd/main.go
+go build -o /go/bin/dxfuse /go/src/github.com/dnanexus/dxfuse/cli/main.go
 ```
 
 # Usage
 
 To mount a dnanexus project `mammals` on local directory `/home/jonas/foo` do:
 ```
-sudo dxfuse -uid $(id -u) -gid $(id -g) /home/jonas/foo mammals
+sudo -E dxfuse -uid $(id -u) -gid $(id -g) /home/jonas/foo mammals
 ```
 
 The bootstrap process has some asynchrony, so it could take it a
@@ -111,12 +128,12 @@ the `verbose` flag. Debugging output is written to the log, which is
 placed at `/var/log/dxfuse.log`. The maximal verbosity level is 2.
 
 ```
-sudo dxfuse -verbose 1 MOUNT-POINT PROJECT-NAME
+sudo -E dxfuse -verbose 1 MOUNT-POINT PROJECT-NAME
 ```
 
 Project ids can be used instead of project names. To mount several projects, say, `mammals`, `fish`, and `birds`, do:
 ```
-sudo dxfuse /home/jonas/foo mammals fish birds
+sudo -E dxfuse /home/jonas/foo mammals fish birds
 ```
 
 This will create the directory hierarchy:
@@ -135,15 +152,22 @@ To stop the dxfuse process do:
 sudo umount MOUNT-POINT
 ```
 
+There are situations where you want the background process to
+synchronously update all modified and newly created files. For example, before shutting down a machine,
+or unmounting the filesystem. This can be done by issuing the command:
+```
+$ sudo dxfuse -sync
+```
+
 ## Extended attributes (xattrs)
 
-DNXa data objects have properties and tags, these are exposed as POSIX extended attributes. The package we use for testing is `xattr` which is native on MacOS (OSX), and can be installed with `sudo apt-get install xattr` on Linux. Xattrs can be written and removed. The examples here use `xattr`, although other tools will work just as well.
+DNXa data objects have properties and tags, these are exposed as POSIX extended attributes. Xattrs can be read, written, and removed. The package we use here is `attr`, it can installed with `sudo apt-get install attr` on Linux. On OSX the `xattr` package comes packaged with the base operating system, and can be used to the same effect.
 
-DNAx tags and properties are prefixed. For example, if `zebra.txt` is a file then `xattr -l zebra.txt` will print out all the tags, properties, and attributes that have no POSIX equivalent. These are split into three correspnding prefixes _tag_, _prop_, and _base_ all under the `user` Linux namespace.
+DNAx tags and properties are prefixed. For example, if `zebra.txt` is a file then `attr -l zebra.txt` will print out all the tags, properties, and attributes that have no POSIX equivalent. These are split into three correspnding prefixes _tag_, _prop_, and _base_ all under the `user` Linux namespace.
 
 Here `zebra.txt` has no properties or tags.
 ```
-$ xattr -l zebra.txt
+$ attr -l zebra.txt
 
 base.state: closed
 base.archivalState: live
@@ -152,24 +176,24 @@ base.id: file-xxxx
 
 Add a property named `family` with value `mammal`
 ```
-$ xattr -w prop.family mammal zebra.txt
+$ attr -s prop.family -V mammal zebra.txt
 ```
 
 Add a tag `africa`
 ```
-$ xattr -w tag.africa XXX zebra.txt
+$ attr -s tag.africa -V XXX zebra.txt
 ```
 
 Remove the `family` property:
 ```
-$ xattr -d prop.family zebra.txt
+$ attr -r prop.family zebra.txt
 ```
 
-You cannot modify any _base.*_ attribute, these are read-only. Currently, setting and deleting xattrs can be done only for files that are closed on the platform.
+You cannot modify _base.*_ attributes, these are read-only. Currently, setting and deleting xattrs can be done only for files that are closed on the platform.
 
 ## Mac OS (OSX)
 
-For OSX you will need to install [OSXFUSE](http://osxfuse.github.com/). Note that Your Milage May Vary (YMMV) on this platform, we are focused on Linux currently.
+For OSX you will need to install [OSXFUSE](http://osxfuse.github.com/). Note that Your Milage May Vary (YMMV) on this platform, we are mostly focused on Linux.
 
 # Common problems
 
@@ -178,3 +202,23 @@ If a project appears empty, or is missing files, it could be that the dnanexus t
 If you do not set the `uid` and `gid` options then creating hard links will fail on Linux. This is because it will fail the kernel's permissions check.
 
 There is no natural match for DNAnexus applets and workflows, so they are presented as block devices. They do not behave like block devices, but the shell colors them differently from files and directories.
+
+Mmap doesn't work all that well with FUSE ([stack overflow issue](https://stackoverflow.com/questions/46839807/mmap-no-such-device)). For example, trying to memory-map (mmap) a file with python causes an error.
+
+```
+>>> import mmap
+>>> fd = open('/home/orodeh/MNT/dxfuse_test_data/README.md', 'r')
+>>> mmap.mmap(fp.fileno(), 0, mmap.PROT_READ)
+Traceback (most recent call last):
+  File "<stdin>", line 1, in <module>
+  OSError: [Errno 19] No such device
+```
+
+A workaround is to make the mapping private:
+
+```
+>>> import mmap
+>>> fd = open('/home/orodeh/MNT/dxfuse_test_data/README.md', 'r')
+>>> mmap.mmap(fd.fileno(), 0, prot=mmap.PROT_READ, flags=mmap.MAP_PRIVATE, offset=0)
+>>> fd.readline()
+```

@@ -12,6 +12,11 @@ import (
 	"github.com/hashicorp/go-retryablehttp"
 )
 
+const (
+	fileCloseWaitTime = 5 * time.Second
+	fileCloseMaxWaitTime = 10 * time.Minute
+)
+
 type DxOps struct {
 	dxEnv   dxda.DXEnvironment
 	options  Options
@@ -44,6 +49,9 @@ func (ops *DxOps) DxFolderNew(
 	httpClient *retryablehttp.Client,
 	projId string,
 	folder string) error {
+	if ops.options.Verbose {
+		ops.log("new-folder %s:%s", projId, folder)
+	}
 
 	var request RequestFolderNew
 	request.ProjId = projId
@@ -88,6 +96,9 @@ func (ops *DxOps) DxFolderRemove(
 	httpClient *retryablehttp.Client,
 	projId string,
 	folder string) error {
+	if ops.options.Verbose {
+		ops.log("remove-folder %s:%s", projId, folder)
+	}
 
 	var request RequestFolderRemove
 	request.ProjId = projId
@@ -132,6 +143,9 @@ func (ops *DxOps) DxRemoveObjects(
 	httpClient *retryablehttp.Client,
 	projId string,
 	objectIds []string) error {
+	if ops.options.Verbose {
+		ops.log("Removing %d objects from project %s", len(objectIds), projId)
+	}
 
 	var request RequestRemoveObjects
 	request.Objects = objectIds
@@ -152,7 +166,7 @@ func (ops *DxOps) DxRemoveObjects(
 		return err
 	}
 
-	var reply ReplyFolderRemove
+	var reply ReplyRemoveObjects
 	if err := json.Unmarshal(repJs, &reply); err != nil {
 		return err
 	}
@@ -179,6 +193,9 @@ func (ops *DxOps) DxFileNew(
 	projId string,
 	fname string,
 	folder string) (string, error) {
+	if ops.options.Verbose {
+		ops.log("file-new %s:%s/%s", projId, folder, fname)
+	}
 
 	var request RequestNewFile
 	request.ProjId = projId
@@ -208,8 +225,10 @@ func (ops *DxOps) DxFileNew(
 func (ops *DxOps) DxFileCloseAndWait(
 	ctx context.Context,
 	httpClient *retryablehttp.Client,
-	fid string,
-	verbose bool) error {
+	fid string) error {
+	if ops.options.Verbose {
+		ops.log("file close-and-wait %s", fid)
+	}
 
 	_, err := dxda.DxAPI(
 		ctx,
@@ -226,7 +245,7 @@ func (ops *DxOps) DxFileCloseAndWait(
 	start := time.Now()
 	deadline := start.Add(fileCloseMaxWaitTime)
         for true {
-		fDesc, err := DxDescribe(ctx, httpClient, &ops.dxEnv, fid, false)
+		fDesc, err := DxDescribe(ctx, httpClient, &ops.dxEnv, fid)
 		if err != nil {
 			return err
 		}
@@ -236,7 +255,7 @@ func (ops *DxOps) DxFileCloseAndWait(
 			return nil
 		case "closing":
 			// not done yet.
-			if verbose {
+			if ops.options.Verbose {
 				elapsed := time.Now().Sub(start)
 				ops.log("Waited %s for file %s to close", elapsed.String(), fid)
 			}
@@ -332,6 +351,9 @@ func (ops *DxOps) DxRename(
 	projId string,
 	fileId string,
 	newName string) error {
+	if ops.options.Verbose {
+		ops.log("file rename %s:%s %s", projId, fileId, newName)
+	}
 
 	var request RequestRename
 	request.ProjId = projId
@@ -518,18 +540,15 @@ type ReplySetProperties struct {
 	Id  string `json:"id"`
 }
 
-func (ops *DxOps) DxSetProperty(
+func (ops *DxOps) DxSetProperties(
 	ctx context.Context,
 	httpClient *retryablehttp.Client,
 	projId string,
 	objId string,
-	key string,
-	value *string) error {
+	props map[string](*string)) error {
 
 	var request RequestSetProperties
 	request.ProjId = projId
-	props := make(map[string](*string))
-	props[key] = value
 	request.Properties = props
 
 	payload, err := json.Marshal(request)
@@ -562,17 +581,15 @@ type ReplyAddTags struct {
 	Id  string `json:"id"`
 }
 
-func (ops *DxOps) DxAddTag(
+func (ops *DxOps) DxAddTags(
 	ctx context.Context,
 	httpClient *retryablehttp.Client,
 	projId string,
 	objId string,
-	key string) error {
+	tags []string) error {
 
 	var request RequestAddTags
 	request.ProjId = projId
-	tags := make([]string, 1)
-	tags[0] = key
 	request.Tags = tags
 
 	payload, err := json.Marshal(request)
@@ -606,17 +623,15 @@ type ReplyRemoveTags struct {
 	Id  string `json:"id"`
 }
 
-func (ops *DxOps) DxRemoveTag(
+func (ops *DxOps) DxRemoveTags(
 	ctx context.Context,
 	httpClient *retryablehttp.Client,
 	projId string,
 	objId string,
-	key string) error {
+	tags []string) error {
 
 	var request RequestRemoveTags
 	request.ProjId = projId
-	tags := make([]string, 1)
-	tags[0] = key
 	request.Tags = tags
 
 	payload, err := json.Marshal(request)

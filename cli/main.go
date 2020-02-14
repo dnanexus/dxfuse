@@ -42,6 +42,7 @@ func usage() {
 
 var (
 	debugFuseFlag = flag.Bool("debugFuse", false, "Tap into FUSE debugging information")
+	fsSync = flag.Bool("sync", false, "Sychronize the filesystem and exit")
 	gid = flag.Int("gid", -1, "User group id (gid)")
 	help = flag.Bool("help", false, "display program options")
 	readOnly = flag.Bool("readOnly", false, "mount the filesystem in read-only mode")
@@ -53,6 +54,10 @@ var (
 func lookupProject(dxEnv *dxda.DXEnvironment, projectIdOrName string) (string, error) {
 	if strings.HasPrefix(projectIdOrName, "project-") {
 		// This is a project ID
+		return projectIdOrName, nil
+	}
+	if strings.HasPrefix(projectIdOrName, "container-") {
+		// This is a container ID
 		return projectIdOrName, nil
 	}
 
@@ -177,6 +182,11 @@ func parseCmdLineArgs() Config {
 	if *version {
 		// print the version and exit
 		fmt.Println(dxfuse.Version)
+		os.Exit(0)
+	}
+	if *fsSync {
+		cmdClient := dxfuse.NewCmdClient()
+		cmdClient.Sync()
 		os.Exit(0)
 	}
 	if *help {

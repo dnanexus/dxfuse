@@ -5,9 +5,11 @@ package dxfuse
 // we need to do is check the map.
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"math/bits"
+	"os"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -60,7 +62,8 @@ const (
 // A request that one of the IO-threads will pick up
 type IoReq struct {
 	hid         fuseops.HandleID
-	f           File
+	inode       int64
+	size       int64
 	url         DxDownloadURL
 
 	ioSize      int64   // The io size
@@ -107,7 +110,9 @@ type PrefetchFileMetadata struct {
 
 	// the file being tracked
 	hid                  fuseops.HandleID
-	f                    File
+	inode                int64
+	id                   string
+	size                 int64
 	url                  DxDownloadURL
 	state                int
 
@@ -136,10 +141,6 @@ type PrefetchGlobalState struct {
 	ioCounter             uint64
 }
 
-func fileDesc(f File) string {
-	return fmt.Sprintf("%d", f.Inode)
-}
-
 // presumption: there is some intersection
 func (iov Iovec) intersectBuffer(startOfs int64, endOfs int64) []byte {
 	// these are offsets in the entire file
@@ -166,7 +167,7 @@ func (iov Iovec) stateString() string {
 
 // write a log message, and add a header
 func (pfm *PrefetchFileMetadata) log(a string, args ...interface{}) {
-	hdr := fmt.Sprintf("prefetch(%d,%s)", pfm.hid, fileDesc(pfm.f))
+	hdr := fmt.Sprintf("prefetch(%d,%s)", pfm.hid, pfm.inode)
 	LogMsg(hdr, a, args...)
 }
 
@@ -208,14 +209,6 @@ func (pfm *PrefetchFileMetadata) cancelIOs() {
 		iovec.state = IOV_ERRORED
 		iovec.cond.Broadcast()
 	}
-}
-
-func (pfm *PrefetchFileMetadata) reset() {
-	pfm.log("access is not sequential, reseting stream state inode=%d", pfm.f.Inode)
-	pfm.cancelIOs()
-	pfm.hiUserAccessOfs = 0
-	pfm.state = PFM_NIL
-	pfm.cache = Cache{}
 }
 
 // write a log message, and add a header
@@ -284,6 +277,16 @@ func NewPrefetchGlobalState(verboseLevel int, dxEnv dxda.DXEnvironment) *Prefetc
 	return pgs
 }
 
+func (pgs *PrefetchGlobalState) resetPfm(pfm *PrefetchFileMetadata) {
+	if pgs.verbose {
+		pfm.log("access is not sequential, reseting stream state inode=%d", pfm.inode)
+	}
+	pfm.cancelIOs()
+	pfm.hiUserAccessOfs = 0
+	pfm.state = PFM_NIL
+	pfm.cache = Cache{}
+}
+
 func (pgs *PrefetchGlobalState) Shutdown() {
 	// signal all prefetch threads to stop
 	close(pgs.ioQueue)
@@ -302,7 +305,7 @@ func (pgs *PrefetchGlobalState) Shutdown() {
 	for _, hid := range allHandles {
 		pfm := pgs.getAndLockPfm(hid)
 		if pfm != nil {
-			pfm.reset()
+			pgs.resetPfm(pfm)
 			pfm.mutex.Unlock()
 		}
 	}
@@ -314,22 +317,16 @@ func (pgs *PrefetchGlobalState) Shutdown() {
 	// we aren't waiting for the periodic cleanup thread.
 }
 
-func check(value bool) {
-	if !value {
-		panic("assertion failed")
-	}
-}
-
 func (pgs *PrefetchGlobalState) reportIfSlowIO(
 	startTs time.Time,
-	f File,
+	inode int64,
 	startByte int64,
 	endByte int64) {
 	endTs := time.Now()
 	deltaSec := int(endTs.Sub(startTs).Seconds())
 	if deltaSec > slowIoThresh {
-		pgs.log("(%s) slow IO [%d -- %d] %d seconds",
-			fileDesc(f), startByte, endByte, deltaSec)
+		pgs.log("(inode=%d) slow IO [%d -- %d] %d seconds",
+			inode, startByte, endByte, deltaSec)
 	}
 }
 
@@ -339,7 +336,7 @@ func (pgs *PrefetchGlobalState) readData(client *retryablehttp.Client, ioReq IoR
 	expectedLen := ioReq.endByte - ioReq.startByte + 1
 	if pgs.verbose {
 		pgs.log("hid=%d (%s) (io=%d) reading extent from DNAx ofs=%d len=%d",
-			ioReq.hid, fileDesc(ioReq.f), ioReq.id, ioReq.startByte, expectedLen)
+			ioReq.hid, ioReq.inode, ioReq.id, ioReq.startByte, expectedLen)
 	}
 
 	headers := make(map[string]string)
@@ -358,7 +355,7 @@ func (pgs *PrefetchGlobalState) readData(client *retryablehttp.Client, ioReq IoR
 	defer timer.Stop()
 
 	startTs := time.Now()
-	defer pgs.reportIfSlowIO(startTs, ioReq.f, ioReq.startByte, ioReq.endByte)
+	defer pgs.reportIfSlowIO(startTs, ioReq.inode, ioReq.startByte, ioReq.endByte)
 
 	for tCnt := 0; tCnt < NumRetriesDefault; tCnt++ {
 		data, err := dxda.DxHttpRequest(ctx, client, 1, "GET", ioReq.url.URL, headers, []byte("{}"))
@@ -369,18 +366,18 @@ func (pgs *PrefetchGlobalState) readData(client *retryablehttp.Client, ioReq IoR
 		recvLen := int64(len(data))
 		if recvLen != expectedLen {
 			// retry (only) in the case of short read
-			pgs.log("(%s) (io=%d) received length is wrong, got %d, expected %d. Retrying.",
-				fileDesc(ioReq.f), ioReq.id, recvLen, expectedLen)
+			pgs.log("(inode=%d) (io=%d) received length is wrong, got %d, expected %d. Retrying.",
+				ioReq.inode, ioReq.id, recvLen, expectedLen)
 			continue
 		}
 
 		if pgs.verbose {
 			if err == nil {
-				pgs.log("(%s) (io=%d) [%d -- %d] returned correctly",
-					fileDesc(ioReq.f), ioReq.id, ioReq.startByte, ioReq.endByte)
+				pgs.log("(inode=%d) (io=%d) [%d -- %d] returned correctly",
+					ioReq.inode, ioReq.id, ioReq.startByte, ioReq.endByte)
 			} else {
-				pgs.log("(%s) (io=%d) [%d -- %d] returned with error %s",
-					fileDesc(ioReq.f), ioReq.id, ioReq.startByte, ioReq.endByte, err.Error())
+				pgs.log("(inode=%d) (io=%d) [%d -- %d] returned with error %s",
+					ioReq.inode, ioReq.id, ioReq.startByte, ioReq.endByte, err.Error())
 			}
 		}
 		return data, err
@@ -388,6 +385,54 @@ func (pgs *PrefetchGlobalState) readData(client *retryablehttp.Client, ioReq IoR
 
 	pgs.log("Did not received the data for IO [%d -- %d]", ioReq.startByte, ioReq.endByte)
 	return nil, fmt.Errorf("Did not receive the data")
+}
+
+// Download an entire file, and write it to disk.
+func (pgs *PrefetchGlobalState) DownloadEntireFile(
+	client *retryablehttp.Client,
+	inode int64,
+	size int64,
+	url DxDownloadURL,
+	fd *os.File,
+	localPath string) error {
+	if pgs.verbose {
+		pgs.log("Downloading entire file (inode=%d) to %s", inode, localPath)
+	}
+
+	endOfs := size - 1
+	startByte := int64(0)
+	for startByte <= endOfs {
+		endByte := MinInt64(startByte + pgs.prefetchMaxIoSize - 1, endOfs)
+		iovLen := endByte - startByte + 1
+
+		// read one chunk of the file
+		uniqueId := atomic.AddUint64(&pgs.ioCounter, 1)
+		ioReq := IoReq{
+			hid : 0, // Invalid handle, shouldn't be in a table
+			inode : inode,
+			size : size,
+			url : url,
+			ioSize : iovLen,
+			startByte : startByte,
+			endByte : endByte,
+			id : uniqueId,
+		}
+
+		data, err := pgs.readData(client, ioReq)
+		if err != nil {
+			return err
+		}
+		n, err := fd.WriteAt(data, startByte)
+		if err != nil {
+			return err
+		}
+		if int64(n) != iovLen {
+			return errors.New("Length of local io-write is wrong")
+		}
+
+		startByte += pgs.prefetchMaxIoSize
+	}
+	return nil
 }
 
 // Find the index for this chunk in the cache. The chunks may be different
@@ -463,24 +508,24 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 		data, err := pgs.readData(client, ioReq)
 
 		if pgs.verboseLevel >= 2 {
-			pgs.log("(%s) (io=%d) adding returned data to file", fileDesc(ioReq.f), ioReq.id)
+			pgs.log("(inode=%d) (io=%d) adding returned data to file", ioReq.inode, ioReq.id)
 		}
 		pfm := pgs.getAndLockPfm(ioReq.hid)
 		if pfm == nil {
 			// file is not tracked anymore
-			pgs.log("(%s) (io=%d) dropping prefetch IO [%d -- %d], file is no longer tracked",
-				fileDesc(ioReq.f), ioReq.id, ioReq.startByte, ioReq.endByte)
+			pgs.log("(inode=%d) (io=%d) dropping prefetch IO [%d -- %d], file is no longer tracked",
+				ioReq.inode, ioReq.id, ioReq.startByte, ioReq.endByte)
 			continue
 		}
 
 		if pgs.verboseLevel >= 2 {
-			pgs.log("(%s) (%d) holding the PFM lock", fileDesc(ioReq.f), ioReq.id)
+			pgs.log("(inode=%d) (%d) holding the PFM lock", ioReq.inode, ioReq.id)
 		}
 		pgs.addIoReqToCache(pfm, ioReq, data, err)
 		pfm.mutex.Unlock()
 
 		if pgs.verboseLevel >= 2 {
-			pgs.log("(%s) (%d) Done", fileDesc(ioReq.f), ioReq.id)
+			pgs.log("(inode=%d) (%d) Done", ioReq.inode, ioReq.id)
 		}
 	}
 }
@@ -525,7 +570,7 @@ func (pgs *PrefetchGlobalState) tableCleanupWorker() {
 				if !pgs.isWorthIt(pfm, now) {
 					// This stream isn't worth it, release
 					// the cache resources
-					pfm.reset()
+					pgs.resetPfm(pfm)
 				}
 				pfm.mutex.Unlock()
 			}
@@ -537,19 +582,28 @@ func (pgs *PrefetchGlobalState) tableCleanupWorker() {
 	}
 }
 
-func (pgs *PrefetchGlobalState) newPrefetchFileMetadata(hid fuseops.HandleID, f File, url DxDownloadURL) *PrefetchFileMetadata {
-	var pfm PrefetchFileMetadata
-	pfm.hid = hid
-	pfm.f = f
-	pfm.url = url
-	pfm.lastIoTimestamp = time.Now()
-	pfm.hiUserAccessOfs = 0
-	pfm.mw.timestamp = time.Now()
-
-	// Initial state of the file; no IOs were detected yet
-	pfm.state = PFM_NIL
-
-	return &pfm
+func (pgs *PrefetchGlobalState) newPrefetchFileMetadata(
+	hid fuseops.HandleID,
+	f File,
+	url DxDownloadURL) *PrefetchFileMetadata {
+	now := time.Now()
+	return &PrefetchFileMetadata{
+		mutex : sync.Mutex{},
+		hid : hid,
+		inode : f.Inode,
+		id : f.Id,
+		size : f.Size,
+		url : url,
+		state : PFM_NIL,  // Initial state of the file; no IOs were detected yet
+		lastIoTimestamp : now,
+		hiUserAccessOfs : 0,
+		mw : MeasureWindow{
+			timestamp : now,
+			numIOs : 0,
+			numBytesPrefetched : 0,
+			numPrefetchIOs : 0,
+		},
+	}
 }
 
 // setup so we can detect a sequential stream.
@@ -618,11 +672,11 @@ func (pgs *PrefetchGlobalState) RemoveStreamEntry(hid fuseops.HandleID) {
 	pfm := pgs.getAndLockPfm(hid)
 	if pfm != nil {
 		if pgs.verbose {
-			pgs.log("RemoveStreamEntry (%d, %s, %d)", hid, pfm.f.Name, pfm.f.Inode)
+			pgs.log("RemoveStreamEntry (%d, inode=%d)", hid, pfm.inode)
 		}
 
 		// wake up any waiting synchronous user IOs
-		pfm.reset()
+		pgs.resetPfm(pfm)
 		pfm.mutex.Unlock()
 
 		// remove from the table
@@ -721,7 +775,7 @@ func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIn
 		//
 		// stretch the cache forward, but don't go over the file size. Add place holder
 		// io-vectors, waiting for prefetch IOs to return.
-		lastByteInFile := pfm.f.Size - 1
+		lastByteInFile := pfm.size - 1
 		for i := 0; i < nReadAheadChunks; i++ {
 			startByte := (pfm.cache.endByte + 1) + (int64(i) * int64(pfm.cache.prefetchIoSize))
 
@@ -742,7 +796,8 @@ func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIn
 			uniqueId := atomic.AddUint64(&pgs.ioCounter, 1)
 			pgs.ioQueue <- IoReq{
 				hid : pfm.hid,
-				f : pfm.f,
+				inode : pfm.inode,
+				size : pfm.size,
 				url : pfm.url,
 				ioSize : iov.ioSize,
 				startByte : iov.startByte,
@@ -849,7 +904,7 @@ func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 		pgs.moveCacheWindow(pfm, last)
 
 		// Have we reached the end of the file?
-		if pfm.cache.endByte >= pfm.f.Size - 1 {
+		if pfm.cache.endByte >= pfm.size - 1 {
 			pfm.state = PFM_EOF
 		}
 	}
@@ -1005,7 +1060,7 @@ func (pgs *PrefetchGlobalState) CacheLookup(hid fuseops.HandleID, startOfs int64
 		// No data is cached. Only detecting if there is sequential access.
 		ok := pgs.markAccessedAndMaybeStartPrefetch(pfm, startOfs, endOfs)
 		if !ok {
-			pfm.reset()
+			pgs.resetPfm(pfm)
 		}
 		return 0
 
@@ -1016,7 +1071,7 @@ func (pgs *PrefetchGlobalState) CacheLookup(hid fuseops.HandleID, startOfs int64
 		if retCode == DATA_OUTSIDE_CACHE {
 			// The file is not accessed sequentially.
 			// zero out the cache and start over.
-			pfm.reset()
+			pgs.resetPfm(pfm)
 		}
 		return len
 
@@ -1026,7 +1081,7 @@ func (pgs *PrefetchGlobalState) CacheLookup(hid fuseops.HandleID, startOfs int64
 		return len
 
 	default:
-		panic(fmt.Sprintf("bad state %d for fileId=%s", pfm.state, pfm.f.Id))
+		log.Panicf("bad state %d for fileId=%s", pfm.state, pfm.id)
+		return 0
 	}
-
 }
