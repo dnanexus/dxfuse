@@ -5,13 +5,10 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"sync"
 	"time"
 
-	"github.com/dnanexus/dxda"
 	"github.com/hashicorp/go-retryablehttp"
 
-	"github.com/jacobsa/fuse/fuseutil"
 	"github.com/jacobsa/fuse/fuseops"
 )
 
@@ -21,15 +18,16 @@ const (
 	GiB                   = 1024 * MiB
 )
 const (
-	CreatedFilesDir = "/var/dxfuse/created_files"
-	DatabaseFile       = "/var/dxfuse/metadata.db"
-	HttpClientPoolSize = 4
-	LogFile            = "/var/log/dxfuse.log"
-	MaxDirSize         = 10 * 1000
-	MaxNumFileHandles  = 1000 * 1000
-	NumRetriesDefault  = 3
-	Version            = "v0.19"
-	WritableFileSizeLimit = 1 * MiB
+	CreatedFilesDir     = "/var/dxfuse/created_files"
+	DatabaseFile        = "/var/dxfuse/metadata.db"
+	HttpClientPoolSize  = 4
+	FileWriteInactivityThresh = 5 * time.Minute
+	WritableFileSizeLimit = 16 * MiB
+	LogFile             = "/var/log/dxfuse.log"
+	MaxDirSize          = 10 * 1000
+	MaxNumFileHandles   = 1000 * 1000
+	NumRetriesDefault   = 3
+	Version             = "v0.19"
 )
 const (
 	InodeInvalid       = 0
@@ -42,6 +40,11 @@ const (
 	dirReadWriteMode = 0777 | os.ModeDir
 	fileReadOnlyMode = 0444
 	fileReadWriteMode = 0644
+)
+const (
+	// flags for writing files to disk
+	DIRTY_FILES_ALL = 14       // all modified files
+	DIRTY_FILES_INACTIVE = 15  // only files there were unmodified recently
 )
 
 const (
@@ -67,60 +70,6 @@ type Options struct {
 	Gid                 uint32
 }
 
-
-type Filesys struct {
-	// inherit empty implementations for all the filesystem
-	// methods we do not implement
-	fuseutil.NotImplementedFileSystem
-
-	// configuration information for accessing dnanexus servers
-	dxEnv dxda.DXEnvironment
-
-	// various options
-	options Options
-
-	// A file holding a sqlite3 database with all the files and
-	// directories collected thus far.
-	dbFullPath string
-
-	// Lock for protecting shared access to the database
-	mutex *sync.Mutex
-
-	// a pool of http clients, for short requests, such as file creation,
-	// or file describe.
-	httpClientPool    chan(*retryablehttp.Client)
-
-	// metadata database
-	mdb *MetadataDb
-
-	// prefetch state for all files
-	pgs *PrefetchGlobalState
-
-	// sync daemon
-	sybx *SyncDbDx
-
-	// API to dx
-	ops *DxOps
-
-	// A way to send external commands to the filesystem
-	cmdSrv *CmdServer
-
-	// description for each mounted project
-	projId2Desc map[string]DxDescribePrj
-
-	// all open files
-	fhCounter uint64
-	fhTable map[fuseops.HandleID]*FileHandle
-
-	// all open directories
-	dhCounter uint64
-	dhTable map[fuseops.HandleID]*DirHandle
-
-	tmpFileCounter uint64
-
-	// is the the system shutting down (unmounting)
-	shutdownCalled bool
-}
 
 // A node is a generalization over files and directories
 type Node interface {
@@ -180,6 +129,9 @@ const (
 
 // A Unix file can stand for any DNAx data object. For example, it could be a workflow or an applet.
 // We distinguish between them based on the Id (file-xxxx, applet-xxxx, workflow-xxxx, ...).
+//
+// Note: this struct is immutable by convention. The up-to-date data is always on the database,
+// not in memory.
 type File struct {
 	Kind       int     // Kind of object this is
 	Id         string  // Required to build a download URL
@@ -211,6 +163,10 @@ type File struct {
 
 	// For a regular file, a path to a local copy (if any).
 	LocalPath string
+
+	// is the file modified
+	dirtyData bool
+	dirtyMetadata bool
 }
 
 func (f File) GetAttrs() (a fuseops.InodeAttributes) {
@@ -252,6 +208,7 @@ type DirtyFileInfo struct {
 	// will be "" for files created locally, and not uploaded yet
 	Id            string
 	FileSize      int64
+	Mtime         int64
 	LocalPath     string
 	Tags          []string
 	Properties    map[string]string
@@ -259,35 +216,6 @@ type DirtyFileInfo struct {
 	Directory     string
 	ProjFolder    string
 	ProjId        string
-}
-
-// Files can be opened in read-only mode, or read-write mode.
-const (
-	// read only file that is on the cloud
-	RO_Remote = 1
-
-	// file that has a local copy and can be modified.
-	// updates will be propagated with the background daemon.
-	RW_File = 2
-)
-
-type FileHandle struct {
-	fKind int
-	f File
-	hid fuseops.HandleID
-
-	// URL used for downloading file ranges.
-	// Used for read-only files.
-	url *DxDownloadURL
-
-	// 1. Used for reading from an immutable local copy
-	// 2. Used for writing to newly created files.
-	fd *os.File
-}
-
-type DirHandle struct {
-	d Dir
-	entries []fuseutil.Dirent
 }
 
 // A handle used when operating on a filesystem

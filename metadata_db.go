@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"path/filepath"
 	"os"
 	"strings"
@@ -373,7 +374,7 @@ func (mdb *MetadataDb) allocInodeNum() int64 {
 func (mdb *MetadataDb) lookupDataObjectByInode(oph *OpHandle, oname string, inode int64) (File, bool, error) {
 	// point lookup in the files table
 	sqlStmt := fmt.Sprintf(`
- 		        SELECT kind,id,proj_id,state,archival_state,size,ctime,mtime,mode,tags,properties,symlink,local_path
+ 		        SELECT kind,id,proj_id,state,archival_state,size,ctime,mtime,mode,tags,properties,symlink,local_path, dirty_data, dirty_metadata
                         FROM data_objects
 			WHERE inode = '%d';`,
 		inode)
@@ -395,12 +396,16 @@ func (mdb *MetadataDb) lookupDataObjectByInode(oph *OpHandle, oname string, inod
 		var mtime int64
 		var props string
 		var tags string
+		var dirtyData int
+		var dirtyMetadata int
 		rows.Scan(&f.Kind, &f.Id, &f.ProjId, &f.State, &f.ArchivalState, &f.Size, &ctime, &mtime, &f.Mode,
-			&tags, &props, &f.Symlink, &f.LocalPath)
+			&tags, &props, &f.Symlink, &f.LocalPath, &dirtyData, &dirtyMetadata)
 		f.Ctime = SecondsToTime(ctime)
 		f.Mtime = SecondsToTime(mtime)
 		f.Tags = tagsUnmarshal(tags)
 		f.Properties = propertiesUnmarshal(props)
+		f.dirtyData = intToBool(dirtyData)
+		f.dirtyMetadata = intToBool(dirtyMetadata)
 		numRows++
 	}
 	rows.Close()
@@ -641,7 +646,7 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 
 	// Extract information for all the files
 	sqlStmt = fmt.Sprintf(`
- 		        SELECT dos.kind, dos.id, dos.proj_id, dos.state, dos.archival_state, dos.inode, dos.size, dos.ctime, dos.mtime, dos.mode, dos.tags, dos.properties, dos.symlink, dos.local_path, namespace.name
+ 		        SELECT dos.kind, dos.id, dos.proj_id, dos.state, dos.archival_state, dos.inode, dos.size, dos.ctime, dos.mtime, dos.mode, dos.tags, dos.properties, dos.symlink, dos.local_path, dos.dirty_data, dos.dirty_metadata, namespace.name
                         FROM data_objects as dos
                         JOIN namespace
                         ON dos.inode = namespace.inode
@@ -663,14 +668,18 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 		var tags string
 		var props string
 		var mode int
+		var dirtyData int
+		var dirtyMetadata int
 		rows.Scan(&f.Kind,&f.Id, &f.ProjId, &f.State, &f.ArchivalState, &f.Inode,
 			&f.Size, &ctime, &mtime, &mode,
-			&tags, &props, &f.Symlink, &f.LocalPath, &f.Name)
+			&tags, &props, &f.Symlink, &f.LocalPath, &dirtyData, &dirtyMetadata, &f.Name)
 		f.Ctime = SecondsToTime(ctime)
 		f.Mtime = SecondsToTime(mtime)
 		f.Tags = tagsUnmarshal(tags)
 		f.Properties = propertiesUnmarshal(props)
 		f.Mode = os.FileMode(mode)
+		f.dirtyData = intToBool(dirtyData)
+		f.dirtyMetadata = intToBool(dirtyMetadata)
 
 		files[f.Name] = f
 	}
@@ -1324,19 +1333,33 @@ func (mdb *MetadataDb) Unlink(ctx context.Context, oph *OpHandle, file File) err
 func (mdb *MetadataDb) UpdateFileAttrs(
 	ctx context.Context,
 	oph *OpHandle,
-	f File,
+	inode int64,
 	fileSize int64,
 	modTime time.Time,
-	mode os.FileMode) error {
-	if mdb.options.Verbose {
-		mdb.log("Update file=%v size=%d mode=%d", f, fileSize, mode)
-	}
+	mode *os.FileMode) error {
 	modTimeSec := modTime.Unix()
-	sqlStmt := fmt.Sprintf(`
+
+	sqlStmt := ""
+	if mode == nil {
+		// don't update the mode
+		if mdb.options.Verbose {
+			mdb.log("Update inode=%d size=%d", inode, fileSize)
+		}
+		sqlStmt = fmt.Sprintf(`
+ 		        UPDATE data_objects
+                        SET size = '%d', mtime='%d', dirty_data='1'
+			WHERE inode = '%d';`,
+			fileSize, modTimeSec, inode)
+	} else {
+		if mdb.options.Verbose {
+			mdb.log("Update inode=%d size=%d mode=%d", inode, fileSize, mode)
+		}
+		sqlStmt = fmt.Sprintf(`
  		        UPDATE data_objects
                         SET size = '%d', mtime='%d', mode='%d', dirty_data='1'
 			WHERE inode = '%d';`,
-		fileSize, modTimeSec, int(mode), f.Inode)
+			fileSize, modTimeSec, int(*mode), inode)
+	}
 
 	if _, err := oph.txn.Exec(sqlStmt); err != nil {
 		mdb.log(err.Error())
@@ -1349,16 +1372,16 @@ func (mdb *MetadataDb) UpdateFileAttrs(
 func (mdb *MetadataDb) UpdateFileLocalPath(
 	ctx context.Context,
 	oph *OpHandle,
-	f File,
+	inode int64,
 	localPath string) error {
 	if mdb.options.Verbose {
-		mdb.log("Update file=%v localPath=%s", f, localPath)
+		mdb.log("Update inode=%d localPath=%s", inode, localPath)
 	}
 	sqlStmt := fmt.Sprintf(`
  		        UPDATE data_objects
                         SET local_path = '%s'
 			WHERE inode = '%d';`,
-		localPath, f.Inode)
+		localPath, inode)
 
 	if _, err := oph.txn.Exec(sqlStmt); err != nil {
 		mdb.log(err.Error())
@@ -1582,9 +1605,21 @@ func (mdb *MetadataDb) UpdateFileTagsAndProperties(
 
 // Get a list of all the dirty files, and reset the table. The files can be modified again,
 // which will set the flag to true.
-func (mdb *MetadataDb) DirtyFilesGetAllAndReset() ([]DirtyFileInfo, error) {
+func (mdb *MetadataDb) DirtyFilesGetAndReset(flag int) ([]DirtyFileInfo, error) {
 	oph := mdb.opOpen()
 	defer mdb.opClose(oph)
+
+	var loThreshSec int64 = 0
+	switch flag {
+	case DIRTY_FILES_ALL:
+		// we want to find all dirty files
+		loThreshSec = math.MaxInt64
+	case DIRTY_FILES_INACTIVE:
+		// we only want recently inactive files. Otherwise,
+		// we'll be writing way too much.
+		loThreshSec = time.Now().Unix()
+		loThreshSec -= int64(FileWriteInactivityThresh.Seconds())
+	}
 
 	// join all the tables so we can get the file attributes, the
 	// directory it lives under, and which project-folder this
@@ -1596,6 +1631,7 @@ func (mdb *MetadataDb) DirtyFilesGetAllAndReset() ([]DirtyFileInfo, error) {
                                dos.dirty_metadata as dirty_metadata,
                                dos.id,
                                dos.size,
+                               dos.mtime as mtime,
                                dos.local_path,
                                dos.tags,
                                dos.properties,
@@ -1604,7 +1640,9 @@ func (mdb *MetadataDb) DirtyFilesGetAllAndReset() ([]DirtyFileInfo, error) {
                         FROM data_objects as dos
                         JOIN namespace
                         ON dos.inode = namespace.inode
-			WHERE dirty_data = '1' OR dirty_metadata = '1' ;`)
+			WHERE (dirty_data = '1' OR dirty_metadata = '1') AND (mtime < '%d') ;`,
+		loThreshSec)
+
 	rows, err := oph.txn.Query(sqlStmt)
 	if err != nil {
 		mdb.log("DirtyFilesGetAllAndReset err=%s", err.Error())
@@ -1620,8 +1658,10 @@ func (mdb *MetadataDb) DirtyFilesGetAllAndReset() ([]DirtyFileInfo, error) {
 		var tags string
 		var props string
 
-		rows.Scan(&kind, &f.Inode, &dirtyData, &dirtyMetadata, &f.Id, &f.FileSize, &f.LocalPath,
-			&tags, &props, &f.Name, &f.Directory)
+		rows.Scan(&kind, &f.Inode, &dirtyData, &dirtyMetadata, &f.Id,
+			&f.FileSize,
+			&f.Mtime,
+			&f.LocalPath, &tags, &props, &f.Name, &f.Directory)
 		f.dirtyData = intToBool(dirtyData)
 		f.dirtyMetadata = intToBool(dirtyMetadata)
 		f.Tags = tagsUnmarshal(tags)
@@ -1648,7 +1688,9 @@ func (mdb *MetadataDb) DirtyFilesGetAllAndReset() ([]DirtyFileInfo, error) {
 	sqlStmt = fmt.Sprintf(`
  	        UPDATE data_objects
                 SET dirty_data = '0', dirty_metadata = '0'
-		WHERE dirty_data = '1' OR dirty_metadata = '1';`)
+		WHERE (dirty_data = '1' OR dirty_metadata = '1') AND (mtime < '%d') ;`,
+		loThreshSec)
+
 	if _, err := oph.txn.Exec(sqlStmt); err != nil {
 		mdb.log("Error erasing dirty_data|dirty_metadata flags (%s)", err.Error())
 		return nil, err

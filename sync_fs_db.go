@@ -597,7 +597,7 @@ to the platform due to part size constraints. Error=%s`,
 	return nil
 }
 
-func (sybx *SyncDbDx) sweep() error {
+func (sybx *SyncDbDx) sweep(flag int) error {
 	if sybx.options.Verbose {
 		sybx.log("syncing database and platform [")
 	}
@@ -605,7 +605,7 @@ func (sybx *SyncDbDx) sweep() error {
 	// find all the dirty files. We need to lock
 	// the database while we are doing this.
 	sybx.mutex.Lock()
-	dirtyFiles, err := sybx.mdb.DirtyFilesGetAllAndReset()
+	dirtyFiles, err := sybx.mdb.DirtyFilesGetAndReset(flag)
 	if err != nil {
 		sybx.mutex.Unlock()
 		return err
@@ -628,6 +628,7 @@ func (sybx *SyncDbDx) sweep() error {
 }
 
 func (sybx *SyncDbDx) periodicSync() {
+	sybx.log("starting sweep thread")
 	lastSweepTs := time.Now()
 	for true {
 		// we need to wake up often to check if
@@ -649,7 +650,7 @@ func (sybx *SyncDbDx) periodicSync() {
 		}
 		lastSweepTs = now
 
-		if err := sybx.sweep(); err != nil {
+		if err := sybx.sweep(DIRTY_FILES_INACTIVE); err != nil {
 			sybx.log("Error in sweep: %s", err.Error())
 		}
 	}
@@ -659,7 +660,7 @@ func (sybx *SyncDbDx) CmdSync() error {
 	// we don't want to have two sweeps running concurrently
 	sybx.stopSweepWorker()
 
-	if err := sybx.sweep(); err != nil {
+	if err := sybx.sweep(DIRTY_FILES_ALL); err != nil {
 		sybx.log("Error in sweep: %s", err.Error())
 		return err
 	}

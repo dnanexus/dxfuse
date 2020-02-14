@@ -1,7 +1,7 @@
 # Release Notes
 
 ## v0.19
-- Support overwriting files
+- *Experimental support for overwriting files*
 - Remove support for hard links. The combination of hard-links, cloning on DNAx, and writable files is too complex at the moment.
 - Improvements to extended attributes (xattrs). The testing tool we use is `xattr`, which is native on MacOS (OSX), and can be installed with `sudo apt-get install xattr` on Linux.
 
