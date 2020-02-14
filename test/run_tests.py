@@ -138,7 +138,7 @@ def run_correctness(dx_proj, itype, verbose):
 
 def run_biotools(dx_proj, itype, verbose):
     bam_diff = lookup_applet("bam_diff", dx_proj, "/applets")
-    jobs2 = launch_jobs(dx_proj, bam_diff, [itype], verbose)
+    jobs = launch_jobs(dx_proj, bam_diff, [itype], verbose)
     wait_for_completion(jobs)
 
 def main():

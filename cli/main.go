@@ -56,6 +56,10 @@ func lookupProject(dxEnv *dxda.DXEnvironment, projectIdOrName string) (string, e
 		// This is a project ID
 		return projectIdOrName, nil
 	}
+	if strings.HasPrefix(projectIdOrName, "container-") {
+		// This is a container ID
+		return projectIdOrName, nil
+	}
 
 	// This is a project name, describe it, and
 	// return the project-id.
