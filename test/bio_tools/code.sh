@@ -68,11 +68,11 @@ main() {
     runtime=$((end-start))
     dx-jobutil-add-output --class=string runtime_sambamba "$runtime seconds"
 
-    echo "samtools split"
+#    echo "samtools split"
     #    samtools split --threads 1 -u SJAML030069_D1.RNA-Seq.unaccounted_reads.bam -f '%*_%!.%.' > ~/SJAML030069_D1.RNA-Seq.bam
-    start=`date +%s`
-    samtools split --threads 1 -u SRR10270774_markdup.A.bam -f '%*_%!.%.' > ~/filter_A.bam
-    end=`date +%s`
-    runtime=$((end-start))
-    dx-jobutil-add-output --class=string runtime_samtools_split "$runtime seconds"
+#    start=`date +%s`
+#    samtools split --threads 1 -u SRR10270774_markdup.A.bam -f '%*_%!.%.' > ~/filter_A.bam
+#    end=`date +%s`
+#    runtime=$((end-start))
+#    dx-jobutil-add-output --class=string runtime_samtools_split "$runtime seconds"
 }
