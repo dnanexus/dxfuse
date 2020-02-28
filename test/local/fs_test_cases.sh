@@ -56,6 +56,7 @@ function create_dir {
     local src_dir=$1
     local write_dir=$2
 
+    echo "create_dir($src_dir, $write_dir)"
     mkdir $write_dir
 
     # copy files to new directory
@@ -84,6 +85,7 @@ function create_remove_dir {
     local src_dir=$2
     local write_dir=$3
 
+    echo "create_remove_dir($flag, $src_dir, $write_dir)"
     mkdir $write_dir
     rmdir $write_dir
     mkdir $write_dir
