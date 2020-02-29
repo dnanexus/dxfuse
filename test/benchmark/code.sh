@@ -4,8 +4,6 @@
 ## constants
 
 baseDir="$HOME/dxfuse_test"
-dxTrgDir="${baseDir}/dxCopy"
-dxfuseTrgDir="${baseDir}/dxfuseCopy"
 mountpoint="${baseDir}/MNT"
 
 ######################################################################
@@ -84,7 +82,7 @@ function measure_and_compare_upload {
         start=`date +%s`
         cp /tmp/X $mountpoint/$projName/$data_dir/$fname.2
         echo "start dxfuse sync"
-        sudo -E dxfuse -sync
+        sudo -E $dxfuse -sync
         end=`date +%s`
         runtime2=$((end-start))
 
@@ -97,10 +95,7 @@ main() {
     echo "loading the dx environment"
     source environment
 
-    # clean and make fresh directories
-    for d in $dxTrgDir $dxfuseTrgDir $mountpoint; do
-        mkdir -p $d
-    done
+    mkdir -p $mountpoint
 
     # download with dxfuse
     # Start the dxfuse daemon in the background, and wait for it to initilize.

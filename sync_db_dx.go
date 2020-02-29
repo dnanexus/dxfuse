@@ -22,13 +22,11 @@ const (
 )
 
 type Chunk struct {
-	fileId  string
-	index   int
-	data  []byte
-	fwg     *sync.WaitGroup
-
-	// output from the operation
-	err     error
+	fileId         string
+	index          int
+	data         []byte
+	fwg           *sync.WaitGroup
+	errorReports   chan error   // report errors if any
 }
 
 type FileUpdateReq struct {
@@ -66,7 +64,7 @@ func NewSyncDbDx(
 
 	// limit the size of the chunk queue, so we don't
 	// have too many chunks stored in memory.
-	chunkQueue := make(chan *Chunk, numBulkDataThreads * 5)
+	chunkQueue := make(chan *Chunk, numBulkDataThreads)
 
 	// determine the maximal size of a prefetch IO.
 	//
@@ -74,13 +72,12 @@ func NewSyncDbDx(
 	var minChunkSize int64
 	if dxEnv.DxJobId == "" {
 		// on a remote machine the timeouts are too great
-		// for large IO sizes. It is common to see 90 second
-		// IOs.
-		minChunkSize = 16 * MiB
+		// for large IO sizes.
+		minChunkSize = 8 * MiB
 	} else {
 		// on a worker we can use large sizes, because
 		// we have a good network connection to S3 and dnanexus servers
-		minChunkSize = 96 * MiB
+		minChunkSize = 16 * MiB
 	}
 
 
@@ -175,18 +172,21 @@ func (sybx *SyncDbDx) bulkDataWorker() {
 			sybx.log("Uploading chunk=%d len=%d", chunk.index, len(chunk.data))
 		}
 
-		// upload the data, and store the error code in the chunk
-		// data structure.
-		chunk.err = sybx.ops.DxFileUploadPart(
+		// upload the data, and report the error if any
+		err := sybx.ops.DxFileUploadPart(
 			context.TODO(),
 			client,
 			chunk.fileId, chunk.index, chunk.data)
-
-		// release the memory used by the chunk, we no longer
-		// need it. The file-thread is going to check the error code,
-		// so the struct itself remains alive.
-		chunk.data = nil
+		if err != nil {
+			sybx.log("failed to upload file %s part %d, error=%s",
+				chunk.fileId, chunk.index, err)
+			chunk.errorReports <- err
+		}
 		chunk.fwg.Done()
+
+		if sybx.options.Verbose {
+			sybx.log("Chunk %d complete", chunk.index)
+		}
 	}
 }
 
@@ -229,7 +229,13 @@ func (sybx *SyncDbDx) calcPartSize(param FileUploadParameters, fileSize int64) (
 	// now we know that there is a solution. We'll try to use a small part size,
 	// to reduce memory requirements. However, we don't want really small parts, which is why
 	// we use [minChunkSize].
-	preferedChunkSize := divideRoundUp(param.MinimumPartSize, sybx.minChunkSize) * sybx.minChunkSize
+	//
+	// Notes:
+	// 1) We have seen that using the minimum-part-size as reported by AWS is actually a bit
+	//    too small, so we add a little bit to it.
+	// 2) To make it easy to understanding the part sizes we make them a multiple of MiB.
+	minPartSize := MaxInt64(sybx.minChunkSize, param.MinimumPartSize + KiB)
+	preferedChunkSize := divideRoundUp(minPartSize, MiB) * MiB
 	for preferedChunkSize < param.MaximumPartSize {
 		if (checkPartSizeSolution(param, fileSize, preferedChunkSize)) {
 			return preferedChunkSize, nil
@@ -288,11 +294,17 @@ func (sybx *SyncDbDx) uploadFileData(
 	}
 
 	// a large file, with more than a single chunk
+
+	// a channel for reporting errors. It needs to
+	// accomodate the maximal number of errors, so that the worker
+	// threads will not block.
+	numParts := divideRoundUp(upReq.dfi.FileSize, upReq.partSize)
+	errorReports := make(chan error, numParts)
+
 	var fileWg sync.WaitGroup
 	fileEndOfs := upReq.dfi.FileSize - 1
 	ofs := int64(0)
 	cIndex := 1
-	fileParts := make([]*Chunk, 0)
 	for ofs <= fileEndOfs {
 		chunkEndOfs := MinInt64(ofs + upReq.partSize - 1, fileEndOfs)
 		chunkLen := chunkEndOfs - ofs
@@ -305,14 +317,12 @@ func (sybx *SyncDbDx) uploadFileData(
 			index : cIndex,
 			data : buf,
 			fwg : &fileWg,
-			err : nil,
+			errorReports : errorReports,
 		}
 		// enqueue an upload request. This can block, if there
 		// are many chunks.
 		fileWg.Add(1)
 		sybx.chunkQueue <- chunk
-		fileParts = append(fileParts, chunk)
-
 
 		ofs += upReq.partSize
 		cIndex++
@@ -320,18 +330,13 @@ func (sybx *SyncDbDx) uploadFileData(
 
 	// wait for all requests to complete
 	fileWg.Wait()
+	close(errorReports)
 
 	// check the error codes
-	var finalErr error
-	for _, chunk := range(fileParts) {
-		if chunk.err != nil {
-			sybx.log("failed to upload file %s part %d, error=%s",
-				chunk.fileId, chunk.index, chunk.err.Error())
-			finalErr = chunk.err
-		}
+	for err := range(errorReports) {
+		return err
 	}
-
-	return finalErr
+	return nil
 }
 
 func (sybx *SyncDbDx) createEmptyFileData(
@@ -412,11 +417,11 @@ func (sybx *SyncDbDx) updateFileData(
 	sybx.mutex.Unlock()
 
 	// Note: the file may have been deleted while it was being uploaded.
-	// This means that error could occur here, and they would be legal.
+	// This means that an error could happen here, and it would be legal.
 	err = sybx.uploadFileDataAndWait(client, upReq, fileId)
 	if err != nil {
-		// Upload failed. Do not erase the local copy.
-		//
+		// Upload failed.
+		// TODO: erase the local copy.
 		sybx.log("Error during upload of file %s: %s",
 			fileId, err.Error())
 		return "", err
@@ -552,7 +557,7 @@ func (sybx *SyncDbDx) updateFileWorker() {
 			return
 		}
 		if sybx.options.Verbose {
-			sybx.log("updateFile %v", upReq)
+			sybx.log("updateFile inode=%d part-size=%d", upReq.dfi.Inode, upReq.partSize)
 		}
 
 		// note: the file-id may be empty ("") if the file

@@ -7,8 +7,9 @@ dxfuse="$GOPATH/bin/dxfuse"
 baseDir=$HOME/dxfuse_test
 mountpoint=${baseDir}/MNT
 
-large_file=wgEncodeUwRepliSeqBg02esG1bAlnRep1.bam.bai
-
+#large_file=wgEncodeUwRepliSeqBg02esG1bAlnRep1.bam.bai
+#large_file=ubuntu.tar.gz
+large_file=ubuntu_18_04_minimal.tar.gz
 ######################################################################
 
 teardown_complete=0
@@ -24,9 +25,12 @@ function teardown {
     cd $HOME
     sudo umount $mountpoint
 
-#    set -e
-#    dx rm $projName:/$large_file >& /dev/null
-#    set +e
+    dxPath=$projName:/$large_file
+    echo "cleaning up platform file $dxPath"
+    set -e
+    dx ls -l $dxPath
+    dx rm $dxPath
+    set +e
 }
 
 # trap any errors and cleanup
