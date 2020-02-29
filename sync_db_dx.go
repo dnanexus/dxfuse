@@ -116,7 +116,7 @@ func NewSyncDbDx(
 
 // write a log message, and add a header
 func (sybx *SyncDbDx) log(a string, args ...interface{}) {
-	LogMsg("synx_db_dx", a, args...)
+	LogMsg("sync_db_dx", a, args...)
 }
 
 

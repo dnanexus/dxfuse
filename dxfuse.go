@@ -275,8 +275,23 @@ func (fsys *Filesys) opOpen() *OpHandle {
 	}
 }
 
+func (fsys *Filesys) opOpenNoHttpClient() *OpHandle {
+	txn, err := fsys.mdb.BeginTxn()
+	if err != nil {
+		log.Panic("Could not open transaction")
+	}
+
+	return &OpHandle{
+		httpClient : nil,
+		txn : txn,
+		err : nil,
+	}
+}
+
 func (fsys *Filesys) opClose(oph *OpHandle) {
-	fsys.httpClientPool <- oph.httpClient
+	if oph.httpClient != nil {
+		fsys.httpClientPool <- oph.httpClient
+	}
 
 	if oph.err == nil {
 		err := oph.txn.Commit()
@@ -1499,8 +1514,6 @@ func (fsys *Filesys) ReadFile(ctx context.Context, op *fuseops.ReadFileOp) error
 func (fsys *Filesys) prepareFileForWrite(ctx context.Context, op *fuseops.WriteFileOp) (*FileHandle, error) {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
-	oph := fsys.opOpen()
-	defer fsys.opClose(oph)
 
 	fh,ok := fsys.fhTable[op.Handle]
 	if !ok {
@@ -1534,6 +1547,11 @@ func (fsys *Filesys) prepareFileForWrite(ctx context.Context, op *fuseops.WriteF
 		return nil, err
 	}
 
+	oph := fsys.opOpen()
+	defer fsys.opClose(oph)
+
+	// Note: we are holding the global lock while downloading this file.
+	// This could probably be improved with a per-inode lock.
 	err = fsys.pgs.DownloadEntireFile(oph.httpClient, fh.inode, fh.size, *fh.url, fd, localPath)
 	if err != nil {
 		fsys.log("failed to download file inode=%d", fh.inode, err.Error())
@@ -1579,9 +1597,10 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 	mtime := time.Now()
 
 	// Update the file attributes in the database (size, mtime)
+	// TODO: can we delay or batch these?
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
-	oph := fsys.opOpen()
+	oph := fsys.opOpenNoHttpClient()
 	defer fsys.opClose(oph)
 
 	if err := fsys.mdb.UpdateFileAttrs(ctx, oph, fh.inode, fSize, mtime, nil); err != nil {
