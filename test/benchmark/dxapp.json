@@ -20,12 +20,17 @@
       "name": "result_symlinks",
       "class": "array:string",
       "optional" : true
+    },
+    {
+      "name": "result_upload",
+      "class": "array:string",
+      "optional" : true
     }
   ],
   "runSpec": {
     "timeoutPolicy" : {
       "*" : {
-        "hours" : 1
+        "hours" : 2
       }
     },
     "interpreter": "bash",
@@ -34,6 +39,7 @@
     "release": "16.04"
   },
   "access": {
+    "project" : "CONTRIBUTE",
     "network" : [ "*" ]
   }
 }

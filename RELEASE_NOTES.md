@@ -2,8 +2,9 @@
 
 ## v0.19.1
 - Upgrade to go 1.14
-- Fixing use of `defer` when there are several such statements inside one function.
--
+- Fixed use of `defer` when there are several such statements inside one function.
+- Fixed documentation for `manifest` mode, which is in the expert-options.
+
 
 ## v0.19
 - *Experimental support for overwriting files*. There is a limit of 16 MiB on a file that is undergoes modification. This is because it needs to first be downloaded in its entirety, before allowing any changes. It will then be uploaded to the platform. This is an expensive operation that is required because DNAnexus files are immutable.

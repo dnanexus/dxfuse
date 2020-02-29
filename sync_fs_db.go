@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime"
 	"sync"
 	"time"
 
@@ -15,16 +16,9 @@ import (
 )
 
 const (
-	sweepPeriodicTime = 1 * time.Minute
-)
-
-const (
-	chunkMaxQueueSize = 10
-
+	maxNumBulkDataThreads = 8
 	numFileThreads = 4
-	numBulkDataThreads = 8
-	numMetadataThreads = 2
-	minChunkSize = 16 * MiB
+	sweepPeriodicTime = 1 * time.Minute
 )
 
 type Chunk struct {
@@ -51,6 +45,8 @@ type SyncDbDx struct {
 	chunkQueue          chan *Chunk
 	sweepStopChan       chan struct{}
 	sweepStoppedChan    chan struct{}
+	minChunkSize        int64
+	numBulkDataThreads  int
 	wg                  sync.WaitGroup
 	mutex              *sync.Mutex
 	mdb                *MetadataDb
@@ -64,13 +60,29 @@ func NewSyncDbDx(
 	projId2Desc map[string]DxDescribePrj,
 	mdb *MetadataDb,
 	mutex *sync.Mutex) *SyncDbDx {
-	// the chunk queue size should be at least the size of the thread
-	// pool.
-	chunkQueueSize := MaxInt(numBulkDataThreads, chunkMaxQueueSize)
+
+	numCPUs := runtime.NumCPU()
+	numBulkDataThreads := MinInt(numCPUs, maxNumBulkDataThreads)
 
 	// limit the size of the chunk queue, so we don't
 	// have too many chunks stored in memory.
-	chunkQueue := make(chan *Chunk, chunkQueueSize)
+	chunkQueue := make(chan *Chunk, numBulkDataThreads * 5)
+
+	// determine the maximal size of a prefetch IO.
+	//
+	// TODO: make this dynamic based on network performance.
+	var minChunkSize int64
+	if dxEnv.DxJobId == "" {
+		// on a remote machine the timeouts are too great
+		// for large IO sizes. It is common to see 90 second
+		// IOs.
+		minChunkSize = 16 * MiB
+	} else {
+		// on a worker we can use large sizes, because
+		// we have a good network connection to S3 and dnanexus servers
+		minChunkSize = 96 * MiB
+	}
+
 
 	sybx := &SyncDbDx{
 		dxEnv : dxEnv,
@@ -80,6 +92,8 @@ func NewSyncDbDx(
 		chunkQueue : chunkQueue,
 		sweepStopChan : nil,
 		sweepStoppedChan : nil,
+		minChunkSize : minChunkSize,
+		numBulkDataThreads : numBulkDataThreads,
 		mutex : mutex,
 		mdb : mdb,
 		ops : NewDxOps(dxEnv, options),
@@ -215,7 +229,7 @@ func (sybx *SyncDbDx) calcPartSize(param FileUploadParameters, fileSize int64) (
 	// now we know that there is a solution. We'll try to use a small part size,
 	// to reduce memory requirements. However, we don't want really small parts, which is why
 	// we use [minChunkSize].
-	preferedChunkSize := divideRoundUp(param.MinimumPartSize, minChunkSize) * minChunkSize
+	preferedChunkSize := divideRoundUp(param.MinimumPartSize, sybx.minChunkSize) * sybx.minChunkSize
 	for preferedChunkSize < param.MaximumPartSize {
 		if (checkPartSizeSolution(param, fileSize, preferedChunkSize)) {
 			return preferedChunkSize, nil
