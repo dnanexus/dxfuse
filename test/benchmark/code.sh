@@ -59,22 +59,22 @@ function measure_and_compare_upload {
 
     for fname in $files; do
         fileSize=$(ls -l $top_dir/$data_dir/$fname | cut -d ' ' -f 5)
-        if [[ $fileSize -gt $((300 * 1000 * 1000)) ]]; then
+        if [[ $fileSize -gt $((10 * 1000 * 1000 * 1000)) ]]; then
             # limit file size to 1GiB
             echo "skipping $fname, it is too large"
             continue
         fi
 
-        sizeDesc=$(ls -lh $fname | cut -d ' ' -f 5)
+        sizeDesc=$(ls -lh $top_dir/$data_dir/$fname | cut -d ' ' -f 5)
         echo "size($fname) = $sizeDesc"
 
         echo "downloading $fname with dx cat"
-        dx cat "$DX_PROJECT_CONTEXT_ID:/$data_dir/$fname" > /tmp/X
+        dx cat $DX_PROJECT_CONTEXT_ID:/$data_dir/$fname > /tmp/X
 
         # Measure upload times
         echo "upload with dx"
         start=`date +%s`
-        dx upload /tmp/X --path $DX_PROJECT_CONTEXT_ID:/$data_dir/$fname.1
+        dx upload /tmp/X --path $DX_PROJECT_CONTEXT_ID:/$data_dir/$fname.1 --wait
         end=`date +%s`
         runtime1=$((end-start))
 
@@ -82,11 +82,15 @@ function measure_and_compare_upload {
         start=`date +%s`
         cp /tmp/X $mountpoint/$projName/$data_dir/$fname.2
         echo "start dxfuse sync"
-        sudo -E $dxfuse -sync
+        dxfuse -sync
         end=`date +%s`
         runtime2=$((end-start))
 
         echo "$sizeDesc,dx-upload,$runtime1,dxfuse,$runtime2"  >> $output_file
+
+        echo "cleanup"
+        dx rm $DX_PROJECT_CONTEXT_ID:/$data_dir/$fname.1
+        rm $mountpoint/$projName/$data_dir/$fname.2
     done
 }
 
@@ -116,15 +120,6 @@ main() {
 
     echo "unmounting dxfuse"
     sudo umount $mountpoint
-
-    echo "cleanup: removing files created by the upload measurement"
-    set -e
-    echo "A"
-    dx rm $DX_PROJECT_CONTEXT_ID:/$data_dir/*.1 >& /dev/null
-    echo "B"
-    dx rm $DX_PROJECT_CONTEXT_ID:/$data_dir/*.2 >& /dev/null
-    echo "C"
-    set +e
 
     echo "reporting results"
     if [[ -f $HOME/out/result.txt ]]; then
