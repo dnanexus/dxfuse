@@ -144,7 +144,15 @@ func fsDaemon(
 		FSName : "dxfuse",
 		ErrorLogger : logger,
 		DebugLogger : fuse_logger,
-		DisableWritebackCaching : true,
+
+		// This option makes writes accumulate in the kernel
+		// buffers before being handed over to dxfuse for processing.
+		// It significantly improves file-write performance. Still,
+		// what you get isn't great.
+		//
+		// Currently, instead of dxfuse receiving every 4KB synchronously,
+		// it can get 128KB.
+		DisableWritebackCaching : false,
 		Options : mountOptions,
 	}
 

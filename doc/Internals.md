@@ -181,16 +181,19 @@ For example, the manifest:
 
 ```
 {
-  {
-     "proj_id" : "proj-1019001",
-     "folder" : /Spade",
-     "dirname" : "Cards/S"
-  },
-  {
-     "proj_id" : "proj-1087011",
-     "folder" : "/Joker",
-     "dirname" : "Cards/J"
-  }
+  "files" : [],
+  "directories" : [
+    {
+      "proj_id" : "proj-1019001",
+      "folder" : "/Spade",
+      "dirname" : "Cards/S"
+    },
+    {
+      "proj_id" : "proj-1087011",
+      "folder" : "/Joker",
+      "dirname" : "Cards/J"
+    }
+  ]
 }
 ```
 

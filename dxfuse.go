@@ -275,8 +275,23 @@ func (fsys *Filesys) opOpen() *OpHandle {
 	}
 }
 
+func (fsys *Filesys) opOpenNoHttpClient() *OpHandle {
+	txn, err := fsys.mdb.BeginTxn()
+	if err != nil {
+		log.Panic("Could not open transaction")
+	}
+
+	return &OpHandle{
+		httpClient : nil,
+		txn : txn,
+		err : nil,
+	}
+}
+
 func (fsys *Filesys) opClose(oph *OpHandle) {
-	fsys.httpClientPool <- oph.httpClient
+	if oph.httpClient != nil {
+		fsys.httpClientPool <- oph.httpClient
+	}
 
 	if oph.err == nil {
 		err := oph.txn.Commit()
@@ -346,9 +361,9 @@ func (fsys *Filesys) calcExpirationTime(a fuseops.InodeAttributes) time.Time {
 
 func (fsys *Filesys) LookUpInode(ctx context.Context, op *fuseops.LookUpInodeOp) error {
 	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
 	oph := fsys.opOpen()
 	defer fsys.opClose(oph)
-	defer fsys.mutex.Unlock()
 
 	parentDir, ok, err := fsys.mdb.LookupDirByInode(ctx, oph, int64(op.Parent))
 	if err != nil {
@@ -384,9 +399,9 @@ func (fsys *Filesys) LookUpInode(ctx context.Context, op *fuseops.LookUpInodeOp)
 
 func (fsys *Filesys) GetInodeAttributes(ctx context.Context, op *fuseops.GetInodeAttributesOp) error {
 	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
 	oph := fsys.opOpen()
 	defer fsys.opClose(oph)
-	defer fsys.mutex.Unlock()
 
 	// Grab the inode.
 	node, ok, err := fsys.mdb.LookupByInode(ctx, oph, int64(op.Inode))
@@ -412,9 +427,9 @@ func (fsys *Filesys) GetInodeAttributes(ctx context.Context, op *fuseops.GetInod
 // otherwise, this is a permission error.
 func (fsys *Filesys) SetInodeAttributes(ctx context.Context, op *fuseops.SetInodeAttributesOp) error {
 	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
 	oph := fsys.opOpen()
 	defer fsys.opClose(oph)
-	defer fsys.mutex.Unlock()
 
 	// Grab the inode.
 	node, ok, err := fsys.mdb.LookupByInode(ctx, oph, int64(op.Inode))
@@ -528,9 +543,9 @@ func (fsys *Filesys) ForgetInode(ctx context.Context, op *fuseops.ForgetInodeOp)
 
 func (fsys *Filesys) MkDir(ctx context.Context, op *fuseops.MkDirOp) error {
 	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
 	oph := fsys.opOpen()
 	defer fsys.opClose(oph)
-	defer fsys.mutex.Unlock()
 
 	if fsys.options.Verbose {
 		fsys.log("CreateDir(%s)", op.Name)
@@ -615,9 +630,9 @@ func (fsys *Filesys) MkDir(ctx context.Context, op *fuseops.MkDirOp) error {
 
 func (fsys *Filesys) RmDir(ctx context.Context, op *fuseops.RmDirOp) error {
 	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
 	oph := fsys.opOpen()
 	defer fsys.opClose(oph)
-	defer fsys.mutex.Unlock()
 
 	if fsys.options.Verbose {
 		fsys.log("RemoveDir(%s)", op.Name)
@@ -719,9 +734,9 @@ func (fsys *Filesys) createLocalPath(filename string) string {
 //
 func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) error {
 	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
 	oph := fsys.opOpen()
 	defer fsys.opClose(oph)
-	defer fsys.mutex.Unlock()
 
 	if fsys.options.Verbose {
 		fsys.log("CreateFile(%s)", op.Name)
@@ -922,9 +937,9 @@ func (fsys *Filesys) renameDir(
 
 func (fsys *Filesys) Rename(ctx context.Context, op *fuseops.RenameOp) error {
 	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
 	oph := fsys.opOpen()
 	defer fsys.opClose(oph)
-	defer fsys.mutex.Unlock()
 
 	if fsys.options.Verbose {
 		fsys.log("Rename (inode=%d name=%s) -> (inode=%d, name=%s)",
@@ -1029,9 +1044,9 @@ a rename. You will need to issue a separate remove operation prior to rename.
 // Decrement the link count, and remove the file if it hits zero.
 func (fsys *Filesys) Unlink(ctx context.Context, op *fuseops.UnlinkOp) error {
 	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
 	oph := fsys.opOpen()
 	defer fsys.opClose(oph)
-	defer fsys.mutex.Unlock()
 
 	if fsys.options.Verbose {
 		fsys.log("Unlink(%s)", op.Name)
@@ -1171,9 +1186,9 @@ func (fsys *Filesys) readEntireDir(ctx context.Context, oph *OpHandle, dir Dir) 
 // COMMON for drivers
 func (fsys *Filesys) OpenDir(ctx context.Context, op *fuseops.OpenDirOp) error {
 	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
 	oph := fsys.opOpen()
 	defer fsys.opClose(oph)
-	defer fsys.mutex.Unlock()
 
 	// the parent is supposed to be a directory
 	dir, ok, err := fsys.mdb.LookupDirByInode(ctx, oph, int64(op.Inode))
@@ -1297,9 +1312,9 @@ func (fsys *Filesys) openRegularFile(
 //
 func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error {
 	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
 	oph := fsys.opOpen()
 	defer fsys.opClose(oph)
-	defer fsys.mutex.Unlock()
 
 	if fsys.options.Verbose {
 		fsys.log("OpenFile inode=%d", op.Inode)
@@ -1498,8 +1513,6 @@ func (fsys *Filesys) ReadFile(ctx context.Context, op *fuseops.ReadFileOp) error
 // while we are downloading the file. This really needs to be improved.
 func (fsys *Filesys) prepareFileForWrite(ctx context.Context, op *fuseops.WriteFileOp) (*FileHandle, error) {
 	fsys.mutex.Lock()
-	oph := fsys.opOpen()
-	defer fsys.opClose(oph)
 	defer fsys.mutex.Unlock()
 
 	fh,ok := fsys.fhTable[op.Handle]
@@ -1534,6 +1547,11 @@ func (fsys *Filesys) prepareFileForWrite(ctx context.Context, op *fuseops.WriteF
 		return nil, err
 	}
 
+	oph := fsys.opOpen()
+	defer fsys.opClose(oph)
+
+	// Note: we are holding the global lock while downloading this file.
+	// This could probably be improved with a per-inode lock.
 	err = fsys.pgs.DownloadEntireFile(oph.httpClient, fh.inode, fh.size, *fh.url, fd, localPath)
 	if err != nil {
 		fsys.log("failed to download file inode=%d", fh.inode, err.Error())
@@ -1580,9 +1598,9 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 
 	// Update the file attributes in the database (size, mtime)
 	fsys.mutex.Lock()
-	oph := fsys.opOpen()
-	defer fsys.opClose(oph)
 	defer fsys.mutex.Unlock()
+	oph := fsys.opOpenNoHttpClient()
+	defer fsys.opClose(oph)
 
 	if err := fsys.mdb.UpdateFileAttrs(ctx, oph, fh.inode, fSize, mtime, nil); err != nil {
 		fsys.log("database error in updating attributes for WriteFile %s", err.Error())
@@ -1628,9 +1646,9 @@ func (fsys *Filesys) SyncFile(ctx context.Context, op *fuseops.SyncFileOp) error
 
 func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseFileHandleOp) error {
 	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
 	oph := fsys.opOpen()
 	defer fsys.opClose(oph)
-	defer fsys.mutex.Unlock()
 
 	fh, ok := fsys.fhTable[op.Handle]
 	if !ok {
@@ -1714,9 +1732,9 @@ func (fsys *Filesys) xattrParseName(name string) (string, string, error) {
 
 func (fsys *Filesys) RemoveXattr(ctx context.Context, op *fuseops.RemoveXattrOp) error {
 	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
 	oph := fsys.opOpen()
 	defer fsys.opClose(oph)
-	defer fsys.mutex.Unlock()
 
 	if fsys.options.Verbose {
 		fsys.log("RemoveXattr %d", op.Inode)
@@ -1804,9 +1822,9 @@ func (fsys *Filesys) getXattrFill(op *fuseops.GetXattrOp, val_str string) error 
 
 func (fsys *Filesys) GetXattr(ctx context.Context, op *fuseops.GetXattrOp) error {
 	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
 	oph := fsys.opOpen()
 	defer fsys.opClose(oph)
-	defer fsys.mutex.Unlock()
 
 	if fsys.options.Verbose {
 		fsys.log("GetXattr %d", op.Inode)
@@ -1865,9 +1883,9 @@ func (fsys *Filesys) GetXattr(ctx context.Context, op *fuseops.GetXattrOp) error
 // Make a list of all the extended attributes
 func (fsys *Filesys) ListXattr(ctx context.Context, op *fuseops.ListXattrOp) error {
 	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
 	oph := fsys.opOpen()
 	defer fsys.opClose(oph)
-	defer fsys.mutex.Unlock()
 
 	if fsys.options.Verbose {
 		fsys.log("ListXattr %d", op.Inode)
@@ -1916,9 +1934,9 @@ func (fsys *Filesys) ListXattr(ctx context.Context, op *fuseops.ListXattrOp) err
 
 func (fsys *Filesys) SetXattr(ctx context.Context, op *fuseops.SetXattrOp) error {
 	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
 	oph := fsys.opOpen()
 	defer fsys.opClose(oph)
-	defer fsys.mutex.Unlock()
 
 	if fsys.options.Verbose {
 		fsys.log("SetXattr %d", op.Inode)

@@ -77,18 +77,36 @@ download methods were (1) `dx cat`, and (2) `cat` from a dxfuse mount point.
 
 | instance type   | dx cat (seconds) | dxfuse cat (seconds) | file size |
 | ----            | ----             | ---                  |  ----     |
-| mem1\_ssd1\_x4  | 3                | 4                    | 285M |
-| mem1\_ssd1\_x4  | 7                | 8                    | 705M |
-| mem1\_ssd1\_x4  | 73               | 74                   | 5.9G |
-|                 |                  |                      |      |
-| mem1\_ssd1\_x16 | 2                | 2                    | 285M |
-| mem1\_ssd1\_x16 | 4                | 5                    | 705M |
-| mem1\_ssd1\_x16 | 27               | 28                   | 5.9G |
-|                 |                  |                      |      |
-| mem3\_ssd1\_x32 | 2                | 2                    | 285M |
-| mem3\_ssd1\_x32 | 5                | 4                    | 705M |
-| mem3\_ssd1\_x32 | 25               | 30                   | 5.9G |
+| mem1\_ssd1\_v2\_x4|	         207 |	219                 |       17G |
+| mem1\_ssd1\_v2\_x4|	          66 |      	         77 |      5.9G |
+| mem1\_ssd1\_v2\_x4|		6|	4 | 705M|
+| mem1\_ssd1\_v2\_x4|		3|	3 | 285M|
+| | | | |
+| mem1\_ssd1\_v2\_x16|	57|	49 | 17G|
+| mem1\_ssd1\_v2\_x16|		22|	24 | 5.9G|
+| mem1\_ssd1\_v2\_x16|		3|	3 | 705M|
+| mem1\_ssd1\_v2\_x16|		2|	1 | 285M|
+| | | | |
+| mem3\_ssd1\_v2\_x32|		52|	51 | 17G|
+| mem3\_ssd1\_v2\_x32|		20	| 15 | 5.9G |
+| mem3\_ssd1\_v2\_x32|		4|	2 | 705M|
+| mem3\_ssd1\_v2\_x32|		2|	1 | 285M|
 
+Creating new files, and uploading them to the platform is
+significantly slower when using dxfuse. This is mostly a FUSE problem,
+where IOs are handed over from user-space, to the kernel, and then to
+the dxfuse server in 128KB chunks. This is fine for small files, but
+becomes slow for large files. Here is a comparison between (1) `dx
+upload FILE`, and (2) `cp FILE to fuse, sync fuse`.
+
+| instance type      | dx upload (seconds) | dxfuse upload (seconds) | file size |
+| ----               | ----                | ---                  |  ----     |
+| mem1\_ssd1\_v2\_x4 |	11 |	99 | 705M |
+| mem1_ssd1\_v2\_x4  |	5  |	24 | 285M |
+| mem1\_ssd1\_v2\_x16 |	10 |	67 | 705M |
+| mem1\_ssd1\_v2\_x16 |	5  |	17 | 285M |
+| mem3\_ssd1\_v2\_x32 |	9  |	34 | 705M |
+| mem3\_ssd1\_v2\_x32 |	6  |	12 | 285M |
 
 # Building
 

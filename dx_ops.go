@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"encoding/hex"
 	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/dnanexus/dxda"
@@ -20,12 +21,17 @@ const (
 type DxOps struct {
 	dxEnv   dxda.DXEnvironment
 	options  Options
+
+	// http error that occurs when an upload has taken too long
+	timeoutExpirationErrorRe *regexp.Regexp
 }
 
 func NewDxOps(dxEnv dxda.DXEnvironment, options Options) *DxOps {
+	timeoutRe := regexp.MustCompile(`<Message>Request has expired</Message>`)
 	return &DxOps{
 		dxEnv : dxEnv,
 		options : options,
+		timeoutExpirationErrorRe : timeoutRe,
 	}
 }
 
@@ -286,6 +292,17 @@ type ReplyUploadChunk struct {
 	Headers map[string]string `json:"headers"`
 }
 
+// check if this is an error we can retry
+func (ops *DxOps) isRetryableUploadError(err error) bool {
+	// This was caused by a timeout expiring
+	if ops.timeoutExpirationErrorRe.MatchString(err.Error()) {
+		return true
+	}
+
+	// An error that cannot be retried
+	return false
+}
+
 func (ops *DxOps) DxFileUploadPart(
 	ctx context.Context,
 	httpClient *retryablehttp.Client,
@@ -304,30 +321,37 @@ func (ops *DxOps) DxFileUploadPart(
 	if err != nil {
 		return err
 	}
-	replyJs, err := dxda.DxAPI(
-		ctx,
-		httpClient,
-		NumRetriesDefault,
-		&ops.dxEnv,
-		fmt.Sprintf("%s/upload", fileId),
-		string(reqJson))
-	if err != nil {
-		ops.log("DxFileUploadPart: error in dxapi call [%s/upload] %v",
-			fileId, err.Error())
-		return err
-	}
 
-	var reply ReplyUploadChunk
-	if err = json.Unmarshal(replyJs, &reply); err != nil {
-		return err
-	}
+	for i := 0; i < NumRetriesDefault; i++ {
+		replyJs, err := dxda.DxAPI(
+			ctx,
+			httpClient,
+			NumRetriesDefault,
+			&ops.dxEnv,
+			fmt.Sprintf("%s/upload", fileId),
+			string(reqJson))
+		if err != nil {
+			ops.log("DxFileUploadPart: error in dxapi call [%s/upload] %v",
+				fileId, err.Error())
+			return err
+		}
 
-	// the request provides its own implicit length
-	//delete(reply.Headers, "content-length")
-	_, err = dxda.DxHttpRequest(ctx, httpClient, NumRetriesDefault, "PUT", reply.Url, reply.Headers, data)
-	if err != nil {
-		ops.log("DxFileUploadPart: failure in data upload")
-		return err
+		var reply ReplyUploadChunk
+		if err = json.Unmarshal(replyJs, &reply); err != nil {
+			return err
+		}
+
+		// bulk data upload
+		_, err = dxda.DxHttpRequest(ctx, httpClient, 1, "PUT", reply.Url, reply.Headers, data)
+		if err != nil {
+			if ops.isRetryableUploadError(err) {
+				// This is a retryable error, try again
+				ops.log("Retrying part upload, timeout expired")
+				continue
+			}
+			ops.log("DxFileUploadPart: failure in data upload %s", err.Error())
+			return err
+		}
 	}
 	return nil
 }

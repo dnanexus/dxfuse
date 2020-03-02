@@ -1,5 +1,5 @@
 language: go
-go: 1.13
+go: 1.14
 dist: bionic
 sudo: required
 
@@ -41,7 +41,7 @@ install:
 - go get github.com/dnanexus/dxfuse
 - go build -o $GOPATH/bin/dxfuse $GOPATH/src/github.com/dnanexus/dxfuse/cli/main.go
 
-script:
+script: travis_wait
 # we need to login into dnanexus first
 - dx login --staging --noprojects --token $DX_API_TOKEN
 
