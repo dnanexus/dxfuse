@@ -90,6 +90,22 @@ download methods were (1) `dx cat`, and (2) `cat` from a dxfuse mount point.
 | mem3\_ssd1\_x32 | 25               | 30                   | 5.9G |
 
 
+Creating new files, and uploading them to the platform is
+significantly slower when using dxfuse. This is mostly a FUSE problem,
+where IOs are handed over from user-space, to the kernel, and then to
+the dxfuse server in 128KB chunks. This is fine for small files, but
+becomes slow for large files. Here is a comparison between (1) `dx
+upload FILE`, and (2) `cp FILE to fuse, sync fuse`.
+
+| instance type      | dx upload (seconds) | dxfuse upload (seconds) | file size |
+| ----               | ----                | ---                  |  ----     |
+| mem1\_ssd1\_v2\_x4 |	11 |	99 | 705M |
+| mem1_ssd1\_v2\_x4  |	5  |	24 | 285M |
+| mem1\_ssd1\_v2\_x16 |	10 |	67 | 705M |
+| mem1\_ssd1\_v2\_x16 |	5  |	17 | 285M |
+| mem3\_ssd1\_v2\_x32 |	9  |	34 | 705M |
+| mem3\_ssd1\_v2\_x32 |	6  |	12 | 285M |
+
 # Building
 
 To build the code from source, you'll need, at the very least, the `go` and `git` tools.

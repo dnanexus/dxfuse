@@ -94,25 +94,29 @@ def launch_jobs(project, applet, instance_types, verbose):
     return jobs
 
 
-def extract_results(jobs):
+def extract_results(jobs, field_name, description):
     header = "instance-type, file size, dx cat (seconds), dxfuse (seconds)"
     print(header)
     for j in jobs:
         desc = j.describe()
         i_type = desc["systemRequirements"]["*"]["instanceType"]
-        results = desc['output']['result']
+        results = desc['output'][field_name]
 
         # skip the header
         measurements = results[1:]
+        print("{}".format(description))
         for line in measurements:
             parts = line.split(",")
             print("{},\t{},\t{},\t{}".format(i_type, parts[0], parts[2], parts[4]))
+        print("")
 
 def run_benchmarks(dx_proj, instance_types, verbose):
     applet = lookup_applet("benchmark", dx_proj, "/applets")
     jobs = launch_jobs(dx_proj, applet, instance_types, verbose)
     wait_for_completion(jobs)
-    extract_results(jobs)
+    extract_results(jobs, 'result', 'file downloads')
+    extract_results(jobs, 'result_symlinks', 'symbolic link downloads')
+    extract_results(jobs, 'result_upload', 'file upload')
 
 def run_local_test():
     try:
@@ -145,8 +149,7 @@ def main():
     argparser = argparse.ArgumentParser(description="Run benchmarks on several instance types for dxfuse")
     argparser.add_argument("--project", help="DNAnexus project",
                            default="dxfuse_test_data")
-    argparser.add_argument("--test", help="which testing suite to run [bench, bio, correct, local]",
-                           default="correctness")
+    argparser.add_argument("--test", help="which testing suite to run [bench, bio, correct, local]")
     argparser.add_argument("--size", help="how large should the test be? [small, large]",
                            default="small")
     argparser.add_argument("--verbose", help="run the tests in verbose mode",
@@ -172,6 +175,9 @@ def main():
         print("Unknown size value {}".format(args.scale))
         exit(1)
 
+    if args.test is None:
+        print("Test not specified")
+        exit(1)
     if args.test.startswith("bench"):
         run_benchmarks(dx_proj, instance_types, args.verbose)
     elif args.test.startswith("correct"):

@@ -39,7 +39,7 @@ trap teardown EXIT
 ######################################################################
 
 function upload_one_file {
-    echo "upload with dxfuse"
+    echo "copy into fuse"
     start=`date +%s`
     cp $large_file $mountpoint/$projName/
     end=`date +%s`
@@ -71,7 +71,7 @@ function local_upload_benchmark {
     echo "Mounting dxfuse"
     flags=""
     if [[ $verbose != "" ]]; then
-        flags="-verbose 2"
+        flags="-verbose 1"
     fi
     sudo -E $dxfuse -uid $(id -u) -gid $(id -g) $flags $mountpoint $projName
     sleep 1

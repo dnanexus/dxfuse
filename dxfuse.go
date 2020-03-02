@@ -1597,7 +1597,6 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 	mtime := time.Now()
 
 	// Update the file attributes in the database (size, mtime)
-	// TODO: can we delay or batch these?
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
 	oph := fsys.opOpenNoHttpClient()
