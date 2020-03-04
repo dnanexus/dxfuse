@@ -6,6 +6,7 @@
 - Fixed documentation for `manifest` mode, which is in the expert-options.
 - Improved upload performance and added a benchmark for it. The [implementation section](README.md#Implementation) includes a table comparing `dxfuse` upload to `dx upload`. The main bottleneck for FUSE is that IOs are passing through the kernel in small synchronous chunks (128KB). This means that large file copies are slow.
 
+
 ## v0.19
 - *Experimental support for overwriting files*. There is a limit of 16 MiB on a file that is undergoes modification. This is because it needs to first be downloaded in its entirety, before allowing any changes. It will then be uploaded to the platform. This is an expensive operation that is required because DNAnexus files are immutable.
 
