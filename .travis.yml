@@ -50,4 +50,4 @@ script: travis_wait
 - $dxfuse --help
 
 # run tests
-- $GOPATH/src/github.com/dnanexus/dxfuse/test/local/local.sh
+#- $GOPATH/src/github.com/dnanexus/dxfuse/test/local/local.sh
