@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -156,9 +157,7 @@ func fsDaemon(
 		Options : mountOptions,
 	}
 
-	logger.Printf("mounting dxfuse")
-	os.Stdout.WriteString("Ready")
-	os.Stdout.Close()
+	logger.Printf("mounting-dxfuse")
 	mfs, err := fuse.Mount(mountpoint, server, cfg)
 	if err != nil {
 		logger.Printf(err.Error())
@@ -176,14 +175,26 @@ func fsDaemon(
 	return nil
 }
 
-func waitForReady(readyReader *os.File, c chan string) {
-	status := make([]byte, 100)
-	_, err := readyReader.Read(status)
-	if err != nil {
-		log.Printf("Reading from ready pipe: %v", err)
-		return
+func waitForReady() string {
+	for i := 0; i < 10; i++ {
+		time.Sleep(1 * time.Second)
+
+		// read the log file and look for either "ready" or "error"
+		data, err := ioutil.ReadFile(dxfuse.LogFile)
+		if err != nil {
+			continue
+		}
+		content := string(data)
+		if (strings.Contains(content, "mounting-dxfuse")) {
+			return "ready"
+		}
+		if (strings.Contains(content, "error")) {
+			return "error"
+		}
 	}
-	c <- string(status)
+
+	// The filesystem failed to start for some reason.
+	return "error"
 }
 
 func parseCmdLineArgs() Config {
@@ -297,7 +308,6 @@ func startDaemon(cfg Config) {
 		logger.Printf(err.Error())
 		os.Exit(1)
 	}
-	logger.Printf("manifest = %v", manifest)
 	err = fsDaemon(cfg.mountpoint, cfg.dxEnv, *manifest, cfg.options, logf, logger)
 	if err != nil {
 		logger.Printf(err.Error())
@@ -325,14 +335,8 @@ func startDaemonAndWaitForInitializationToComplete(cfg Config) {
 		return
 	}
 
-	// Set up a pipe for the "ready" status.
-	errorReader, errorWriter, err := os.Pipe()
-	if err != nil {
-		fmt.Printf("Pipe: %v", err)
-		os.Exit(1)
-	}
-	defer errorWriter.Close()
-	defer errorReader.Close()
+	// We are in the parent process.
+	//
 
 	// Mount in a subprocess, and wait for the filesystem to start.
 	// If there is an error, report it. Otherwise, return after the filesystem
@@ -344,7 +348,6 @@ func startDaemonAndWaitForInitializationToComplete(cfg Config) {
 		os.Exit(1)
 	}
 	mountCmd := exec.Command(progPath, os.Args[1:]...)
-	mountCmd.Stdout = errorWriter
 	mountCmd.Env = append(os.Environ(), "ACTUAL=1")
 
 	// Start the command.
@@ -356,18 +359,12 @@ func startDaemonAndWaitForInitializationToComplete(cfg Config) {
 
 	// Wait for the tool to say the file system is ready.
 	fmt.Println("wait for ready")
+	status := waitForReady()
 
-	// This is needed for older versions of mac?
-	time.Sleep(1 * time.Second)
-
-	readyChan := make(chan string, 1)
-	go waitForReady(errorReader, readyChan)
-
-	status := <-readyChan
-	status = strings.ToLower(status)
-	if !strings.HasPrefix(status, "ready") {
-		fmt.Println("There was an error starting the daemon")
-		fmt.Println(status)
+	if status == "error" {
+		fmt.Printf(
+			"There was an error starting the daemon, take a look at the log file (%s) for more information\n",
+			dxfuse.LogFile)
 		os.Exit(1)
 	}
 	fmt.Println("Daemon started successfully")
