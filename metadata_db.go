@@ -1207,7 +1207,9 @@ func (mdb *MetadataDb) PopulateRoot(ctx context.Context, oph *OpHandle, manifest
 	}
 
 	// create individual files
+	mdb.log("individual manifest files (num=%d)", len(manifest.Files))
 	for _, fl := range manifest.Files {
+		mdb.log("fileDesc=%v", fl)
 		_, err := mdb.createDataObject(
 			oph,
 			FK_Regular,

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -169,8 +170,10 @@ func fsDaemon(
 		logger.Fatalf("Join: %v", err)
 	}
 
+	logger.Printf("done")
+
 	// shutdown the filesystem
-	//fsys.Shutdown()
+	fsys.Shutdown()
 
 	return nil
 }
@@ -219,14 +222,13 @@ func parseCmdLineArgs() Config {
 		os.Exit(2)
 	}
 	mountpoint := flag.Arg(0)
-	uid,gid := initUidGid(*uid, *gid)
 
 	options := dxfuse.Options{
 		ReadOnly: *readOnly,
 		Verbose : *verbose > 0,
 		VerboseLevel : *verbose,
-		Uid : uid,
-		Gid : gid,
+		Uid : uint32(*uid),
+		Gid : uint32(*gid),
 	}
 
 	dxEnv, _, err := dxda.GetDxEnvironment()
@@ -257,13 +259,13 @@ func validateConfig(cfg Config) {
 	}
 }
 
-func parseManifest(cfg Config, logger *log.Logger) (*dxfuse.Manifest, error) {
+func parseManifest(cfg Config) (*dxfuse.Manifest, error) {
 	numArgs := flag.NArg()
 
 	// distinguish between the case of a manifest, and a list of projects.
 	if numArgs == 2 && strings.HasSuffix(flag.Arg(1), ".json") {
 		p := flag.Arg(1)
-		logger.Printf("Provided with a manifest, reading from %s", p)
+		fmt.Printf("Provided with a manifest, reading from %s\n", p)
 		manifest, err := dxfuse.ReadManifest(p)
 		if err != nil {
 			return nil, err
@@ -300,14 +302,17 @@ func parseManifest(cfg Config, logger *log.Logger) (*dxfuse.Manifest, error) {
 func startDaemon(cfg Config) {
 	// initialize the log file
 	logf := initLog()
-	defer logf.Close()
 	logger := log.New(logf, "dxfuse: ", log.Flags())
 
-	manifest, err := parseManifest(cfg, logger)
+	// Read the manifest from disk. It should already have all the fields
+	// filled in. There is no need to perform API calls.
+	p := flag.Arg(1)
+	manifest, err := dxfuse.ReadManifest(p)
 	if err != nil {
-		logger.Printf(err.Error())
+		logger.Printf("Error reading manifest (%s)", err.Error())
 		os.Exit(1)
 	}
+
 	err = fsDaemon(cfg.mountpoint, cfg.dxEnv, *manifest, cfg.options, logf, logger)
 	if err != nil {
 		logger.Printf(err.Error())
@@ -327,6 +332,33 @@ func isActual() bool {
 	return false
 }
 
+// build the command line for the daemon process
+func buildDaemonCommandLine(cfg Config, fullManifestPath string) []string {
+	daemonArgs := []string{ cfg.mountpoint, fullManifestPath }
+
+	if (*debugFuseFlag) {
+		daemonArgs = append(daemonArgs, "-debugFuse")
+	}
+	if (*fsSync) {
+		daemonArgs = append(daemonArgs, "-sync")
+	}
+
+	// add the user's Unix id and group
+	uidX,gidX := initUidGid(*uid, *gid)
+	uidArgs := []string{ "-uid", string(uidX), "-gid", string(gidX) }
+	daemonArgs = append(daemonArgs, uidArgs...)
+
+	if (*readOnly) {
+		daemonArgs = append(daemonArgs, "-readOnly")
+	}
+	if (*verbose > 0) {
+		verboseArgs := []string { "-verbose", string(*verbose) }
+		daemonArgs = append(daemonArgs, verboseArgs...)
+	}
+	fmt.Printf("args=%v\n", daemonArgs)
+	return daemonArgs
+}
+
 
 func startDaemonAndWaitForInitializationToComplete(cfg Config) {
 	if isActual() {
@@ -337,6 +369,27 @@ func startDaemonAndWaitForInitializationToComplete(cfg Config) {
 
 	// We are in the parent process.
 	//
+	manifest, err := parseManifest(cfg)
+	if err != nil {
+		fmt.Printf(err.Error())
+		os.Exit(1)
+	}
+
+	// write the manifest to a new file
+	manifestJSON, err := json.Marshal(manifest)
+	if err != nil {
+		fmt.Printf("Error marshalling new manifest (%s)", err.Error())
+		os.Exit(1)
+	}
+
+	// This could be converted into a random temporary file to avoid collisions
+	fullManifestPath := "/tmp/dxfuse_manifest.json"
+	err = ioutil.WriteFile(fullManifestPath, manifestJSON, 0644)
+	if err != nil {
+		fmt.Printf("Error writing out fully elaborated manifest to %s (%s)",
+			fullManifestPath, err.Error())
+		os.Exit(1)
+	}
 
 	// Mount in a subprocess, and wait for the filesystem to start.
 	// If there is an error, report it. Otherwise, return after the filesystem
@@ -347,7 +400,10 @@ func startDaemonAndWaitForInitializationToComplete(cfg Config) {
 		fmt.Printf("Error: couldn't find program %s", os.Args[0])
 		os.Exit(1)
 	}
-	mountCmd := exec.Command(progPath, os.Args[1:]...)
+
+	// build the command line arguments for the daemon
+	daemonArgs := buildDaemonCommandLine(cfg, fullManifestPath)
+	mountCmd := exec.Command(progPath, daemonArgs...)
 	mountCmd.Env = append(os.Environ(), "ACTUAL=1")
 
 	// Start the command.
