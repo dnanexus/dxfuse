@@ -726,7 +726,7 @@ func (fsys *Filesys) insertIntoDirHandleTable(dh *DirHandle) fuseops.HandleID {
 // by dxfuse.
 func (fsys *Filesys) createLocalPath(filename string) string {
 	cnt := atomic.AddUint64(&fsys.tmpFileCounter, 1)
-	localPath := fmt.Sprintf("%s/%d_%s", CreatedFilesDir, cnt)
+	localPath := fmt.Sprintf("%s/%d_%s", CreatedFilesDir, cnt, filename)
 	return localPath
 }
 
@@ -1554,7 +1554,7 @@ func (fsys *Filesys) prepareFileForWrite(ctx context.Context, op *fuseops.WriteF
 	// This could probably be improved with a per-inode lock.
 	err = fsys.pgs.DownloadEntireFile(oph.httpClient, fh.inode, fh.size, *fh.url, fd, localPath)
 	if err != nil {
-		fsys.log("failed to download file inode=%d", fh.inode, err.Error())
+		fsys.log("failed to download file inode=%d %s", fh.inode, err.Error())
 		// Should we erase the partial file to save space?
 		return nil, err
 	}

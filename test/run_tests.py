@@ -153,9 +153,7 @@ def main():
     argparser.add_argument("--size", help="how large should the test be? [small, large]",
                            default="small")
     argparser.add_argument("--verbose", help="run the tests in verbose mode",
-                           action='store_true')
-    argparser.set_defaults(verbose=False)
-
+                           action='store_true', default=False)
     args = argparser.parse_args()
     dx_proj = get_project(args.project)
 

@@ -314,6 +314,7 @@ func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnviron
 	for fId, _  := range fileIds {
 		fileIdList = append(fileIdList, fId)
 	}
+
 	dataObjs, err := DxDescribeBulkObjects(ctx, tmpHttpClient, &dxEnv, fileIdList)
 	if err != nil {
 		return err
@@ -338,6 +339,8 @@ func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnviron
 			fl.Size = fDesc.Size
 			fl.CtimeSeconds = fDesc.CtimeSeconds
 			fl.MtimeSeconds = fDesc.MtimeSeconds
+		} else {
+			return fmt.Errorf("File %s was not described", fl.FileId)
 		}
 	}
 

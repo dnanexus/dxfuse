@@ -3,6 +3,7 @@ package dxfuse
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -114,7 +115,10 @@ func splitPath(fullPath string) (parentDir string, basename string) {
 }
 
 // Marshal a DNAx object tags to/from a string that
-// is stored in a database table
+// is stored in a database table.
+//
+// We use base64 encoding to avoid problematic characters (`) when
+// putting this string into SQL statements
 type MTags struct {
 	Elements []string `json:"elements"`
 }
@@ -130,15 +134,21 @@ func tagsMarshal(tags []string) string {
 		log.Panicf("failed to marshal tags (%v), %s", tags, err.Error())
 		return ""
 	}
-	return string(payload)
+	return base64.StdEncoding.EncodeToString(payload)
 }
 
 func tagsUnmarshal(buf string) []string {
 	if buf == "" {
 		return nil
 	}
+	originalBytes, err := base64.StdEncoding.DecodeString(buf)
+	if err != nil {
+		log.Panicf("failed to base64 decode tags (%s), %s", buf, err.Error())
+		return nil
+	}
+
 	var coded MTags
-	err := json.Unmarshal([]byte(buf), &coded)
+	err = json.Unmarshal(originalBytes, &coded)
 	if err != nil {
 		log.Panicf("failed to unmarshal tags (%s), %s",	buf, err.Error())
 		return nil
@@ -148,7 +158,8 @@ func tagsUnmarshal(buf string) []string {
 
 
 // Marshal a DNAx object properties to/from a string that
-// is stored in a database table
+// is stored in a database table. We use base64 encoding for the
+// same reason as tags (see above).
 type MProperties struct {
 	Elements map[string]string `json:"elements"`
 }
@@ -164,17 +175,22 @@ func propertiesMarshal(props map[string]string) string {
 		log.Panicf("failed to marshal properties (%v), %s", props, err.Error())
 		return ""
 	}
-	return string(payload)
+	return base64.StdEncoding.EncodeToString(payload)
 }
 
 func propertiesUnmarshal(buf string) map[string]string {
 	if buf == "" {
 		return make(map[string]string)
 	}
-	var coded MProperties
-	err := json.Unmarshal([]byte(buf), &coded)
+	originalBytes, err := base64.StdEncoding.DecodeString(buf)
 	if err != nil {
-		log.Panicf("failed to unmarshal properties (%s), %s", buf, err.Error())
+		log.Panicf("failed to base64 decode properties (%s), %s", buf, err.Error())
+		return nil
+	}
+	var coded MProperties
+	err = json.Unmarshal(originalBytes, &coded)
+	if err != nil {
+		log.Panicf("failed to unmarshal properties (%s), %s", string(originalBytes), err.Error())
 		return nil
 	}
 	return coded.Elements
@@ -736,6 +752,7 @@ func (mdb *MetadataDb) createDataObject(
 	if _, err := oph.txn.Exec(sqlStmt); err != nil {
 		mdb.log(err.Error())
 		mdb.log("Error inserting into data objects table")
+		mdb.log("sqlStmt = (%s)", sqlStmt)
 		return 0, oph.RecordError(err)
 	}
 
@@ -1190,7 +1207,9 @@ func (mdb *MetadataDb) PopulateRoot(ctx context.Context, oph *OpHandle, manifest
 	}
 
 	// create individual files
+	mdb.log("individual manifest files (num=%d)", len(manifest.Files))
 	for _, fl := range manifest.Files {
+		mdb.log("fileDesc=%v", fl)
 		_, err := mdb.createDataObject(
 			oph,
 			FK_Regular,

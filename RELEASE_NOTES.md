@@ -1,5 +1,9 @@
 # Release Notes
 
+## v0.21
+- Fixed bug that occurs when a data object has properties or tags that include the apostrophe (\`) character.
+- Simplified the filesystem start-up mechanism.
+
 ## v0.20
 - Upgrade to golang version 1.14
 - Fixed use of `defer` when there are several such statements inside one function.

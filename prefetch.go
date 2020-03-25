@@ -335,7 +335,7 @@ func (pgs *PrefetchGlobalState) readData(client *retryablehttp.Client, ioReq IoR
 	// http request.
 	expectedLen := ioReq.endByte - ioReq.startByte + 1
 	if pgs.verbose {
-		pgs.log("hid=%d (%s) (io=%d) reading extent from DNAx ofs=%d len=%d",
+		pgs.log("hid=%d (%d) (io=%d) reading extent from DNAx ofs=%d len=%d",
 			ioReq.hid, ioReq.inode, ioReq.id, ioReq.startByte, expectedLen)
 	}
 
