@@ -259,7 +259,6 @@ func parseManifest(cfg Config) (*dxfuse.Manifest, error) {
 	// distinguish between the case of a manifest, and a list of projects.
 	if numArgs == 2 && strings.HasSuffix(flag.Arg(1), ".json") {
 		p := flag.Arg(1)
-		fmt.Printf("Provided with a manifest, reading from %s\n", p)
 		manifest, err := dxfuse.ReadManifest(p)
 		if err != nil {
 			return nil, err
@@ -355,7 +354,6 @@ func buildDaemonCommandLine(cfg Config, fullManifestPath string) []string {
 	positionalArgs := []string{ cfg.mountpoint, fullManifestPath }
 	daemonArgs = append(daemonArgs, positionalArgs...)
 
-	fmt.Printf("args=%v\n", daemonArgs)
 	return daemonArgs
 }
 
