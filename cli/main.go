@@ -81,7 +81,7 @@ func initLog() *os.File {
 	return f
 }
 
-func initUidGid(uid int, gid int) (uint32,uint32) {
+func initUidGid(uid int, gid int) (string, string) {
 	// This is current the root user, because the program is run under
 	// sudo privileges. The "user" variable is used only if we don't
 	// get command line uid/gid.
@@ -91,23 +91,17 @@ func initUidGid(uid int, gid int) (uint32,uint32) {
 	}
 
 	// get the user ID
-	if uid == -1 {
-		var err error
-		uid, err = strconv.Atoi(user.Uid)
-		if err != nil {
-			panic(err)
-		}
+	u := user.Uid
+	if uid != -1 {
+		u = strconv.FormatInt(int64(uid), 10)
 	}
 
 	// get the group ID
-	if gid == -1 {
-		var err error
-		gid, err = strconv.Atoi(user.Gid)
-		if err != nil {
-			panic(err)
-		}
+	g := user.Gid
+	if gid != -1 {
+		g = strconv.FormatInt(int64(gid), 10)
 	}
-	return uint32(uid),uint32(gid)
+	return u, g
 }
 
 // Mount the filesystem:
@@ -313,6 +307,8 @@ func startDaemon(cfg Config) {
 		os.Exit(1)
 	}
 
+	logger.Printf("configuration=%v", cfg)
+
 	err = fsDaemon(cfg.mountpoint, cfg.dxEnv, *manifest, cfg.options, logf, logger)
 	if err != nil {
 		logger.Printf(err.Error())
@@ -334,7 +330,7 @@ func isActual() bool {
 
 // build the command line for the daemon process
 func buildDaemonCommandLine(cfg Config, fullManifestPath string) []string {
-	daemonArgs := []string{ cfg.mountpoint, fullManifestPath }
+	var daemonArgs []string
 
 	if (*debugFuseFlag) {
 		daemonArgs = append(daemonArgs, "-debugFuse")
@@ -344,31 +340,29 @@ func buildDaemonCommandLine(cfg Config, fullManifestPath string) []string {
 	}
 
 	// add the user's Unix id and group
-	uidX,gidX := initUidGid(*uid, *gid)
-	uidArgs := []string{ "-uid", string(uidX), "-gid", string(gidX) }
+	u, g := initUidGid(*uid, *gid)
+	uidArgs := []string{ "-uid", u, "-gid", g }
 	daemonArgs = append(daemonArgs, uidArgs...)
 
 	if (*readOnly) {
 		daemonArgs = append(daemonArgs, "-readOnly")
 	}
 	if (*verbose > 0) {
-		verboseArgs := []string { "-verbose", string(*verbose) }
+		verboseArgs := []string { "-verbose", strconv.FormatInt(int64(*verbose), 10) }
 		daemonArgs = append(daemonArgs, verboseArgs...)
 	}
+
+	positionalArgs := []string{ cfg.mountpoint, fullManifestPath }
+	daemonArgs = append(daemonArgs, positionalArgs...)
+
 	fmt.Printf("args=%v\n", daemonArgs)
 	return daemonArgs
 }
 
 
+// We are in the parent process.
+//
 func startDaemonAndWaitForInitializationToComplete(cfg Config) {
-	if isActual() {
-		// This will be true -only- in the child sub-process
-		startDaemon(cfg)
-		return
-	}
-
-	// We are in the parent process.
-	//
 	manifest, err := parseManifest(cfg)
 	if err != nil {
 		fmt.Printf(err.Error())
@@ -432,6 +426,12 @@ func main() {
 	flag.Parse()
 	cfg := parseCmdLineArgs()
 	validateConfig(cfg)
+
+	if isActual() {
+		// This will be true -only- in the child sub-process
+		startDaemon(cfg)
+		return
+	}
 
 	startDaemonAndWaitForInitializationToComplete(cfg)
 }
