@@ -6,11 +6,11 @@ import (
 	"encoding/json"
 	"encoding/hex"
 	"fmt"
+	"net/http"
 	"regexp"
 	"time"
 
 	"github.com/dnanexus/dxda"
-	"github.com/hashicorp/go-retryablehttp"
 )
 
 const (
@@ -52,7 +52,7 @@ type ReplyFolderNew struct {
 
 func (ops *DxOps) DxFolderNew(
 	ctx context.Context,
-	httpClient *retryablehttp.Client,
+	httpClient *http.Client,
 	projId string,
 	folder string) error {
 	if ops.options.Verbose {
@@ -99,7 +99,7 @@ type ReplyFolderRemove struct {
 
 func (ops *DxOps) DxFolderRemove(
 	ctx context.Context,
-	httpClient *retryablehttp.Client,
+	httpClient *http.Client,
 	projId string,
 	folder string) error {
 	if ops.options.Verbose {
@@ -146,7 +146,7 @@ type ReplyRemoveObjects struct {
 
 func (ops *DxOps) DxRemoveObjects(
 	ctx context.Context,
-	httpClient *retryablehttp.Client,
+	httpClient *http.Client,
 	projId string,
 	objectIds []string) error {
 	if ops.options.Verbose {
@@ -194,7 +194,7 @@ type ReplyNewFile struct {
 
 func (ops *DxOps) DxFileNew(
 	ctx context.Context,
-	httpClient *retryablehttp.Client,
+	httpClient *http.Client,
 	nonceStr string,
 	projId string,
 	fname string,
@@ -230,7 +230,7 @@ func (ops *DxOps) DxFileNew(
 
 func (ops *DxOps) DxFileCloseAndWait(
 	ctx context.Context,
-	httpClient *retryablehttp.Client,
+	httpClient *http.Client,
 	fid string) error {
 	if ops.options.Verbose {
 		ops.log("file close-and-wait %s", fid)
@@ -305,7 +305,7 @@ func (ops *DxOps) isRetryableUploadError(err error) bool {
 
 func (ops *DxOps) DxFileUploadPart(
 	ctx context.Context,
-	httpClient *retryablehttp.Client,
+	httpClient *http.Client,
 	fileId string,
 	index int,
 	data []byte) error {
@@ -371,7 +371,7 @@ type ReplyRename struct {
 //  rename a data object
 func (ops *DxOps) DxRename(
 	ctx context.Context,
-	httpClient *retryablehttp.Client,
+	httpClient *http.Client,
 	projId string,
 	fileId string,
 	newName string) error {
@@ -419,7 +419,7 @@ type ReplyMove struct {
 // Moves the specified data objects and folders to a destination folder in the same container.
 func (ops *DxOps) DxMove(
 	ctx context.Context,
-	httpClient *retryablehttp.Client,
+	httpClient *http.Client,
 	projId      string,
 	objectIds []string,
 	folders   []string,
@@ -464,7 +464,7 @@ type ReplyRenameFolder struct {
 
 func (ops *DxOps) DxRenameFolder(
 	ctx context.Context,
-	httpClient *retryablehttp.Client,
+	httpClient *http.Client,
 	projId string,
 	folder string,
 	newName string) error {
@@ -511,7 +511,7 @@ type ReplyClone struct {
 
 func (ops *DxOps) DxClone(
 	ctx context.Context,
-	httpClient *retryablehttp.Client,
+	httpClient *http.Client,
 	srcProjId string,
 	srcId string,
 	destProjId string,
@@ -566,7 +566,7 @@ type ReplySetProperties struct {
 
 func (ops *DxOps) DxSetProperties(
 	ctx context.Context,
-	httpClient *retryablehttp.Client,
+	httpClient *http.Client,
 	projId string,
 	objId string,
 	props map[string](*string)) error {
@@ -607,7 +607,7 @@ type ReplyAddTags struct {
 
 func (ops *DxOps) DxAddTags(
 	ctx context.Context,
-	httpClient *retryablehttp.Client,
+	httpClient *http.Client,
 	projId string,
 	objId string,
 	tags []string) error {
@@ -649,7 +649,7 @@ type ReplyRemoveTags struct {
 
 func (ops *DxOps) DxRemoveTags(
 	ctx context.Context,
-	httpClient *retryablehttp.Client,
+	httpClient *http.Client,
 	projId string,
 	objId string,
 	tags []string) error {

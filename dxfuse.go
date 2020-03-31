@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -16,7 +17,6 @@ import (
 	"time"
 
 	"github.com/dnanexus/dxda"
-	"github.com/hashicorp/go-retryablehttp" // use http libraries from hashicorp for implement retry logic
 	"github.com/jacobsa/fuse"
 	"github.com/jacobsa/fuse/fuseops"
 	"github.com/jacobsa/fuse/fuseutil"
@@ -52,7 +52,7 @@ type Filesys struct {
 
 	// a pool of http clients, for short requests, such as file creation,
 	// or file describe.
-	httpClientPool    chan(*retryablehttp.Client)
+	httpClientPool    chan(*http.Client)
 
 	// metadata database
 	mdb *MetadataDb
@@ -122,9 +122,9 @@ func NewDxfuse(
 	options Options) (*Filesys, error) {
 
 	// initialize a pool of http-clients.
-	httpIoPool := make(chan *retryablehttp.Client, HttpClientPoolSize)
+	httpIoPool := make(chan *http.Client, HttpClientPoolSize)
 	for i:=0; i < HttpClientPoolSize; i++ {
-		httpIoPool <- dxda.NewHttpClient(true)
+		httpIoPool <- dxda.NewHttpClient()
 	}
 	fsys := &Filesys{
 		dxEnv : dxEnv,
@@ -1433,6 +1433,7 @@ func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp,
 	// make sure we don't go over the file size
 	lastByteInFile := fh.size - 1
 	endOfs = MinInt64(lastByteInFile, endOfs)
+	reqSize = endOfs - op.Offset + 1
 
 	// See if the data has already been prefetched.
 	// This call will wait, if a prefetch IO is in progress.
@@ -1460,14 +1461,18 @@ func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp,
 
 	// Take an http client from the pool. Return it when done.
 	httpClient := <- fsys.httpClientPool
-	body,err := dxda.DxHttpRequest(ctx, httpClient, NumRetriesDefault, "GET", fh.url.URL, headers, []byte("{}"))
+	err := dxda.DxHttpRequestData(
+		ctx,
+		httpClient,
+		"GET",
+		fh.url.URL,
+		headers,
+		[]byte("{}"),
+		int(reqSize),
+		op.Dst)
 	fsys.httpClientPool <- httpClient
-	if err != nil {
-		return err
-	}
-
-	op.BytesRead = copy(op.Dst, body)
-	return nil
+	op.BytesRead = int(reqSize)
+	return err
 }
 
 func (fsys *Filesys) ReadFile(ctx context.Context, op *fuseops.ReadFileOp) error {

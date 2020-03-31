@@ -5,13 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"runtime"
 	"sync"
 	"time"
 
 	"github.com/dnanexus/dxda"
-	"github.com/hashicorp/go-retryablehttp"
 	"github.com/jacobsa/fuse"
 )
 
@@ -161,7 +161,7 @@ func (sybx *SyncDbDx) Shutdown() {
 // A worker dedicated to performing data-upload operations
 func (sybx *SyncDbDx) bulkDataWorker() {
 	// A fixed http client
-	client := dxda.NewHttpClient(true)
+	client := dxda.NewHttpClient()
 
 	for true {
 		chunk, ok := <- sybx.chunkQueue
@@ -272,7 +272,7 @@ func readLocalFileExtent(filename string, ofs int64, len int) ([]byte, error) {
 //
 // note: chunk indexes start at 1 (not zero)
 func (sybx *SyncDbDx) uploadFileData(
-	client *retryablehttp.Client,
+	client *http.Client,
 	upReq FileUpdateReq,
 	fileId string) error {
 	if upReq.dfi.FileSize == 0 {
@@ -340,7 +340,7 @@ func (sybx *SyncDbDx) uploadFileData(
 }
 
 func (sybx *SyncDbDx) createEmptyFileData(
-	httpClient *retryablehttp.Client,
+	httpClient *http.Client,
 	upReq FileUpdateReq,
 	fileId string) error {
 	// The file is empty
@@ -360,7 +360,7 @@ func (sybx *SyncDbDx) createEmptyFileData(
 }
 
 func (sybx *SyncDbDx) uploadFileDataAndWait(
-	client *retryablehttp.Client,
+	client *http.Client,
 	upReq FileUpdateReq,
 	fileId string) error {
 	if sybx.options.Verbose {
@@ -388,7 +388,7 @@ func (sybx *SyncDbDx) uploadFileDataAndWait(
 
 // Upload
 func (sybx *SyncDbDx) updateFileData(
-	client *retryablehttp.Client,
+	client *http.Client,
 	upReq FileUpdateReq) (string, error) {
 
 	// We need to lock the filesystem while we are doing this, because
@@ -446,7 +446,7 @@ func (sybx *SyncDbDx) updateFileData(
 	return fileId, nil
 }
 
-func (sybx *SyncDbDx) updateFileAttributes(client *retryablehttp.Client, dfi DirtyFileInfo) error {
+func (sybx *SyncDbDx) updateFileAttributes(client *http.Client, dfi DirtyFileInfo) error {
 	// describe the object state on the platform. The properties/tags have
 	// changed.
 	fDesc, err := DxDescribe(context.TODO(), client, &sybx.dxEnv, dfi.Id)
@@ -548,7 +548,7 @@ func (sybx *SyncDbDx) updateFileAttributes(client *retryablehttp.Client, dfi Dir
 
 func (sybx *SyncDbDx) updateFileWorker() {
 	// A fixed http client. The idea is to be able to reuse http connections.
-	client := dxda.NewHttpClient(true)
+	client := dxda.NewHttpClient()
 
 	for true {
 		upReq, ok := <-sybx.fileUpdateQueue

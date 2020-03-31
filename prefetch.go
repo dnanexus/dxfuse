@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"io/ioutil"
 	"math/bits"
+	"net/http"
 	"os"
 	"runtime"
 	"sync"
@@ -17,7 +19,6 @@ import (
 
 	"github.com/dnanexus/dxda"
 	"github.com/jacobsa/fuse/fuseops"
-	"github.com/hashicorp/go-retryablehttp" // use http libraries from hashicorp for implement retry logic
 )
 
 const (
@@ -330,7 +331,7 @@ func (pgs *PrefetchGlobalState) reportIfSlowIO(
 	}
 }
 
-func (pgs *PrefetchGlobalState) readData(client *retryablehttp.Client, ioReq IoReq) ([]byte, error) {
+func (pgs *PrefetchGlobalState) readData(client *http.Client, ioReq IoReq) ([]byte, error) {
 	// The data has not been prefetched. Get the data from DNAx with an
 	// http request.
 	expectedLen := ioReq.endByte - ioReq.startByte + 1
@@ -358,10 +359,13 @@ func (pgs *PrefetchGlobalState) readData(client *retryablehttp.Client, ioReq IoR
 	defer pgs.reportIfSlowIO(startTs, ioReq.inode, ioReq.startByte, ioReq.endByte)
 
 	for tCnt := 0; tCnt < NumRetriesDefault; tCnt++ {
-		data, err := dxda.DxHttpRequest(ctx, client, 1, "GET", ioReq.url.URL, headers, []byte("{}"))
+		resp, err := dxda.DxHttpRequest(ctx, client, 1, "GET", ioReq.url.URL, headers, []byte("{}"))
 		if err != nil {
 			return nil, err
 		}
+		// TODO: optimize by using a pre-allocated buffer
+		data, _ := ioutil.ReadAll(resp.Body)
+		resp.Body.Close()
 
 		recvLen := int64(len(data))
 		if recvLen != expectedLen {
@@ -389,7 +393,7 @@ func (pgs *PrefetchGlobalState) readData(client *retryablehttp.Client, ioReq IoR
 
 // Download an entire file, and write it to disk.
 func (pgs *PrefetchGlobalState) DownloadEntireFile(
-	client *retryablehttp.Client,
+	client *http.Client,
 	inode int64,
 	size int64,
 	url DxDownloadURL,
@@ -494,7 +498,7 @@ func (pgs *PrefetchGlobalState) getAndLockPfm(hid fuseops.HandleID) *PrefetchFil
 
 func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 	// reuse this http client. The idea is to be able to reuse http connections.
-	client := dxda.NewHttpClient(true)
+	client := dxda.NewHttpClient()
 
 	for true {
 		ioReq, ok := <-pgs.ioQueue

@@ -141,7 +141,7 @@ func MakeManifestFromProjectIds(
 	dxEnv dxda.DXEnvironment,
 	projectIds []string) (*Manifest, error) {
 	// describe the projects, retrieve metadata for them
-	tmpHttpClient := dxda.NewHttpClient(false)
+	tmpHttpClient := dxda.NewHttpClient()
 	projDescs := make(map[string]DxDescribePrj)
 	for _, pId := range projectIds {
 		pDesc, err := DxDescribeProject(ctx, tmpHttpClient, &dxEnv, pId)
@@ -296,7 +296,7 @@ It is a node in the middle, which is illegal.
 }
 
 func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnvironment) error {
-	tmpHttpClient := dxda.NewHttpClient(false)
+	tmpHttpClient := dxda.NewHttpClient()
 
 	// Make a list of all the files that are missing details
 	fileIds := make(map[string]bool)
