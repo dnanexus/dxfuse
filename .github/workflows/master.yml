@@ -36,7 +36,7 @@ jobs:
           sudo update-alternatives --install /usr/bin/python python /usr/bin/python3 1
 
           # Install printing with colors python package
-          pip3 install termcolor dxpy
+          pip3 install dxpy
 
           export GOPATH="/tmp/go"
           mkdir -p $GOPATH
