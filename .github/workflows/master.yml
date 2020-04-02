@@ -68,7 +68,7 @@ jobs:
         run: |
           # The CLI binaries are installed in .local
           $HOME/.local/bin/dx login --staging --token $DX_TOKEN --noprojects
-          dx select dxfuse_test_data
+          $HOME/.local/bin/dx select dxfuse_test_data
 
           export GOPATH="/tmp/go"
           cd $GOPATH/src/github.com/dnanexus/dxfuse/test/local
