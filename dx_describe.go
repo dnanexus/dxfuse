@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 
 	// The dxda package has the get-environment code
 	"github.com/dnanexus/dxda"
-	"github.com/hashicorp/go-retryablehttp" // use http libraries from hashicorp for implement retry logic
 )
 
 // Limit on the number of objects that the bulk-describe API can take
@@ -98,7 +98,7 @@ type DxDescribeRaw struct {
 // Describe a large number of file-ids in one API call.
 func submit(
 	ctx context.Context,
-	httpClient *retryablehttp.Client,
+	httpClient *http.Client,
 	dxEnv *dxda.DXEnvironment,
 	fileIds []string) (map[string]DxDescribeDataObject, error) {
 
@@ -175,7 +175,7 @@ func submit(
 
 func DxDescribeBulkObjects(
 	ctx context.Context,
-	httpClient *retryablehttp.Client,
+	httpClient *http.Client,
 	dxEnv *dxda.DXEnvironment,
 	objIds []string) (map[string]DxDescribeDataObject, error) {
 	var gMap = make(map[string]DxDescribeDataObject)
@@ -233,7 +233,7 @@ type DxListFolder struct {
 // back a list of object-ids and sub-directories.
 func listFolder(
 	ctx context.Context,
-	httpClient *retryablehttp.Client,
+	httpClient *http.Client,
 	dxEnv *dxda.DXEnvironment,
 	projectId string,
 	dir string) (*DxListFolder, error) {
@@ -271,7 +271,7 @@ func listFolder(
 
 func DxDescribeFolder(
 	ctx context.Context,
-	httpClient *retryablehttp.Client,
+	httpClient *http.Client,
 	dxEnv *dxda.DXEnvironment,
 	projectId string,
 	folder string) (*DxFolder, error) {
@@ -337,7 +337,7 @@ func projectPermissionsToInt(perm string) int {
 
 func DxDescribeProject(
 	ctx context.Context,
-	httpClient *retryablehttp.Client,
+	httpClient *http.Client,
 	dxEnv *dxda.DXEnvironment,
 	projectId string) (*DxDescribePrj, error) {
 
@@ -387,7 +387,7 @@ func DxDescribeProject(
 // Describe just one object. Retrieve state even if the object is not closed.
 func DxDescribe(
 	ctx context.Context,
-	httpClient *retryablehttp.Client,
+	httpClient *http.Client,
 	dxEnv *dxda.DXEnvironment,
 	objId string) (DxDescribeDataObject, error) {
 	var objectIds []string

@@ -114,11 +114,12 @@ To build the code from source, you'll need, at the very least, the `go` and `git
 install dependencies:
 ```
 go get github.com/google/subcommands
-go get golang.org/x/sync/semaphore
 go install github.com/google/subcommands
+go get golang.org/x/sync/semaphore
+go get github.com/pbnjay/memory
 go get github.com/dnanexus/dxda
 go install github.com/dnanexus/dxda
-go install github.com/dnanexus/dxda/cmd/dx-download-
+go install github.com/dnanexus/dxda/cmd/dx-download-agent
 ```
 
 Assuming the go directory is `/go`, clone the code with:

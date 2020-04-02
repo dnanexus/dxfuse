@@ -37,7 +37,8 @@ func DxFindProject(
 		return "", err
 	}
 
-	httpClient := dxda.NewHttpClient(false)
+	//httpClient := dxda.NewHttpClient(false)
+	httpClient := dxda.NewHttpClient()
 	repJs, err := dxda.DxAPI(ctx, httpClient, NumRetriesDefault, dxEnv, "system/findProjects", string(payload))
 	if err != nil {
 		return "", err

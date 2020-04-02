@@ -4,10 +4,9 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"time"
-
-	"github.com/hashicorp/go-retryablehttp"
 
 	"github.com/jacobsa/fuse/fuseops"
 )
@@ -221,7 +220,7 @@ type DirtyFileInfo struct {
 // A handle used when operating on a filesystem
 // operation. We normally need a transaction and an http client.
 type OpHandle struct {
-	httpClient *retryablehttp.Client
+	httpClient *http.Client
 	txn        *sql.Tx
 	err         error
 }
