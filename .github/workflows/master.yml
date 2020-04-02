@@ -26,8 +26,8 @@ jobs:
           export GOPATH="$HOME/go"
 
           # install golang
-          wget https://dl.google.com/go/go1.14.linux-amd64.tar.gz
-          sudo tar -C /usr/local -xzf go1.14.linux-amd64.tar.gz
+          wget https://dl.google.com/go/go1.14.1.linux-amd64.tar.gz
+          sudo tar -C /usr/local -xzf go1.14.1.linux-amd64.tar.gz
 
           # Install Go packages
           go get github.com/google/subcommands
