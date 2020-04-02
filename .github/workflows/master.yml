@@ -46,7 +46,9 @@ jobs:
           $GOEXE get github.com/dnanexus/dxda
           $GOEXE get -u github.com/jacobsa/fuse
 
-          $GOEXE build -o $GOPATH/bin/dxfuse $GITHUB_WORKSPACE/cli/main.go
+          mkdir -p $GOPATH/src/github.com/dnanexus
+          mv $GITHUB_WORKSPACE $GOPATH/src/github.com/dnanexus
+          $GOEXE build -o $GOPATH/bin/dxfuse $GOPATH/src/github.com/dnanexus/dxfuse/cli/main.go
 
 #      - name: Unit Tests
 #        run: |
