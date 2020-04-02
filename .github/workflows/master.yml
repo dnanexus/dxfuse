@@ -23,22 +23,20 @@ jobs:
 
           # Set environment variables for Go
           export PATH="/usr/local/go/bin:${PATH}"
-          export GOPATH="/go"
+          export GOPATH="$HOME/go"
 
           # install golang
           wget https://dl.google.com/go/go1.14.linux-amd64.tar.gz
-          tar -C /usr/local -xzf go1.14.linux-amd64.tar.gz
+          sudo tar -C /usr/local -xzf go1.14.linux-amd64.tar.gz
 
           # Install Go packages
           go get github.com/google/subcommands
           go install github.com/google/subcommands
           go get github.com/pbnjay/memory
           go get github.com/dnanexus/dxda
-          go install github.com/dnanexus/dxda
-          go install github.com/dnanexus/dxda/cmd/dx-download-agent
           go get -u github.com/jacobsa/fuse
 
-          go build -o /go/bin/dxfuse /go/src/github.com/dnanexus/dxfuse/cli/main.go
+          go build -o $GOPATH/bin/dxfuse $GOPATH/src/github.com/dnanexus/dxfuse/cli/main.go
 
 #      - name: Unit Tests
 #        run: |
