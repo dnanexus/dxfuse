@@ -1,0 +1,45 @@
+name : Master Workflow
+on:
+  push:
+    branches:
+      - master
+      - github_cicd
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-18.04
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install & build
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget build-essential
+
+          # Set environment variables for Go
+          export PATH="/usr/local/go/bin:${PATH}"
+          export GOPATH="/go"
+
+          # install golang
+          wget https://dl.google.com/go/go1.14.linux-amd64.tar.gz
+          tar -C /usr/local -xzf go1.14.linux-amd64.tar.gz
+
+          # Install Go packages
+          go get github.com/google/subcommands
+          go install github.com/google/subcommands
+          go get github.com/pbnjay/memory
+          go get github.com/dnanexus/dxda
+          go install github.com/dnanexus/dxda
+          go install github.com/dnanexus/dxda/cmd/dx-download-agent
+          go get -u github.com/jacobsa/fuse
+
+          go build -o /go/bin/dxfuse /go/src/github.com/dnanexus/dxfuse/cli/main.go
+
+#      - name: Unit Tests
+#        run: |
+#          sbt test
