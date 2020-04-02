@@ -21,6 +21,9 @@ jobs:
 #          echo "::add-path::/usr/local/go/bin"
 #          export P="${HOME}/go"
 #          echo "::set-env name=GOPATH:$P"
+#          libffi-dev python3 python3-pip python3-venv \
+# Make sure python3 is used
+#          sudo update-alternatives --install /usr/bin/python python /usr/bin/python3 1
 
       - name: Install & build
         run: |
@@ -28,18 +31,15 @@ jobs:
           sudo apt-get install -y autoconf apt-utils bison flex make curl \
           tzdata wget git build-essential \
           dbus apt-transport-https lsb-release \
-          openssl libssl-dev zip unzip groff \
-          libffi-dev python3 python3-pip python3-venv \
+          openssl libssl-dev zip unzip groff libffi-dev \
+          python python-pip python-dev \
           fuse jq attr
 
-          # Make sure python3 is used
-          sudo update-alternatives --install /usr/bin/python python /usr/bin/python3 1
-
           # Install printing with colors python package
-          pip3 install setuptools wheel
+          pip install setuptools wheel
           wget https://raw.githubusercontent.com/dnanexus/dx-toolkit/master/src/python/requirements.txt
-          pip3 install -r requirements.txt
-          pip3 install dxpy
+          pip install -r requirements.txt
+          pip install dxpy
 
           export GOPATH="/tmp/go"
           mkdir -p $GOPATH
