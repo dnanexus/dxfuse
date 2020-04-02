@@ -24,8 +24,11 @@ jobs:
 
       - name: Install & build
         run: |
+          echo $GITHUB_WORKSPACE
+          tree $GITHUB_WORKSPACE
+
           sudo apt-get update
-          sudo apt-get install -y wget build-essential
+          sudo apt-get install -y wget build-essential tree
 
           export GOPATH="/tmp/go"
           mkdir -p $GOPATH
@@ -43,7 +46,7 @@ jobs:
           $GOEXE get github.com/dnanexus/dxda
           $GOEXE get -u github.com/jacobsa/fuse
 
-          $GOEXE build -o $GOPATH/bin/dxfuse $GOPATH/src/github.com/dnanexus/dxfuse/cli/main.go
+          $GOEXE build -o $GOPATH/bin/dxfuse $GITHUB_WORKSPACE/dxfuse/cli/main.go
 
 #      - name: Unit Tests
 #        run: |
