@@ -36,6 +36,7 @@ jobs:
           sudo update-alternatives --install /usr/bin/python python /usr/bin/python3 1
 
           # Install printing with colors python package
+          pip3 install setuptools
           wget https://raw.githubusercontent.com/dnanexus/dx-toolkit/master/src/python/requirements.txt
           pip3 install -r requirements.txt
           pip3 install termcolor dxpy
