@@ -16,33 +16,32 @@ jobs:
     steps:
       - uses: actions/checkout@v2
 
-        # Set environment variables for Go
-        - name: setup
-          run: |
-            echo "::add-path::/usr/local/go/bin"
-            export P="${HOME}/go"
-            echo "::set-env name=GOPATH:$P"
+      - name: setup
+        run: |
+          echo "::add-path::/usr/local/go/bin"
+          export P="${HOME}/go"
+          echo "::set-env name=GOPATH:$P"
 
-          - name: Install & build
-            run: |
-              sudo apt-get update
-              sudo apt-get install -y wget build-essential
+      - name: Install & build
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget build-essential
 
-              mkdir -p $GOPATH
+          mkdir -p $GOPATH
 
-              # install golang
-              wget https://dl.google.com/go/go1.14.1.linux-amd64.tar.gz
-              sudo tar -C /usr/local -xzf go1.14.1.linux-amd64.tar.gz
+          # install golang
+          wget https://dl.google.com/go/go1.14.1.linux-amd64.tar.gz
+          sudo tar -C /usr/local -xzf go1.14.1.linux-amd64.tar.gz
 
-              go version
-              # Install Go packages
-              go get github.com/google/subcommands
-              go install github.com/google/subcommands
-              go get github.com/pbnjay/memory
-              go get github.com/dnanexus/dxda
-              go get -u github.com/jacobsa/fuse
+          go version
+          # Install Go packages
+          go get github.com/google/subcommands
+          go install github.com/google/subcommands
+          go get github.com/pbnjay/memory
+          go get github.com/dnanexus/dxda
+          go get -u github.com/jacobsa/fuse
 
-              go build -o $GOPATH/bin/dxfuse $GOPATH/src/github.com/dnanexus/dxfuse/cli/main.go
+          go build -o $GOPATH/bin/dxfuse $GOPATH/src/github.com/dnanexus/dxfuse/cli/main.go
 
 #      - name: Unit Tests
 #        run: |
