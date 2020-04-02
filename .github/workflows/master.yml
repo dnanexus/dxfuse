@@ -75,4 +75,5 @@ jobs:
           GOPATH :  "/tmp/go"
         run: |
           # The CLI binaries are installed in .local
-          cd $GOPATH/src/github.com/dnanexus/dxfuse/test/local/xattr_test.sh
+          cd $GOPATH/src/github.com/dnanexus/dxfuse/test/local
+          ./xattr_test.sh
