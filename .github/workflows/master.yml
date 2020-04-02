@@ -25,10 +25,18 @@ jobs:
       - name: Install & build
         run: |
           sudo apt-get update
-          sudo apt-get install -y wget build-essential tree
+          sudo apt-get install -y autoconf apt-utils bison flex make curl \
+          tzdata wget git build-essential \
+          dbus apt-transport-https lsb-release \
+          openssl libssl-dev zip unzip groff \
+          libffi-dev python3 python3-pip python3-venv \
+          fuse jq attr
 
-          echo $GITHUB_WORKSPACE
-          tree $GITHUB_WORKSPACE
+          # Make sure python3 is used
+          update-alternatives --install /usr/bin/python python /usr/bin/python3 1
+
+          # Install printing with colors python package
+          pip3 install termcolor dxpy
 
           export GOPATH="/tmp/go"
           mkdir -p $GOPATH
@@ -47,9 +55,17 @@ jobs:
           $GOEXE get -u github.com/jacobsa/fuse
 
           mkdir -p $GOPATH/src/github.com/dnanexus
-          mv $GITHUB_WORKSPACE $GOPATH/src/github.com/dnanexus
+          cp -r $GITHUB_WORKSPACE $GOPATH/src/github.com/dnanexus
           $GOEXE build -o $GOPATH/bin/dxfuse $GOPATH/src/github.com/dnanexus/dxfuse/cli/main.go
 
-#      - name: Unit Tests
-#        run: |
-#          sbt test
+      - name: Local tests
+        env:
+          DX_TOKEN : ${{ secrets.DX_TOKEN }}
+        run: |
+          # The CLI binaries are installed in .local
+          $HOME/.local/bin/dx login --staging --token $DX_TOKEN
+          dx select dxfuse_test_data
+
+          export GOPATH="/tmp/go"
+          cd $GOPATH/src/github.com/dnanexus/dxfuse/test/local
+          local.sh
