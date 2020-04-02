@@ -22,13 +22,15 @@ jobs:
           sudo apt-get install -y wget build-essential
 
           # Set environment variables for Go
-          export PATH="/usr/local/go/bin:${PATH}"
-          export GOPATH="$HOME/go"
+          echo "::add-path::/usr/local/go/bin"
+          echo "::set-env name=GOPATH::$HOME/go"
+          mkdir -p $GOPATH
 
           # install golang
           wget https://dl.google.com/go/go1.14.1.linux-amd64.tar.gz
           sudo tar -C /usr/local -xzf go1.14.1.linux-amd64.tar.gz
 
+          go version
           # Install Go packages
           go get github.com/google/subcommands
           go install github.com/google/subcommands
