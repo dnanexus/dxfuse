@@ -61,16 +61,18 @@ jobs:
           cp -r $GITHUB_WORKSPACE $GOPATH/src/github.com/dnanexus
           $GOEXE build -o $GOPATH/bin/dxfuse $GOPATH/src/github.com/dnanexus/dxfuse/cli/main.go
 
-      - name: Local tests
+      - name: Login to dnanexus
         env:
           DX_TOKEN : ${{ secrets.DX_TOKEN }}
-          GOPATH :  "/tmp/go"
         run: |
           # The CLI binaries are installed in .local
           export PATH="$PATH:$HOME/.local/bin"
           dx login --staging --token $DX_TOKEN --noprojects
           dx select dxfuse_test_data
 
-          export GOPATH="/tmp/go"
-          cd $GOPATH/src/github.com/dnanexus/dxfuse/test/local
-          ./local.sh
+      - name: Xattr test
+        env:
+          GOPATH :  "/tmp/go"
+        run: |
+          # The CLI binaries are installed in .local
+          cd $GOPATH/src/github.com/dnanexus/dxfuse/test/local/xattr_test.sh
