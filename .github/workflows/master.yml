@@ -33,7 +33,7 @@ jobs:
           fuse jq attr
 
           # Make sure python3 is used
-          update-alternatives --install /usr/bin/python python /usr/bin/python3 1
+          sudo update-alternatives --install /usr/bin/python python /usr/bin/python3 1
 
           # Install printing with colors python package
           pip3 install termcolor dxpy
