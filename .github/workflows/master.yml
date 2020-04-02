@@ -39,7 +39,7 @@ jobs:
           pip3 install setuptools wheel
           wget https://raw.githubusercontent.com/dnanexus/dx-toolkit/master/src/python/requirements.txt
           pip3 install -r requirements.txt
-          pip3 install termcolor dxpy
+          pip3 install dxpy
 
           export GOPATH="/tmp/go"
           mkdir -p $GOPATH
@@ -64,6 +64,7 @@ jobs:
       - name: Local tests
         env:
           DX_TOKEN : ${{ secrets.DX_TOKEN }}
+          GOPATH :  "/tmp/go"
         run: |
           # The CLI binaries are installed in .local
           $HOME/.local/bin/dx login --staging --token $DX_TOKEN
