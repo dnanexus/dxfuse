@@ -17,14 +17,15 @@ jobs:
       - uses: actions/checkout@v2
 
       - name: Install & build
+        env:
+          GOPATH: ${{ env.HOME }} "/go"
         run: |
           sudo apt-get update
           sudo apt-get install -y wget build-essential
 
           # Set environment variables for Go
-          echo "::add-path::/usr/local/go/bin"
-          echo "::set-env name=GOPATH::/tmp/go"
           mkdir -p $GOPATH
+          echo "::add-path::/usr/local/go/bin"
 
           # install golang
           wget https://dl.google.com/go/go1.14.1.linux-amd64.tar.gz
