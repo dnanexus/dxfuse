@@ -23,7 +23,7 @@ jobs:
 
           # Set environment variables for Go
           echo "::add-path::/usr/local/go/bin"
-          echo "::set-env name=GOPATH::$HOME/go"
+          echo "::set-env name=GOPATH::/tmp/go"
           mkdir -p $GOPATH
 
           # install golang
