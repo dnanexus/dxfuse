@@ -1,0 +1,77 @@
+name : Master Workflow
+on:
+  push:
+    branches:
+      - master
+      - github_cicd
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-18.04
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install & build
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y autoconf apt-utils bison flex make curl \
+          tzdata wget git build-essential \
+          dbus apt-transport-https lsb-release \
+          openssl libssl-dev zip unzip groff libffi-dev \
+          python python-pip python-dev \
+          fuse jq attr
+
+          # Install printing with colors python package
+          pip install setuptools wheel
+          wget https://raw.githubusercontent.com/dnanexus/dx-toolkit/master/src/python/requirements.txt
+          pip install -r requirements.txt
+          pip install dxpy
+
+          sudo mkdir -p /go
+          sudo chown $(id -u):$(id -g) -R /go
+          export GOPATH="/go"
+
+          # install golang
+          wget https://dl.google.com/go/go1.14.1.linux-amd64.tar.gz
+          sudo tar -C /usr/local -xzf go1.14.1.linux-amd64.tar.gz
+          export GOEXE="/usr/local/go/bin/go"
+
+          $GOEXE version
+          # Install go packages
+          $GOEXE get github.com/pbnjay/memory
+          $GOEXE get github.com/dnanexus/dxda
+          $GOEXE get -u github.com/jacobsa/fuse
+
+          mkdir -p $GOPATH/src/github.com/dnanexus
+          cp -r $GITHUB_WORKSPACE $GOPATH/src/github.com/dnanexus
+          $GOEXE build -o $GOPATH/bin/dxfuse $GOPATH/src/github.com/dnanexus/dxfuse/cli/main.go
+
+      - name: Login to dnanexus
+        env:
+          DX_TOKEN : ${{ secrets.DX_TOKEN }}
+        run: |
+          # The CLI binaries are installed in .local
+          export PATH="$PATH:$HOME/.local/bin"
+          dx login --staging --token $DX_TOKEN --noprojects
+          dx select dxfuse_test_data
+
+      - name: Build the tests
+        env:
+          GOPATH :  "/go"
+        run: |
+          export PATH="$PATH:$HOME/.local/bin"
+          cd $GOPATH/src/github.com/dnanexus/dxfuse/test
+          make
+
+      - name: Run the tests
+        env:
+          GOPATH :  "/go"
+        run: |
+          export PATH="$PATH:$HOME/.local/bin"
+          cd $GOPATH/src/github.com/dnanexus/dxfuse/
+          ./scripts/run_tests.py --test correct --size small
