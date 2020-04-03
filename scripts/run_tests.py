@@ -7,8 +7,6 @@ import pprint
 import os
 import sys
 import subprocess
-from typing import Callable, Iterator, Union, Optional, List
-from termcolor import colored, cprint
 import time
 from dxpy.exceptions import DXJobFailureError
 

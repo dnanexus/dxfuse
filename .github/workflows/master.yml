@@ -17,15 +17,17 @@ jobs:
       - uses: actions/checkout@v2
 
       - name: Install & build
+        env:
+          GOPATH :  "/go"
         run: |
           sudo apt-get update
 
-          sudo apt-get install -y autoconf apt-utils bison flex make curl \
-          tzdata wget git build-essential \
+          sudo apt-get install -y autoconf apt-utils make \
+          wget git build-essential \
           dbus apt-transport-https lsb-release \
           openssl libssl-dev zip unzip groff libffi-dev \
-          python python-pip python-dev \
-          fuse jq attr
+          python python-pip python-dev
+
 
           # Install printing with colors python package
           pip install setuptools wheel
@@ -39,22 +41,21 @@ jobs:
           # setup golang directory
           sudo mkdir -p /go
           sudo chown $(id -u):$(id -g) -R /go
-          export GOPATH="/go"
 
           # install golang
           wget https://dl.google.com/go/go1.14.1.linux-amd64.tar.gz
           sudo tar -C /usr/local -xzf go1.14.1.linux-amd64.tar.gz
-          export GOEXE="/usr/local/go/bin/go"
+          export PATH="$PATH:/usr/local/go/bin/"
 
-          $GOEXE version
+          go version
           # Install go packages
-          $GOEXE get github.com/pbnjay/memory
-          $GOEXE get github.com/dnanexus/dxda
-          $GOEXE get -u github.com/jacobsa/fuse
+          go get github.com/pbnjay/memory
+          go get github.com/dnanexus/dxda
+          go get -u github.com/jacobsa/fuse
 
           mkdir -p $GOPATH/src/github.com/dnanexus
           cp -r $GITHUB_WORKSPACE $GOPATH/src/github.com/dnanexus
-          $GOEXE build -o $GOPATH/bin/dxfuse $GOPATH/src/github.com/dnanexus/dxfuse/cli/main.go
+          go build -o $GOPATH/bin/dxfuse $GOPATH/src/github.com/dnanexus/dxfuse/cli/main.go
 
       - name: Login to dnanexus
         env:
