@@ -51,8 +51,6 @@ jobs:
 
           $GOEXE version
           # Install go packages
-          $GOEXE get github.com/google/subcommands
-          $GOEXE install github.com/google/subcommands
           $GOEXE get github.com/pbnjay/memory
           $GOEXE get github.com/dnanexus/dxda
           $GOEXE get -u github.com/jacobsa/fuse
@@ -76,4 +74,4 @@ jobs:
         run: |
           # The CLI binaries are installed in .local
           cd $GOPATH/src/github.com/dnanexus/dxfuse/test/local
-          ./xattr_test.sh
+          bash ./xattr_test.sh
