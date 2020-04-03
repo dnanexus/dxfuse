@@ -16,15 +16,6 @@ jobs:
     steps:
       - uses: actions/checkout@v2
 
-#      - name: setup
-#        run: |
-#          echo "::add-path::/usr/local/go/bin"
-#          export P="${HOME}/go"
-#          echo "::set-env name=GOPATH:$P"
-#          libffi-dev python3 python3-pip python3-venv \
-# Make sure python3 is used
-#          sudo update-alternatives --install /usr/bin/python python /usr/bin/python3 1
-
       - name: Install & build
         run: |
           sudo apt-get update
@@ -41,8 +32,10 @@ jobs:
           pip install -r requirements.txt
           pip install dxpy
 
-          export GOPATH="/tmp/go"
-          mkdir -p $GOPATH
+          sudo mkdir -p /go
+          user=${whoami}
+          chown $user:$user /go
+          export GOPATH="/go"
 
           # install golang
           wget https://dl.google.com/go/go1.14.1.linux-amd64.tar.gz
@@ -70,14 +63,14 @@ jobs:
 
       - name: Build the tests
         env:
-          GOPATH :  "/tmp/go"
+          GOPATH :  "/go"
         run:
           cd $GOPATH/src/github.com/dnanexus/dxfuse/test
           make
 
       - name: Run the tests
         env:
-          GOPATH :  "/tmp/go"
+          GOPATH :  "/go"
         run:
           cd $GOPATH/src/github.com/dnanexus/dxfuse/
           ./scripts/run_tests.py --test correct --size small
