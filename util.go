@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/user"
 	"time"
 
 	"github.com/jacobsa/fuse/fuseops"
@@ -17,16 +18,18 @@ const (
 	GiB                   = 1024 * MiB
 )
 const (
-	CreatedFilesDir     = "/var/dxfuse/created_files"
-	DatabaseFile        = "/var/dxfuse/metadata.db"
+	CreatedFilesDir     = "created_files"
+	DatabaseFile        = "metadata.db"
+	LogFile             = "dxfuse.log"
+)
+const (
 	HttpClientPoolSize  = 4
 	FileWriteInactivityThresh = 5 * time.Minute
 	WritableFileSizeLimit = 16 * MiB
-	LogFile             = "/var/log/dxfuse.log"
 	MaxDirSize          = 10 * 1000
 	MaxNumFileHandles   = 1000 * 1000
 	NumRetriesDefault   = 3
-	Version             = "v0.21"
+	Version             = "v0.22"
 )
 const (
 	InodeInvalid       = 0
@@ -321,4 +324,18 @@ func intToBool(x int) bool {
 		return true
 	}
 	return false
+}
+
+// create a directory for all the dxfuse files in  $HOME/.dxfuse
+func MakeFSBaseDir() string {
+	user, err := user.Current()
+	if err != nil {
+		log.Printf("error, could not describe the user")
+		os.Exit(1)
+	}
+	dxfuseBaseDir := user.HomeDir + "/.dxfuse"
+	if _, err := os.Stat(dxfuseBaseDir); os.IsNotExist(err) {
+		os.Mkdir(dxfuseBaseDir, 0700)
+	}
+	return dxfuseBaseDir
 }

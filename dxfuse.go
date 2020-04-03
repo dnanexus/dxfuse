@@ -43,10 +43,6 @@ type Filesys struct {
 	// various options
 	options Options
 
-	// A file holding a sqlite3 database with all the files and
-	// directories collected thus far.
-	dbFullPath string
-
 	// Lock for protecting shared access to the database
 	mutex *sync.Mutex
 
@@ -84,6 +80,9 @@ type Filesys struct {
 
 	// is the the system shutting down (unmounting)
 	shutdownCalled bool
+
+	// location for newly created files
+	createdFilesDir string
 }
 
 // Files can be in two access modes: remote-read-only or local-read-write
@@ -126,10 +125,11 @@ func NewDxfuse(
 	for i:=0; i < HttpClientPoolSize; i++ {
 		httpIoPool <- dxda.NewHttpClient()
 	}
+
+	dxfuseBaseDir := MakeFSBaseDir()
 	fsys := &Filesys{
 		dxEnv : dxEnv,
 		options: options,
-		dbFullPath : DatabaseFile,
 		mutex : &sync.Mutex{},
 		httpClientPool: httpIoPool,
 		ops : NewDxOps(dxEnv, options),
@@ -139,27 +139,25 @@ func NewDxfuse(
 		dhTable : make(map[fuseops.HandleID]*DirHandle),
 		tmpFileCounter : 0,
 		shutdownCalled : false,
+		createdFilesDir : dxfuseBaseDir + "/" + CreatedFilesDir,
+	}
+
+	// Create a directory for new files
+	os.RemoveAll(fsys.createdFilesDir)
+	if _, err := os.Stat(fsys.createdFilesDir); os.IsNotExist(err) {
+		os.Mkdir(fsys.createdFilesDir, 0755)
 	}
 
 	// Create a fresh SQL database
-	dbParentFolder := filepath.Dir(DatabaseFile)
-	if _, err := os.Stat(dbParentFolder); os.IsNotExist(err) {
-		os.Mkdir(dbParentFolder, 0755)
-	}
-	fsys.log("Removing old version of the database (%s)", DatabaseFile)
-	if err := os.RemoveAll(DatabaseFile); err != nil {
+	databaseFile := dxfuseBaseDir + "/" + DatabaseFile
+	fsys.log("Removing old version of the database (%s)", databaseFile)
+	if err := os.RemoveAll(databaseFile); err != nil {
 		fsys.log("error removing old database %b", err)
 		os.Exit(1)
 	}
 
-	// Create a directory for new files
-	os.RemoveAll(CreatedFilesDir)
-	if _, err := os.Stat(CreatedFilesDir); os.IsNotExist(err) {
-		os.Mkdir(CreatedFilesDir, 0755)
-	}
-
 	// create the metadata database
-	mdb, err := NewMetadataDb(fsys.dbFullPath, dxEnv, options)
+	mdb, err := NewMetadataDb(databaseFile, dxEnv, options)
 	if err != nil {
 		return nil, err
 	}
@@ -726,7 +724,7 @@ func (fsys *Filesys) insertIntoDirHandleTable(dh *DirHandle) fuseops.HandleID {
 // by dxfuse.
 func (fsys *Filesys) createLocalPath(filename string) string {
 	cnt := atomic.AddUint64(&fsys.tmpFileCounter, 1)
-	localPath := fmt.Sprintf("%s/%d_%s", CreatedFilesDir, cnt, filename)
+	localPath := fmt.Sprintf("%s/%d_%s", fsys.createdFilesDir, cnt, filename)
 	return localPath
 }
 
