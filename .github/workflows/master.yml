@@ -22,10 +22,9 @@ jobs:
         run: |
           sudo apt-get update
 
-          sudo apt-get install -y autoconf apt-utils make \
-          wget git build-essential \
-          dbus apt-transport-https lsb-release \
-          openssl libssl-dev zip unzip groff libffi-dev \
+          sudo apt-get install -y apt-utils make \
+          wget git build-essential apt-transport-https \
+          openssl libssl-dev zip unzip libffi-dev \
           python python-pip python-dev
 
 
@@ -53,9 +52,9 @@ jobs:
           go get github.com/dnanexus/dxda
           go get -u github.com/jacobsa/fuse
 
-          mkdir -p $GOPATH/src/github.com/dnanexus
-          cp -r $GITHUB_WORKSPACE $GOPATH/src/github.com/dnanexus
-          go build -o $GOPATH/bin/dxfuse $GOPATH/src/github.com/dnanexus/dxfuse/cli/main.go
+          mkdir -p /go/src/github.com/dnanexus
+          cp -r $GITHUB_WORKSPACE /go/src/github.com/dnanexus
+          go build -o /go/bin/dxfuse /go/src/github.com/dnanexus/dxfuse/cli/main.go
 
       - name: Login to dnanexus
         env:
@@ -71,7 +70,7 @@ jobs:
           GOPATH :  "/go"
         run: |
           export PATH="$PATH:$HOME/.local/bin"
-          cd $GOPATH/src/github.com/dnanexus/dxfuse/test
+          cd /go/src/github.com/dnanexus/dxfuse/test
           make
 
       - name: Run the tests
@@ -79,5 +78,5 @@ jobs:
           GOPATH :  "/go"
         run: |
           export PATH="$PATH:$HOME/.local/bin"
-          cd $GOPATH/src/github.com/dnanexus/dxfuse/
-          ./scripts/run_tests.py --test correct --size small
+          cd /go/src/github.com/dnanexus/dxfuse/
+          ./scripts/run_tests.py --test correct --size large
