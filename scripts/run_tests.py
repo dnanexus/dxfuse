@@ -67,7 +67,7 @@ def get_project(project_name):
     project = dxpy.find_projects(name=project_name, return_handler=True, level="VIEW")
     project = [p for p in project]
     if len(project) == 0:
-        print('Did not find project {0}'.format(project_name), file=sys.stderr)
+        print('Did not find project {0}'.format(project_name))
         return None
     elif len(project) == 1:
         return project[0]
