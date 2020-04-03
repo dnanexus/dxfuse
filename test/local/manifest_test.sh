@@ -48,3 +48,5 @@ function manifest_test {
 
     teardown
 }
+
+manifest_test

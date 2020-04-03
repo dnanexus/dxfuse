@@ -1,6 +1,4 @@
-######################################################################
-set +e
-######################################################################
+#!/bin/bash -e
 # global variables
 mountpoint=${HOME}/MNT
 projName="dxfuse_test_data"
@@ -214,3 +212,5 @@ function xattr_test {
 
     teardown
 }
+
+xattr_test

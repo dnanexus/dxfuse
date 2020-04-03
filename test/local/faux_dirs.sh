@@ -132,3 +132,5 @@ function faux_dirs {
 
     teardown
 }
+
+faux_dirs

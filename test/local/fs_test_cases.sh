@@ -477,3 +477,5 @@ function fs_test_cases {
 
     teardown
 }
+
+fs_test_cases
