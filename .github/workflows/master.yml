@@ -19,6 +19,7 @@ jobs:
       - name: Install & build
         run: |
           sudo apt-get update
+
           sudo apt-get install -y autoconf apt-utils bison flex make curl \
           tzdata wget git build-essential \
           dbus apt-transport-https lsb-release \
@@ -30,6 +31,9 @@ jobs:
           pip install setuptools wheel
           wget https://raw.githubusercontent.com/dnanexus/dx-toolkit/master/src/python/requirements.txt
           pip install -r requirements.txt
+
+          # I used python2 because this installing dxpy causes a segmentation fault on pip3.
+          # I have no idea why.
           pip install dxpy
 
           # setup golang directory
