@@ -32,6 +32,7 @@ jobs:
           pip install -r requirements.txt
           pip install dxpy
 
+          # setup golang directory
           sudo mkdir -p /go
           sudo chown $(id -u):$(id -g) -R /go
           export GOPATH="/go"
