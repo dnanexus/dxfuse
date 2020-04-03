@@ -63,13 +63,13 @@ jobs:
       - name: Build the tests
         env:
           GOPATH :  "/go"
-        run:
+        run: |
           cd $GOPATH/src/github.com/dnanexus/dxfuse/test
           make
 
       - name: Run the tests
         env:
           GOPATH :  "/go"
-        run:
+        run: |
           cd $GOPATH/src/github.com/dnanexus/dxfuse/
           ./scripts/run_tests.py --test correct --size small
