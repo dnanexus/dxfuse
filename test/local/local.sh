@@ -3,16 +3,24 @@
 CRNT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 echo "current dir=$CRNT_DIR"
 
-$CRNT_DIR/xattr_test.sh
+set +e
+source $CRNT_DIR/xattr_test.sh
+xattr_test
 
-$CRNT_DIR/manifest_test.sh
+source $CRNT_DIR/manifest_test.sh
+manifest_test
 
-$CRNT_DIR/dx_download_compare.sh
+source $CRNT_DIR/dx_download_compare.sh
+dx_download_compare
 
-$CRNT_DIR/file_write_slow.sh
+source $CRNT_DIR/file_write_slow.sh
+file_write_slow
 
-$CRNT_DIR/fs_test_cases.sh
+source $CRNT_DIR/fs_test_cases.sh
+fs_test_cases
 
-$CRNT_DIR/faux_dirs.sh
+source $CRNT_DIR/faux_dirs.sh
+faux_dirs
 
-$CRNT_DIR/file_overwrite.sh
+source $CRNT_DIR/file_overwrite.sh
+file_overwrite

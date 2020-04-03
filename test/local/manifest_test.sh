@@ -1,4 +1,3 @@
-#!/bin/bash -e
 ######################################################################
 # global variables
 
@@ -48,5 +47,3 @@ function manifest_test {
 
     teardown
 }
-
-manifest_test

@@ -1,6 +1,3 @@
-#!/bin/bash
-
-set +e
 ######################################################################
 ## constants
 
@@ -129,5 +126,3 @@ function file_overwrite {
 
     teardown
 }
-
-file_overwrite

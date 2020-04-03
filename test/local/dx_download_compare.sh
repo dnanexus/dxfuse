@@ -1,5 +1,3 @@
-#!/bin/bash -e
-
 ######################################################################
 ## constants
 
@@ -84,5 +82,3 @@ function dx_download_compare {
 
     teardown
 }
-
-dx_download_compare

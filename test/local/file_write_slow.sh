@@ -1,5 +1,3 @@
-#!/bin/bash -e
-
 ######################################################################
 ## constants
 
@@ -172,5 +170,3 @@ function file_write_slow {
 
     teardown
 }
-
-file_write_slow

@@ -68,10 +68,16 @@ jobs:
           dx login --staging --token $DX_TOKEN --noprojects
           dx select dxfuse_test_data
 
-      - name: Xattr test
+      - name: Build the tests
         env:
           GOPATH :  "/tmp/go"
-        run: |
-          # The CLI binaries are installed in .local
-          cd $GOPATH/src/github.com/dnanexus/dxfuse/test/local
-          bash ./xattr_test.sh
+        run:
+          cd $GOPATH/src/github.com/dnanexus/dxfuse/test
+          make
+
+      - name: Run the tests
+        env:
+          GOPATH :  "/tmp/go"
+        run:
+          cd $GOPATH/src/github.com/dnanexus/dxfuse/
+          ./scripts/run_tests.py --test correct --size small
