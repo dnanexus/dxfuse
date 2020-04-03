@@ -33,7 +33,7 @@ jobs:
           pip install dxpy
 
           sudo mkdir -p /go
-          chown $UID:$UID /go
+          sudo chown $(id -u):$(id -g) -R /go
           export GOPATH="/go"
 
           # install golang
