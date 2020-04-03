@@ -64,6 +64,7 @@ jobs:
         env:
           GOPATH :  "/go"
         run: |
+          export PATH="$PATH:$HOME/.local/bin"
           cd $GOPATH/src/github.com/dnanexus/dxfuse/test
           make
 
@@ -71,5 +72,6 @@ jobs:
         env:
           GOPATH :  "/go"
         run: |
+          export PATH="$PATH:$HOME/.local/bin"
           cd $GOPATH/src/github.com/dnanexus/dxfuse/
           ./scripts/run_tests.py --test correct --size small
