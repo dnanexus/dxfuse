@@ -34,10 +34,10 @@ main() {
     if [[ $verbose != "" ]]; then
         flags="-verbose 2"
     fi
-    sudo -E $dxfuse -uid $(id -u) -gid $(id -g) $flags $mountpoint $projName
+    $dxfuse $flags $mountpoint $projName
 
     # we get bam from the resources
-    apt-get install g++ -y
+    sudo apt-get install g++ -y
 
     # install samtools
     sudo apt-get install samtools

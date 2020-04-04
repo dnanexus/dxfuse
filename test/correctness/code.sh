@@ -29,7 +29,7 @@ function teardown {
 
     echo "unmounting dxfuse"
     cd $HOME
-    sudo umount $mountpoint
+    fusermount -u $mountpoint
 
     for d in ${writeable_dirs[@]}; do
         dx rm -r $projName:/$d >& /dev/null || true
@@ -62,7 +62,7 @@ function check_file_write_content {
     ls -l $write_dir/A.txt
 
     echo "synchronizing the filesystem"
-    sudo $dxfuse -sync
+    $dxfuse -sync
 
     echo "file is closed"
     dx ls -l $projName:/$target_dir/A.txt
@@ -83,7 +83,7 @@ function check_file_write_content {
     ls -l $write_dir/B.txt
 
     echo "synchronizing the filesystem"
-    sudo $dxfuse -sync
+    $dxfuse -sync
 
     echo "file is closed"
     dx ls -l $projName:/$target_dir/B.txt
@@ -556,7 +556,7 @@ main() {
     if [[ $verbose != "" ]]; then
         flags="-verbose 2"
     fi
-    sudo -E $dxfuse -uid $(id -u) -gid $(id -g) $flags $mountpoint dxfuse_test_data dxfuse_test_read_only ArchivedStuff
+    $dxfuse $flags $mountpoint dxfuse_test_data dxfuse_test_read_only ArchivedStuff
 
     echo "can write to a small file"
     check_file_write_content $mountpoint/$projName $target_dir

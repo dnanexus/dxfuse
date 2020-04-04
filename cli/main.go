@@ -8,8 +8,8 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
-	"os/exec"
 	"os/user"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -44,11 +44,10 @@ func usage() {
 
 var (
 	debugFuseFlag = flag.Bool("debugFuse", false, "Tap into FUSE debugging information")
+	daemon = flag.Bool("daemon", false, "An internal flag, do not use it")
 	fsSync = flag.Bool("sync", false, "Sychronize the filesystem and exit")
-	gid = flag.Int("gid", -1, "User group id (gid)")
 	help = flag.Bool("help", false, "display program options")
 	readOnly = flag.Bool("readOnly", false, "mount the filesystem in read-only mode")
-	uid = flag.Int("uid", -1, "User id (uid)")
 	verbose = flag.Int("verbose", 0, "Enable verbose debugging")
 	version = flag.Bool("version", false, "Print the version and exit")
 )
@@ -68,9 +67,9 @@ func lookupProject(dxEnv *dxda.DXEnvironment, projectIdOrName string) (string, e
 	return dxfuse.DxFindProject(context.TODO(), dxEnv, projectIdOrName)
 }
 
-func initLog() *os.File {
+func initLog(logFile string) *os.File {
 	// Redirect the log output to a file
-	f, err := os.OpenFile(dxfuse.LogFile, os.O_RDWR | os.O_CREATE | os.O_APPEND | os.O_TRUNC, 0666)
+	f, err := os.OpenFile(logFile, os.O_RDWR | os.O_CREATE | os.O_APPEND | os.O_TRUNC, 0666)
 	if err != nil {
 		log.Fatalf("error opening file: %v", err)
 	}
@@ -81,32 +80,8 @@ func initLog() *os.File {
 	return f
 }
 
-func initUidGid(uid int, gid int) (string, string) {
-	// This is current the root user, because the program is run under
-	// sudo privileges. The "user" variable is used only if we don't
-	// get command line uid/gid.
-	user, err := user.Current()
-	if err != nil {
-		panic(err)
-	}
-
-	// get the user ID
-	u := user.Uid
-	if uid != -1 {
-		u = strconv.FormatInt(int64(uid), 10)
-	}
-
-	// get the group ID
-	g := user.Gid
-	if gid != -1 {
-		g = strconv.FormatInt(int64(gid), 10)
-	}
-	return u, g
-}
-
 // Mount the filesystem:
 //  - setup the debug log to the FUSE kernel log (I think)
-//  - mount as read-only
 func fsDaemon(
 	mountpoint string,
 	dxEnv dxda.DXEnvironment,
@@ -123,9 +98,6 @@ func fsDaemon(
 
 	logger.Printf("starting fsDaemon")
 	mountOptions := make(map[string]string)
-
-	// Allow users other than root access the filesystem
-	mountOptions["allow_other"] = ""
 
 	// capture debug output from the FUSE subsystem
 	var fuse_logger *log.Logger
@@ -172,26 +144,47 @@ func fsDaemon(
 	return nil
 }
 
-func waitForReady() string {
+func waitForReady(logFile string) string {
 	for i := 0; i < 10; i++ {
 		time.Sleep(1 * time.Second)
 
 		// read the log file and look for either "ready" or "error"
-		data, err := ioutil.ReadFile(dxfuse.LogFile)
+		data, err := ioutil.ReadFile(logFile)
 		if err != nil {
 			continue
 		}
 		content := string(data)
-		if (strings.Contains(content, "mounting-dxfuse")) {
+		if strings.Contains(content, "mounting-dxfuse") {
 			return "ready"
 		}
-		if (strings.Contains(content, "error")) {
+		if strings.Contains(content, "error") {
 			return "error"
 		}
 	}
 
 	// The filesystem failed to start for some reason.
 	return "error"
+}
+
+// get the current user Uid and Gid
+func initUidGid() (uint32, uint32) {
+	user, err := user.Current()
+	if err != nil {
+		panic(err)
+	}
+
+	// get the user ID
+	u, err := strconv.Atoi(user.Uid)
+	if err != nil {
+		panic(err)
+	}
+
+	// get the group ID
+	g, err := strconv.Atoi(user.Gid)
+	if err != nil {
+		panic(err)
+	}
+	return uint32(u), uint32(g)
 }
 
 func parseCmdLineArgs() Config {
@@ -217,12 +210,13 @@ func parseCmdLineArgs() Config {
 	}
 	mountpoint := flag.Arg(0)
 
+	uid, gid := initUidGid()
 	options := dxfuse.Options{
 		ReadOnly: *readOnly,
 		Verbose : *verbose > 0,
 		VerboseLevel : *verbose,
-		Uid : uint32(*uid),
-		Gid : uint32(*gid),
+		Uid : uid,
+		Gid : gid,
 	}
 
 	dxEnv, _, err := dxda.GetDxEnvironment()
@@ -292,9 +286,9 @@ func parseManifest(cfg Config) (*dxfuse.Manifest, error) {
 }
 
 
-func startDaemon(cfg Config) {
+func startDaemon(cfg Config, logFile string) {
 	// initialize the log file
-	logf := initLog()
+	logf := initLog(logFile)
 	logger := log.New(logf, "dxfuse: ", log.Flags())
 
 	// Read the manifest from disk. It should already have all the fields
@@ -315,21 +309,10 @@ func startDaemon(cfg Config) {
 	}
 }
 
-// check if the variable ACTUAL is set to 1.
-// This means that we need to run the filesystem inside this process
-func isActual() bool {
-	environment := os.Environ()
-	for _,kv := range(environment) {
-		if kv == "ACTUAL=1" {
-			return true
-		}
-	}
-	return false
-}
-
 // build the command line for the daemon process
 func buildDaemonCommandLine(cfg Config, fullManifestPath string) []string {
 	var daemonArgs []string
+	daemonArgs = append(daemonArgs, "-daemon")
 
 	if (*debugFuseFlag) {
 		daemonArgs = append(daemonArgs, "-debugFuse")
@@ -337,11 +320,6 @@ func buildDaemonCommandLine(cfg Config, fullManifestPath string) []string {
 	if (*fsSync) {
 		daemonArgs = append(daemonArgs, "-sync")
 	}
-
-	// add the user's Unix id and group
-	u, g := initUidGid(*uid, *gid)
-	uidArgs := []string{ "-uid", u, "-gid", g }
-	daemonArgs = append(daemonArgs, uidArgs...)
 
 	if (*readOnly) {
 		daemonArgs = append(daemonArgs, "-readOnly")
@@ -360,7 +338,7 @@ func buildDaemonCommandLine(cfg Config, fullManifestPath string) []string {
 
 // We are in the parent process.
 //
-func startDaemonAndWaitForInitializationToComplete(cfg Config) {
+func startDaemonAndWaitForInitializationToComplete(cfg Config, logFile string) {
 	manifest, err := parseManifest(cfg)
 	if err != nil {
 		fmt.Printf(err.Error())
@@ -396,7 +374,6 @@ func startDaemonAndWaitForInitializationToComplete(cfg Config) {
 	// build the command line arguments for the daemon
 	daemonArgs := buildDaemonCommandLine(cfg, fullManifestPath)
 	mountCmd := exec.Command(progPath, daemonArgs...)
-	mountCmd.Env = append(os.Environ(), "ACTUAL=1")
 
 	// Start the command.
 	fmt.Println("starting fs daemon")
@@ -407,12 +384,12 @@ func startDaemonAndWaitForInitializationToComplete(cfg Config) {
 
 	// Wait for the tool to say the file system is ready.
 	fmt.Println("wait for ready")
-	status := waitForReady()
+	status := waitForReady(logFile)
 
 	if status == "error" {
 		fmt.Printf(
 			"There was an error starting the daemon, take a look at the log file (%s) for more information\n",
-			dxfuse.LogFile)
+			logFile)
 		os.Exit(1)
 	}
 	fmt.Println("Daemon started successfully")
@@ -425,11 +402,22 @@ func main() {
 	cfg := parseCmdLineArgs()
 	validateConfig(cfg)
 
-	if isActual() {
+	// check that we can open the fuse device
+	fd, err := os.OpenFile("/dev/fuse", os.O_RDWR, 0644)
+	if err != nil {
+		fmt.Printf("Unable to open fuse device\n")
+		fmt.Printf("%s\n", err.Error())
+		os.Exit(1)
+	}
+	fd.Close()
+
+	logFile := dxfuse.MakeFSBaseDir() + "/" + dxfuse.LogFile
+
+	if *daemon {
 		// This will be true -only- in the child sub-process
-		startDaemon(cfg)
+		startDaemon(cfg, logFile)
 		return
 	}
 
-	startDaemonAndWaitForInitializationToComplete(cfg)
+	startDaemonAndWaitForInitializationToComplete(cfg, logFile)
 }

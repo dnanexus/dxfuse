@@ -24,7 +24,7 @@ function teardown {
 
     echo "unmounting dxfuse"
     cd $HOME
-    sudo umount $mountpoint
+    fusermount -u $mountpoint
 
     for d in ${writeable_dirs[@]}; do
         dx rm -r $projName:/$d >& /dev/null || true
@@ -119,7 +119,7 @@ function faux_dirs {
     if [[ $verbose != "" ]]; then
         flags="-verbose 2"
     fi
-    sudo -E $dxfuse -uid $(id -u) -gid $(id -g) $flags $mountpoint dxfuse_test_data dxfuse_test_read_only ArchivedStuff
+    $dxfuse $flags $mountpoint dxfuse_test_data dxfuse_test_read_only ArchivedStuff
     sleep 1
 
     echo "faux dirs cannot be moved"

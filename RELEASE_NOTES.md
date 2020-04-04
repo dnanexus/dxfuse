@@ -1,5 +1,8 @@
 # Release Notes
 
+## v0.22
+- Use github actions for continuous integration (CI/CD)
+
 ## v0.21
 - Fixed bug that occurs when a data object has properties or tags that include the apostrophe (\`) character.
 - Simplified the filesystem start-up mechanism.
