@@ -9,9 +9,6 @@ mountpoint=$HOME/MNT
 ######################################################################
 
 main() {
-    echo "allow regular users to access fuse device"
-    sudo chmod u+rw /dev/fuse
-
     # Get all the DX environment variables, so that dxfuse can use them
     echo "loading the dx environment"
 

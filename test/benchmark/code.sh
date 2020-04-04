@@ -107,9 +107,6 @@ function measure_and_compare_upload {
 }
 
 main() {
-    echo "allow regular users to access fuse device"
-    sudo chmod u+rw /dev/fuse
-
     # Get all the DX environment variables, so that dxfuse can use them
     echo "loading the dx environment"
     source environment

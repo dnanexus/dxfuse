@@ -129,15 +129,15 @@ Build the code:
 go build -o /go/bin/dxfuse /go/src/github.com/dnanexus/dxfuse/cli/main.go
 ```
 
-Allow regular users access to the fuse device
+# Usage
+
+Allow regular users access to the fuse device on the local machine:
 ```
 chmod u+rw /dev/fuse
 ```
 
 In theory, it should be possible to use `suid` to achive this instead, but that does
 not currently work.
-
-# Usage
 
 To mount a dnanexus project `mammals` on local directory `/home/jonas/foo` do:
 ```
@@ -148,7 +148,7 @@ The bootstrap process has some asynchrony, so it could take it a
 second two to start up. It spawns a separate process for the filesystem
 server, waits for it to start, and exits. To get more information, use
 the `verbose` flag. Debugging output is written to the log, which is
-placed at `/var/log/dxfuse.log`. The maximal verbosity level is 2.
+placed at `$HOME/.dxfuse/dxfuse.log`. The maximal verbosity level is 2.
 
 ```
 dxfuse -verbose 1 MOUNT-POINT PROJECT-NAME

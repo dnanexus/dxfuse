@@ -528,9 +528,6 @@ main() {
     source environment >& /dev/null
     dxfuse="dxfuse"
 
-    echo "allow regular users to access fuse device"
-    sudo chmod u+rw /dev/fuse
-
     # clean and make fresh directories
     mkdir -p $mountpoint
 
