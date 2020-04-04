@@ -30,7 +30,7 @@ function teardown {
 
     echo "unmounting dxfuse"
     cd $HOME
-    sudo umount $mountpoint
+    fusermount -u $mountpoint
 
     if [[ $verbose != "" ]]; then
         mkdir -p out/filesystem_log
@@ -286,6 +286,9 @@ function compare_with_dx_download {
 }
 
 main() {
+    echo "allow regular users to access fuse device"
+    sudo chmod u+rw /dev/fuse
+
     # Get all the DX environment variables, so that dxfuse can use them
     echo "loading the dx environment"
 
@@ -301,7 +304,7 @@ main() {
     if [[ $verbose != "" ]]; then
         flags="-verbose 1"
     fi
-    sudo -E dxfuse -uid $(id -u) -gid $(id -g) $flags $mountpoint dxfuse_test_data
+    dxfuse $flags $mountpoint dxfuse_test_data
 
     echo "comparing symlink content"
     compare_symlink_content

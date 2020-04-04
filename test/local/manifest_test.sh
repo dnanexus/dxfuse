@@ -21,7 +21,7 @@ function teardown {
 
     echo "unmounting dxfuse"
     cd $HOME
-    sudo umount $mountpoint
+    fusermount -u $mountpoint
 }
 
 # trap any errors and cleanup
@@ -30,7 +30,7 @@ trap teardown EXIT
 function manifest_test {
     mkdir -p $mountpoint
 
-    sudo -E $dxfuse -uid $(id -u) -gid $(id -g) $mountpoint $CRNT_DIR/two_files.json
+    $dxfuse $mountpoint $CRNT_DIR/two_files.json
     sleep 1
 
     tree $mountpoint

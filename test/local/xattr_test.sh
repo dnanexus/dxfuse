@@ -1,3 +1,5 @@
+#!/bin/bash -ex
+
 ######################################################################
 # global variables
 mountpoint=${HOME}/MNT
@@ -18,7 +20,7 @@ function teardown {
 
     echo "unmounting dxfuse"
     cd $HOME
-    sudo umount $mountpoint
+    fusermount -u $mountpoint
 
     for d in ${writeable_dirs[@]}; do
         dx rm -r $projName:/$d >& /dev/null || true
@@ -86,7 +88,6 @@ function check_bat {
         echo "   expecting: $bat_family_expected"
         exit 1
     fi
-
 
     xattr -w prop.family carnivore $test_dir/bat.txt
     xattr -w prop.family mammal $test_dir/bat.txt
@@ -201,7 +202,7 @@ function xattr_test {
     if [[ $verbose != "" ]]; then
         flags="-verbose 2"
     fi
-    sudo -E $dxfuse -uid $(id -u) -gid $(id -g) $flags $mountpoint $projName
+    $dxfuse $flags $mountpoint $projName
     sleep 1
 
     tree $mountpoint/$projName/$base_dir

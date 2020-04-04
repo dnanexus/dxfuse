@@ -24,7 +24,7 @@ function teardown {
 
     echo "unmounting dxfuse"
     cd $HOME
-    sudo umount $mountpoint
+    fusermount -u $mountpoint
 
     for d in ${writeable_dirs[@]}; do
         dx rm -r $projName:/$d >& /dev/null || true
@@ -416,7 +416,7 @@ function fs_test_cases {
     if [[ $verbose != "" ]]; then
         flags="-verbose 2"
     fi
-    sudo -E $dxfuse -uid $(id -u) -gid $(id -g) $flags $mountpoint dxfuse_test_data dxfuse_test_read_only ArchivedStuff
+    $dxfuse $flags $mountpoint dxfuse_test_data dxfuse_test_read_only ArchivedStuff
     sleep 1
 
     echo "can't write to read-only project"

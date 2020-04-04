@@ -113,13 +113,9 @@ upload FILE`, and (2) `cp FILE to fuse, sync fuse`.
 To build the code from source, you'll need, at the very least, the `go` and `git` tools.
 install dependencies:
 ```
-go get github.com/google/subcommands
-go install github.com/google/subcommands
-go get golang.org/x/sync/semaphore
 go get github.com/pbnjay/memory
 go get github.com/dnanexus/dxda
-go install github.com/dnanexus/dxda
-go install github.com/dnanexus/dxda/cmd/dx-download-agent
+go get -u github.com/jacobsa/fuse
 ```
 
 Assuming the go directory is `/go`, clone the code with:
@@ -133,11 +129,19 @@ Build the code:
 go build -o /go/bin/dxfuse /go/src/github.com/dnanexus/dxfuse/cli/main.go
 ```
 
+Allow regular users access to the fuse device
+```
+chmod u+rw /dev/fuse
+```
+
+In theory, it should be possible to use `suid` to achive this instead, but that does
+not currently work.
+
 # Usage
 
 To mount a dnanexus project `mammals` on local directory `/home/jonas/foo` do:
 ```
-sudo -E dxfuse -uid $(id -u) -gid $(id -g) /home/jonas/foo mammals
+dxfuse /home/jonas/foo mammals
 ```
 
 The bootstrap process has some asynchrony, so it could take it a
@@ -147,12 +151,12 @@ the `verbose` flag. Debugging output is written to the log, which is
 placed at `/var/log/dxfuse.log`. The maximal verbosity level is 2.
 
 ```
-sudo -E dxfuse -verbose 1 MOUNT-POINT PROJECT-NAME
+dxfuse -verbose 1 MOUNT-POINT PROJECT-NAME
 ```
 
 Project ids can be used instead of project names. To mount several projects, say, `mammals`, `fish`, and `birds`, do:
 ```
-sudo -E dxfuse /home/jonas/foo mammals fish birds
+dxfuse /home/jonas/foo mammals fish birds
 ```
 
 This will create the directory hierarchy:
@@ -168,14 +172,14 @@ a link count greater than one.
 
 To stop the dxfuse process do:
 ```
-sudo umount MOUNT-POINT
+fusermount -u MOUNT-POINT
 ```
 
 There are situations where you want the background process to
 synchronously update all modified and newly created files. For example, before shutting down a machine,
 or unmounting the filesystem. This can be done by issuing the command:
 ```
-$ sudo dxfuse -sync
+$ dxfuse -sync
 ```
 
 ## Extended attributes (xattrs)

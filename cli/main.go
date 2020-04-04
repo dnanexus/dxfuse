@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"os/user"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -165,6 +166,27 @@ func waitForReady(logFile string) string {
 	return "error"
 }
 
+// get the current user Uid and Gid
+func initUidGid() (uint32, uint32) {
+	user, err := user.Current()
+	if err != nil {
+		panic(err)
+	}
+
+	// get the user ID
+	u, err := strconv.Atoi(user.Uid)
+	if err != nil {
+		panic(err)
+	}
+
+	// get the group ID
+	g, err := strconv.Atoi(user.Gid)
+	if err != nil {
+		panic(err)
+	}
+	return uint32(u), uint32(g)
+}
+
 func parseCmdLineArgs() Config {
 	if *version {
 		// print the version and exit
@@ -188,12 +210,13 @@ func parseCmdLineArgs() Config {
 	}
 	mountpoint := flag.Arg(0)
 
+	uid, gid := initUidGid()
 	options := dxfuse.Options{
 		ReadOnly: *readOnly,
 		Verbose : *verbose > 0,
 		VerboseLevel : *verbose,
-		Uid : 0,
-		Gid : 0,
+		Uid : uid,
+		Gid : gid,
 	}
 
 	dxEnv, _, err := dxda.GetDxEnvironment()

@@ -107,6 +107,9 @@ function measure_and_compare_upload {
 }
 
 main() {
+    echo "allow regular users to access fuse device"
+    sudo chmod u+rw /dev/fuse
+
     # Get all the DX environment variables, so that dxfuse can use them
     echo "loading the dx environment"
     source environment
@@ -127,7 +130,7 @@ main() {
     if [[ $verbose != "" ]]; then
         flags="-verbose 1"
     fi
-    sudo -E dxfuse -uid $(id -u) -gid $(id -g) $flags $mountpoint $DX_PROJECT_CONTEXT_ID &
+    dxfuse $flags $mountpoint $DX_PROJECT_CONTEXT_ID
     sleep 1
     projName=$(ls $mountpoint)
     echo "projName = $projName"
@@ -138,7 +141,7 @@ main() {
     measure_and_compare_upload $mountpoint/$projName benchmarks $out_dir $HOME/out/result_upload.txt
 
     echo "unmounting dxfuse"
-    sudo umount $mountpoint
+    fusermount -u $mountpoint
 
     echo "reporting results"
     if [[ -f $HOME/out/result.txt ]]; then

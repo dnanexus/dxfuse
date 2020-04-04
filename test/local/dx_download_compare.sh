@@ -23,7 +23,7 @@ function teardown {
 
     echo "unmounting dxfuse"
     cd $HOME
-    sudo umount $mountpoint
+    fusermount -u $mountpoint
 }
 
 # trap any errors and cleanup
@@ -75,7 +75,7 @@ function dx_download_compare {
     if [[ $verbose != "" ]]; then
         flags="-verbose 2"
     fi
-    sudo -E $dxfuse -uid $(id -u) -gid $(id -g) $flags $mountpoint dxfuse_test_data
+    $dxfuse $flags $mountpoint dxfuse_test_data
     sleep 1
 
     dx_download_compare_body
