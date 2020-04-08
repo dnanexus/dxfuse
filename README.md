@@ -222,11 +222,9 @@ For OSX you will need to install [OSXFUSE](http://osxfuse.github.com/). Note tha
 
 If a project appears empty, or is missing files, it could be that the dnanexus token does not have permissions for it. Try to see if you can do `dx ls YOUR_PROJECT:`.
 
-If you do not set the `uid` and `gid` options then creating hard links will fail on Linux. This is because it will fail the kernel's permissions check.
-
 There is no natural match for DNAnexus applets and workflows, so they are presented as block devices. They do not behave like block devices, but the shell colors them differently from files and directories.
 
-Mmap doesn't work all that well with FUSE ([stack overflow issue](https://stackoverflow.com/questions/46839807/mmap-no-such-device)). For example, trying to memory-map (mmap) a file with python causes an error.
+FUSE does not support memory mappings shared between processes ([explanation](https://github.com/jacobsa/fuse/issues/82)). This is the location in the [Linux kernel](https://elixir.bootlin.com/linux/v5.6/source/fs/fuse/file.c#L2306) where this is not allowed. For example, trying to memory-map (mmap) a file with python causes an error.
 
 ```
 >>> import mmap
@@ -237,7 +235,7 @@ Traceback (most recent call last):
   OSError: [Errno 19] No such device
 ```
 
-A workaround is to make the mapping private:
+If the mapping is private to a single process then it does work. For example:
 
 ```
 >>> import mmap

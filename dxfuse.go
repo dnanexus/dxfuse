@@ -152,7 +152,7 @@ func NewDxfuse(
 	databaseFile := dxfuseBaseDir + "/" + DatabaseFile
 	fsys.log("Removing old version of the database (%s)", databaseFile)
 	if err := os.RemoveAll(databaseFile); err != nil {
-		fsys.log("error removing old database %b", err)
+		fsys.log("error removing old database %s", err.Error())
 		os.Exit(1)
 	}
 
