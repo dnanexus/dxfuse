@@ -82,6 +82,17 @@ func initLog(logFile string) *os.File {
 	return f
 }
 
+func getUser() user.User {
+	user, err := user.Current()
+	if err != nil {
+		panic(err)
+	}
+	if user == nil {
+		panic("asking the OS for the user returned nil")
+	}
+	return *user
+}
+
 // Mount the filesystem:
 //  - setup the debug log to the FUSE kernel log (I think)
 func fsDaemon(
@@ -101,8 +112,12 @@ func fsDaemon(
 	logger.Printf("starting fsDaemon")
 	mountOptions := make(map[string]string)
 
-	// Allow users other than root access the filesystem
-	mountOptions["allow_other"] = ""
+	user := getUser()
+	if user.Uid == "0" {
+		// Allow users other than root to access the filesystem
+		logger.Printf("started the filesystem as root, allowing other users access")
+		mountOptions["allow_other"] = ""
+	}
 
 	// capture debug output from the FUSE subsystem
 	var fuse_logger *log.Logger
@@ -173,13 +188,10 @@ func waitForReady(logFile string) string {
 
 // get the current user Uid and Gid
 func initUidGid() (uint32, uint32) {
-	var err error
-	user, err := user.Current()
-	if err != nil {
-		panic(err)
-	}
+	user := getUser()
 
 	// by default, use the user id specified on the command line
+	var err error
 	u := *uid
 	if u == -1 {
 		// get the user ID
@@ -424,6 +436,7 @@ func main() {
 	validateConfig(cfg)
 
 	logFile := dxfuse.MakeFSBaseDir() + "/" + dxfuse.LogFile
+	fmt.Printf("The log file is located at %s\n", logFile)
 
 	if *daemon {
 		// This will be true -only- in the child sub-process

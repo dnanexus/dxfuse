@@ -2,6 +2,16 @@
 
 ## v0.22.1
 - Re-adding support for the `uid` and `gid` command line flags.
+- Allowing the older use of mounting with `sudo`, although, this is discouraged. The new command:
+```
+dxfuse MNT your_project
+```
+
+The older method:
+```
+sudo dxfuse -uid $(id -u) -gid $(id -g) MNT your_project
+```
+
 
 ## v0.22
 - Use github actions for continuous integration (CI/CD)
