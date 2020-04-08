@@ -46,8 +46,10 @@ var (
 	debugFuseFlag = flag.Bool("debugFuse", false, "Tap into FUSE debugging information")
 	daemon = flag.Bool("daemon", false, "An internal flag, do not use it")
 	fsSync = flag.Bool("sync", false, "Sychronize the filesystem and exit")
+	gid = flag.Int("gid", -1, "User group id (gid)")
 	help = flag.Bool("help", false, "display program options")
 	readOnly = flag.Bool("readOnly", false, "mount the filesystem in read-only mode")
+	uid = flag.Int("uid", -1, "User id (uid)")
 	verbose = flag.Int("verbose", 0, "Enable verbose debugging")
 	version = flag.Bool("version", false, "Print the version and exit")
 )
@@ -98,6 +100,9 @@ func fsDaemon(
 
 	logger.Printf("starting fsDaemon")
 	mountOptions := make(map[string]string)
+
+	// Allow users other than root access the filesystem
+	mountOptions["allow_other"] = ""
 
 	// capture debug output from the FUSE subsystem
 	var fuse_logger *log.Logger
@@ -168,21 +173,30 @@ func waitForReady(logFile string) string {
 
 // get the current user Uid and Gid
 func initUidGid() (uint32, uint32) {
+	var err error
 	user, err := user.Current()
 	if err != nil {
 		panic(err)
 	}
 
-	// get the user ID
-	u, err := strconv.Atoi(user.Uid)
-	if err != nil {
-		panic(err)
+	// by default, use the user id specified on the command line
+	u := *uid
+	if u == -1 {
+		// get the user ID
+		u, err = strconv.Atoi(user.Uid)
+		if err != nil {
+			panic(err)
+		}
 	}
 
+	// by default, use the group id specified on the command line
 	// get the group ID
-	g, err := strconv.Atoi(user.Gid)
-	if err != nil {
-		panic(err)
+	g := *gid
+	if g == -1 {
+		g, err = strconv.Atoi(user.Gid)
+		if err != nil {
+			panic(err)
+		}
 	}
 	return uint32(u), uint32(g)
 }
@@ -320,13 +334,20 @@ func buildDaemonCommandLine(cfg Config, fullManifestPath string) []string {
 	if (*fsSync) {
 		daemonArgs = append(daemonArgs, "-sync")
 	}
-
+	if (*gid != -1) {
+		args := []string { "-gid", strconv.FormatInt(int64(*gid), 10) }
+		daemonArgs = append(daemonArgs, args...)
+	}
 	if (*readOnly) {
 		daemonArgs = append(daemonArgs, "-readOnly")
 	}
+	if (*uid != -1) {
+		args := []string { "-uid", strconv.FormatInt(int64(*uid), 10) }
+		daemonArgs = append(daemonArgs, args...)
+	}
 	if (*verbose > 0) {
-		verboseArgs := []string { "-verbose", strconv.FormatInt(int64(*verbose), 10) }
-		daemonArgs = append(daemonArgs, verboseArgs...)
+		args := []string { "-verbose", strconv.FormatInt(int64(*verbose), 10) }
+		daemonArgs = append(daemonArgs, args...)
 	}
 
 	positionalArgs := []string{ cfg.mountpoint, fullManifestPath }

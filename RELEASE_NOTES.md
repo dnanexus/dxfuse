@@ -1,5 +1,8 @@
 # Release Notes
 
+## v0.22.1
+- Re-adding support for the `uid` and `gid` command line flags.
+
 ## v0.22
 - Use github actions for continuous integration (CI/CD)
 - Eliminate the use of `sudo` for starting up the filesystem. Normal user permissions are now sufficient to start and stop the filesystem. This assumes that the fuse device (`/dev/fuse`) is open for read/write access to regular users.
