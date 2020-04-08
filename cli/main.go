@@ -402,15 +402,6 @@ func main() {
 	cfg := parseCmdLineArgs()
 	validateConfig(cfg)
 
-	// check that we can open the fuse device
-	fd, err := os.OpenFile("/dev/fuse", os.O_RDWR, 0644)
-	if err != nil {
-		fmt.Printf("Unable to open fuse device\n")
-		fmt.Printf("%s\n", err.Error())
-		os.Exit(1)
-	}
-	fd.Close()
-
 	logFile := dxfuse.MakeFSBaseDir() + "/" + dxfuse.LogFile
 
 	if *daemon {
