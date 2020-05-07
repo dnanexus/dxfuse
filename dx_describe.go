@@ -132,9 +132,9 @@ func submit(
 	}
 
 	var payload []byte
+	var err error
 
-	// If given a valid project or container provide the scope parameter
-
+	// If given a valid project or container provide the scope parameter to reduce load on the backend
 	if strings.HasPrefix(projectId, "project-") || strings.HasPrefix(projectId, "container-")  {
 		scope := map[string]string {
 			"project" : projectId,
@@ -144,7 +144,7 @@ func submit(
 			Scope: scope,
 			DescribeOptions : describeOptions,
 		}
-		payload, err := json.Marshal(request)
+		payload, err = json.Marshal(request)
 		if err != nil {
 			return nil, err
 		}
@@ -153,7 +153,7 @@ func submit(
 			Objects : fileIds,
 			DescribeOptions : describeOptions,
 		}
-		payload, err := json.Marshal(request)
+		payload, err = json.Marshal(request)
 		if err != nil {
 			return nil, err
 		}
