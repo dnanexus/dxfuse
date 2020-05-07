@@ -65,8 +65,8 @@ type DxFolder struct {
 
 type Request struct {
 	Objects []string `json:"id"`
-	Scope map[string]
-	DescribeOptions map[string]map[string]map[string]bool `json:"describe"`
+	Scope map[string]string `json:"scope"`
+	DescribeOptions map[string]map[string]bool `json:"describe"`
 }
 
 type Reply struct {
@@ -107,8 +107,7 @@ func submit(
 	// Limit the number of fields returned, because by default we
 	// get too much information, which is a burden on the server side.
 
-	describeOptions := map[string]map[string]map[string]bool {
-		"describe" : map[string]map[string]bool {
+	describeOptions := map[string]map[string]bool {
 			"fields" : map[string]bool {
 				"id" : true,
 				"project" : true,
@@ -124,14 +123,12 @@ func submit(
 				"symlinkPath" : true,
 				"drive" : true,
 			},
-		},
 	}
+	//log.Printf("describeOpts %s", string(describeOptions))
 
 	// Limit query to project-id to reduce load
-	scope := map[string]map[string]string {
-		"scope": map[string]string {
-			"project": projectId
-		},
+	scope := map[string]string {
+		"project" : projectId,
 	}
 	request := Request{
 		Objects : fileIds,
@@ -143,7 +140,7 @@ func submit(
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("payload = %s", string(payload))
+	log.Printf("payload = %s", string(payload))
 
 	repJs, err := dxda.DxAPI(ctx, httpClient, NumRetriesDefault, dxEnv, "system/findDataObjects", string(payload))
 	if err != nil {
@@ -190,6 +187,7 @@ func DxDescribeBulkObjects(
 	dxEnv *dxda.DXEnvironment,
 	projectId string,
 	objIds []string) (map[string]DxDescribeDataObject, error) {
+
 	var gMap = make(map[string]DxDescribeDataObject)
 	if len(objIds) == 0 {
 		return gMap, nil
@@ -206,7 +204,6 @@ func DxDescribeBulkObjects(
 	}
 	// Don't forget the tail of the requests, that is smaller than the batch size
 	batches = append(batches, objIds)
-
 	for _, objIdBatch := range(batches) {
 		m, err := submit(ctx, httpClient, dxEnv, projectId, objIdBatch)
 		if err != nil {
@@ -287,6 +284,7 @@ func DxDescribeFolder(
 	dxEnv *dxda.DXEnvironment,
 	projectId string,
 	folder string) (*DxFolder, error) {
+	log.Printf("listFolder() call")
 	// The listFolder API call returns a list of object ids and folders.
 	// We could describe the objects right here, but we do that separately.
 	folderInfo, err := listFolder(ctx, httpClient, dxEnv, projectId, folder)
@@ -301,13 +299,14 @@ func DxDescribeFolder(
 			"Too many elements (%d) in a directory, the limit is %d",
 			numElementsInDir, MaxDirSize)
 	}
-
+	log.Printf("Before bulk describe call")
+	log.Printf(projectId)
 	dxObjs, err := DxDescribeBulkObjects(ctx, httpClient, dxEnv, projectId, folderInfo.objIds)
 	if err != nil {
 		log.Printf("describeBulkObjects(%v) error %s", folderInfo.objIds, err.Error())
 		return nil, err
 	}
-
+	log.Printf("After bulk describe call")
 	dataObjects := make(map[string]DxDescribeDataObject)
 	for _,oDesc := range dxObjs {
 		dataObjects[oDesc.Id] = oDesc
@@ -404,7 +403,7 @@ func DxDescribe(
 	objId string) (DxDescribeDataObject, error) {
 	var objectIds []string
 	objectIds = append(objectIds, objId)
-	m, err := DxDescribeBulkObjects(ctx, httpClient, dxEnv, objectIds)
+	m, err := DxDescribeBulkObjects(ctx, httpClient, dxEnv, "project-F58ZYf80x24b702j3ppxBpzk", objectIds)
 	if err != nil {
 		return DxDescribeDataObject{}, err
 	}
