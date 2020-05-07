@@ -303,7 +303,6 @@ func DxDescribeFolder(
 	dxEnv *dxda.DXEnvironment,
 	projectId string,
 	folder string) (*DxFolder, error) {
-	log.Printf("listFolder() call")
 	// The listFolder API call returns a list of object ids and folders.
 	// We could describe the objects right here, but we do that separately.
 	folderInfo, err := listFolder(ctx, httpClient, dxEnv, projectId, folder)
@@ -318,14 +317,11 @@ func DxDescribeFolder(
 			"Too many elements (%d) in a directory, the limit is %d",
 			numElementsInDir, MaxDirSize)
 	}
-	log.Printf("Before bulk describe call")
-	log.Printf(projectId)
 	dxObjs, err := DxDescribeBulkObjects(ctx, httpClient, dxEnv, projectId, folderInfo.objIds)
 	if err != nil {
 		log.Printf("describeBulkObjects(%v) error %s", folderInfo.objIds, err.Error())
 		return nil, err
 	}
-	log.Printf("After bulk describe call")
 	dataObjects := make(map[string]DxDescribeDataObject)
 	for _,oDesc := range dxObjs {
 		dataObjects[oDesc.Id] = oDesc
