@@ -315,7 +315,7 @@ func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnviron
 		fileIdList = append(fileIdList, fId)
 	}
 
-	dataObjs, err := DxDescribeBulkObjects(ctx, tmpHttpClient, &dxEnv, "project-F58ZYf80x24b702j3ppxBpzk", fileIdList)
+	dataObjs, err := DxDescribeBulkObjects(ctx, tmpHttpClient, &dxEnv, "", fileIdList)
 	if err != nil {
 		return err
 	}

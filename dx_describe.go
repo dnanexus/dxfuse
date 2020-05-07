@@ -63,9 +63,14 @@ type DxFolder struct {
 
 // -------------------------------------------------------------------
 
-type Request struct {
+type RequestWithScope struct {
 	Objects []string `json:"id"`
 	Scope map[string]string `json:"scope"`
+	DescribeOptions map[string]map[string]bool `json:"describe"`
+}
+
+type Request struct {
+	Objects []string `json:"id"`
 	DescribeOptions map[string]map[string]bool `json:"describe"`
 }
 
@@ -124,22 +129,35 @@ func submit(
 				"drive" : true,
 			},
 	}
-	//log.Printf("describeOpts %s", string(describeOptions))
 
-	// Limit query to project-id to reduce load
-	scope := map[string]string {
-		"project" : projectId,
-	}
-	request := Request{
-		Objects : fileIds,
-		Scope: scope,
-		DescribeOptions : describeOptions,
-	}
 	var payload []byte
-	payload, err := json.Marshal(request)
-	if err != nil {
-		return nil, err
+
+	// If given a valid project or container provide the scope parameter
+
+	if strings.HasPrefix(projectId, "project-") || strings.HasPrefix(projectId, "container-")  {
+		scope := map[string]string {
+			"project" : projectId,
+		}
+		request := RequestWithScope {
+			Objects : fileIds,
+			Scope: scope,
+			DescribeOptions : describeOptions,
+		}
+		payload, err := json.Marshal(request)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		request := Request {
+			Objects : fileIds,
+			DescribeOptions : describeOptions,
+		}
+		payload, err := json.Marshal(request)
+		if err != nil {
+			return nil, err
+		}
 	}
+
 	log.Printf("payload = %s", string(payload))
 
 	repJs, err := dxda.DxAPI(ctx, httpClient, NumRetriesDefault, dxEnv, "system/findDataObjects", string(payload))
@@ -403,7 +421,7 @@ func DxDescribe(
 	objId string) (DxDescribeDataObject, error) {
 	var objectIds []string
 	objectIds = append(objectIds, objId)
-	m, err := DxDescribeBulkObjects(ctx, httpClient, dxEnv, "project-F58ZYf80x24b702j3ppxBpzk", objectIds)
+	m, err := DxDescribeBulkObjects(ctx, httpClient, dxEnv, "", objectIds)
 	if err != nil {
 		return DxDescribeDataObject{}, err
 	}

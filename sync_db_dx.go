@@ -382,7 +382,7 @@ func (sybx *SyncDbDx) uploadFileDataAndWait(
 	if sybx.options.Verbose {
 		sybx.log("Closing %s", fileId)
 	}
-	return sybx.ops.DxFileCloseAndWait(context.TODO(), client, fileId)
+	return sybx.ops.DxFileCloseAndWait(context.TODO(), client, upReq.dfi.ProjId, fileId)
 }
 
 
