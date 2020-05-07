@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 
 	// The dxda package has the get-environment code
 	"github.com/dnanexus/dxda"
@@ -418,10 +419,11 @@ func DxDescribe(
 	ctx context.Context,
 	httpClient *http.Client,
 	dxEnv *dxda.DXEnvironment,
+	projectId string,
 	objId string) (DxDescribeDataObject, error) {
 	var objectIds []string
 	objectIds = append(objectIds, objId)
-	m, err := DxDescribeBulkObjects(ctx, httpClient, dxEnv, "", objectIds)
+	m, err := DxDescribeBulkObjects(ctx, httpClient, dxEnv, projectId, objectIds)
 	if err != nil {
 		return DxDescribeDataObject{}, err
 	}
