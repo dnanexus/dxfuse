@@ -16,35 +16,34 @@ import (
 )
 
 type ManifestFile struct {
-	ProjId  string        `json:"proj_id"`
-	FileId  string        `json:"file_id"`
-	Parent  string        `json:"parent"`
+	ProjId string `json:"proj_id"`
+	FileId string `json:"file_id"`
+	Parent string `json:"parent"`
 
 	// These may not be provided by the user. Then, we
 	// need to query DNAx for the information.
-	State         string  `json:"state,omitempty"`
-	ArchivalState string  `json:"archivalState,omitempty"`
-	Fname   string        `json:"fname,omitempty"`
-	Size    int64         `json:"size,omitempty"`
-	CtimeSeconds int64    `json:"ctime,omitempty"`
-	MtimeSeconds int64    `json:"mtime,omitempty"`
+	State         string `json:"state,omitempty"`
+	ArchivalState string `json:"archivalState,omitempty"`
+	Fname         string `json:"fname,omitempty"`
+	Size          int64  `json:"size,omitempty"`
+	CtimeSeconds  int64  `json:"ctime,omitempty"`
+	MtimeSeconds  int64  `json:"mtime,omitempty"`
 }
 
 type ManifestDir struct {
-	ProjId        string `json:"proj_id"`
-	Folder        string `json:"folder"`
-	Dirname       string `json:"dirname"`
+	ProjId  string `json:"proj_id"`
+	Folder  string `json:"folder"`
+	Dirname string `json:"dirname"`
 
 	// These may missing.
-	CtimeSeconds int64  `json:"ctime,omitempty"`
-	MtimeSeconds int64  `json:"mtime,omitempty"`
+	CtimeSeconds int64 `json:"ctime,omitempty"`
+	MtimeSeconds int64 `json:"mtime,omitempty"`
 }
 
 type Manifest struct {
-	Files        []ManifestFile  `json:"files"`
-	Directories  []ManifestDir   `json:"directories"`
+	Files       []ManifestFile `json:"files"`
+	Directories []ManifestDir  `json:"directories"`
 }
-
 
 func validateDirName(p string) error {
 	dirNameLen := len(p)
@@ -69,7 +68,7 @@ func validProject(pId string) bool {
 	return false
 }
 
-func (m *Manifest)Validate() error {
+func (m *Manifest) Validate() error {
 	for _, fl := range m.Files {
 		if !validProject(fl.ProjId) {
 			return fmt.Errorf("project has invalid ID %s", fl.ProjId)
@@ -98,7 +97,6 @@ func (m *Manifest)Validate() error {
 func (m Manifest) log(a string, args ...interface{}) {
 	LogMsg("manifest", a, args...)
 }
-
 
 func (m *Manifest) Clean() {
 	for i, _ := range m.Files {
@@ -135,7 +133,6 @@ func ReadManifest(fname string) (*Manifest, error) {
 	return m, nil
 }
 
-
 func MakeManifestFromProjectIds(
 	ctx context.Context,
 	dxEnv dxda.DXEnvironment,
@@ -165,19 +162,19 @@ func MakeManifestFromProjectIds(
 	dirs := make([]ManifestDir, 0)
 	for _, pDesc := range projDescs {
 		mstDir := ManifestDir{
-			ProjId : pDesc.Id,
-			Folder : "/",
-			Dirname : filepath.Clean("/" + pDesc.Name),
-			CtimeSeconds : pDesc.CtimeSeconds,
-			MtimeSeconds : pDesc.MtimeSeconds,
+			ProjId:       pDesc.Id,
+			Folder:       "/",
+			Dirname:      filepath.Clean("/" + pDesc.Name),
+			CtimeSeconds: pDesc.CtimeSeconds,
+			MtimeSeconds: pDesc.MtimeSeconds,
 		}
 		dirs = append(dirs, mstDir)
 	}
 
 	var emptyFiles []ManifestFile
 	manifest := &Manifest{
-		Files : emptyFiles,
-		Directories : dirs,
+		Files:       emptyFiles,
+		Directories: dirs,
 	}
 
 	if err := manifest.Validate(); err != nil {
@@ -185,7 +182,6 @@ func MakeManifestFromProjectIds(
 	}
 	return manifest, nil
 }
-
 
 // return all the parents of a directory.
 // For example:
@@ -213,14 +209,14 @@ func ancestors(p string) []string {
 type Dirs struct {
 	elems []string
 }
-func (d Dirs) Len() int { return len(d.elems) }
+
+func (d Dirs) Len() int      { return len(d.elems) }
 func (d Dirs) Swap(i, j int) { d.elems[i], d.elems[j] = d.elems[j], d.elems[i] }
 func (d Dirs) Less(i, j int) bool {
 	nI := strings.Count(d.elems[i], "/")
 	nJ := strings.Count(d.elems[j], "/")
 	return nI < nJ
 }
-
 
 // Figure out the directory structure needed to support
 // the leaf nodes. For example, if we need to create:
@@ -235,7 +231,7 @@ func (m *Manifest) DirSkeleton() ([]string, error) {
 	// record all the parents
 	for _, file := range m.Files {
 		dirpath := file.Parent
-		for _, p := range (ancestors(dirpath)) {
+		for _, p := range ancestors(dirpath) {
 			tree[p] = true
 		}
 	}
@@ -245,10 +241,10 @@ func (m *Manifest) DirSkeleton() ([]string, error) {
 	allDirs := make(map[string]bool)
 	for _, d := range m.Directories {
 		dirParent, _ := filepath.Split(d.Dirname)
-		for _, p := range (ancestors(dirParent)) {
+		for _, p := range ancestors(dirParent) {
 			tree[p] = true
 		}
-		if _, ok := allDirs[d.Dirname] ; ok {
+		if _, ok := allDirs[d.Dirname]; ok {
 			return nil, fmt.Errorf("manifest error: directory %s is used twice", d.Dirname)
 		}
 		allDirs[d.Dirname] = true
@@ -267,14 +263,14 @@ func (m *Manifest) DirSkeleton() ([]string, error) {
 		elements = append(elements, p)
 	}
 	de := Dirs{
-		elems : elements,
+		elems: elements,
 	}
 	sort.Sort(de)
 
 	// return plain strings, instead of pointers to strings
 	// do not include the root, because it already exists.
 	var retval []string
-	for _, e := range(de.elems) {
+	for _, e := range de.elems {
 		if e != "/" {
 			retval = append(retval, e)
 		}
@@ -314,10 +310,9 @@ func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnviron
 
 	log.Printf("Done mapping ids to projects")
 	for k, v := range fileIdsPerProject {
-			log.Printf(k)
-			log.Printf(strings.Join(v, ", "))
-		}
-
+		log.Printf(k)
+		log.Printf(strings.Join(v, ", "))
+	}
 
 	// fileIds := make(map[string]bool)
 	// for _, fl := range m.Files {
@@ -337,9 +332,9 @@ func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnviron
 
 	var dataObjects = make(map[string]DxDescribeDataObject)
 
-	// batch calls per project-id 
+	// batch calls per project-id
 	for projectId, fileIds := range fileIdsPerProject {
-		log.Printf(projectId)
+		log.Printf("Project-id %s", projectId)
 		dataObjs, err := DxDescribeBulkObjects(ctx, tmpHttpClient, &dxEnv, projectId, fileIds)
 		if err != nil {
 			return err
@@ -347,6 +342,11 @@ func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnviron
 		for k, v := range dataObjs {
 			dataObjs[k] = v
 		}
+	}
+	log.Printf("Data objects after describe")
+	for x, y := range dataObjects {
+		log.Printf(k)
+		log.Printf(strings.Join(v, ", "))
 	}
 
 	// fill in missing information for files
