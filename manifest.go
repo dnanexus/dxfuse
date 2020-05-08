@@ -296,6 +296,7 @@ It is a node in the middle, which is illegal.
 }
 
 func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnvironment) error {
+	log.Printf("Filling in fields!")
 	tmpHttpClient := dxda.NewHttpClient()
 
 	// Map of all the files that are missing details grouped by project-id
@@ -310,6 +311,13 @@ func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnviron
 			fileIdsPerProject[fl.ProjId] = append(fileIdsPerProject[fl.ProjId], fl.FileId)
 		}
 	}
+
+	log.Printf("Done mapping ids to projects")
+	for k, v := range fileIdsPerProject {
+			log.Printf(k)
+			log.Printf(v)
+		}
+
 
 	// fileIds := make(map[string]bool)
 	// for _, fl := range m.Files {
