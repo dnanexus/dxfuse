@@ -307,7 +307,7 @@ func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnviron
 			fl.Size == 0 ||
 			fl.CtimeSeconds == 0 ||
 			fl.MtimeSeconds == 0 {
-			fileIdsPerProject[fl.ProjId] = append(fileIds[fl.ProjId], fl.FileId)
+			fileIdsPerProject[fl.ProjId] = append(fileIdsPerProject[fl.ProjId], fl.FileId)
 		}
 	}
 
@@ -344,7 +344,7 @@ func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnviron
 	// fill in missing information for files
 	for i, _ := range m.Files {
 		fl := &m.Files[i]
-		fDesc, ok := dataObjs[fl.FileId]
+		fDesc, ok := dataObjects[fl.FileId]
 		if ok {
 			if fDesc.State != "closed" {
 				return fmt.Errorf("File %s is not closed, it is %s",
