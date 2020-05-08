@@ -345,8 +345,8 @@ func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnviron
 	}
 	log.Printf("Data objects after describe")
 	for x, y := range dataObjects {
-		log.Printf(k)
-		log.Printf(strings.Join(v, ", "))
+		log.Printf(x)
+		log.Printf(strings.Join(y, ", "))
 	}
 
 	// fill in missing information for files
