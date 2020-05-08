@@ -315,7 +315,7 @@ func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnviron
 	log.Printf("Done mapping ids to projects")
 	for k, v := range fileIdsPerProject {
 			log.Printf(k)
-			log.Printf(v)
+			log.Printf(string(v))
 		}
 
 
