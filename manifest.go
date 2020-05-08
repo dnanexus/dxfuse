@@ -307,31 +307,13 @@ func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnviron
 			fileIdsPerProject[fl.ProjId] = append(fileIdsPerProject[fl.ProjId], fl.FileId)
 		}
 	}
-
 	log.Printf("Done mapping ids to projects")
 	for k, v := range fileIdsPerProject {
 		log.Printf(k)
 		log.Printf(strings.Join(v, ", "))
 	}
 
-	// fileIds := make(map[string]bool)
-	// for _, fl := range m.Files {
-	// 	if fl.State == "" ||
-	// 		fl.ArchivalState == "" ||
-	// 		fl.Fname == "" ||
-	// 		fl.Size == 0 ||
-	// 		fl.CtimeSeconds == 0 ||
-	// 		fl.MtimeSeconds == 0 {
-	// 		fileIds[fl.FileId] = true
-	// 	}
-	// }
-	// var fileIdList []string
-	// for fId, _  := range fileIds {
-	// 	fileIdList = append(fileIdList, fId)
-	// }
-
-	var dataObjects = make(map[string]DxDescribeDataObject)
-
+	var describedObjects = make(map[string]DxDescribeDataObject)
 	// batch calls per project-id
 	for projectId, fileIds := range fileIdsPerProject {
 		log.Printf("Project-id %s", projectId)
@@ -342,18 +324,18 @@ func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnviron
 		for k, v := range dataObjs {
 			log.Printf(k)
 			log.Printf(v.State)
-			dataObjs[k] = v
+			describedObjects[k] = v
 		}
 	}
 	log.Printf("Data objects after describe")
-	for x, _ := range dataObjects {
+	for x, _ := range describedObjects {
 		log.Printf(x)
 	}
 
 	// fill in missing information for files
 	for i, _ := range m.Files {
 		fl := &m.Files[i]
-		fDesc, ok := dataObjects[fl.FileId]
+		fDesc, ok := describedObjects[fl.FileId]
 		if ok {
 			if fDesc.State != "closed" {
 				return fmt.Errorf("File %s is not closed, it is %s",
