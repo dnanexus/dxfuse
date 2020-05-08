@@ -292,7 +292,6 @@ It is a node in the middle, which is illegal.
 }
 
 func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnvironment) error {
-	log.Printf("Filling in fields!")
 	tmpHttpClient := dxda.NewHttpClient()
 
 	// Map of all the files that are missing details grouped by project-id
@@ -307,29 +306,18 @@ func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnviron
 			fileIdsPerProject[fl.ProjId] = append(fileIdsPerProject[fl.ProjId], fl.FileId)
 		}
 	}
-	log.Printf("Done mapping ids to projects")
-	for k, v := range fileIdsPerProject {
-		log.Printf(k)
-		log.Printf(strings.Join(v, ", "))
-	}
 
 	var describedObjects = make(map[string]DxDescribeDataObject)
 	// batch calls per project-id
 	for projectId, fileIds := range fileIdsPerProject {
-		log.Printf("Project-id %s", projectId)
 		dataObjs, err := DxDescribeBulkObjects(ctx, tmpHttpClient, &dxEnv, projectId, fileIds)
 		if err != nil {
 			return err
 		}
-		for k, v := range dataObjs {
-			log.Printf(k)
-			log.Printf(v.State)
-			describedObjects[k] = v
+		// Append described objects from this project-id to the flattened map of file-ids
+		for objId, objDescribe := range dataObjs {
+			describedObjects[objId] = objDescribe
 		}
-	}
-	log.Printf("Data objects after describe")
-	for x, _ := range describedObjects {
-		log.Printf(x)
 	}
 
 	// fill in missing information for files
