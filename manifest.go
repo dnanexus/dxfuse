@@ -298,8 +298,8 @@ It is a node in the middle, which is illegal.
 func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnvironment) error {
 	tmpHttpClient := dxda.NewHttpClient()
 
-	// Make a list of all the files that are missing details
-	fileIds := make(map[string]bool)
+	// Map of all the files that are missing details grouped by project-id
+	fileIdsPerProject := make(map[string][]string)
 	for _, fl := range m.Files {
 		if fl.State == "" ||
 			fl.ArchivalState == "" ||
@@ -307,17 +307,38 @@ func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnviron
 			fl.Size == 0 ||
 			fl.CtimeSeconds == 0 ||
 			fl.MtimeSeconds == 0 {
-			fileIds[fl.FileId] = true
+			fileIdsPerProject[fl.ProjId] = append(fileIds[fl.ProjId], fl.FileId)
 		}
 	}
-	var fileIdList []string
-	for fId, _  := range fileIds {
-		fileIdList = append(fileIdList, fId)
-	}
 
-	dataObjs, err := DxDescribeBulkObjects(ctx, tmpHttpClient, &dxEnv, "", fileIdList)
-	if err != nil {
-		return err
+	// fileIds := make(map[string]bool)
+	// for _, fl := range m.Files {
+	// 	if fl.State == "" ||
+	// 		fl.ArchivalState == "" ||
+	// 		fl.Fname == "" ||
+	// 		fl.Size == 0 ||
+	// 		fl.CtimeSeconds == 0 ||
+	// 		fl.MtimeSeconds == 0 {
+	// 		fileIds[fl.FileId] = true
+	// 	}
+	// }
+	// var fileIdList []string
+	// for fId, _  := range fileIds {
+	// 	fileIdList = append(fileIdList, fId)
+	// }
+
+	var dataObjects = make(map[string]DxDescribeDataObject)
+
+	// batch calls per project-id 
+	for projectId, fileIds := range fileIdsPerProject {
+		log.Printf(projectId)
+		dataObjs, err := DxDescribeBulkObjects(ctx, tmpHttpClient, &dxEnv, projectId, fileIds)
+		if err != nil {
+			return err
+		}
+		for k, v := range dataObjs {
+			dataObjs[k] = v
+		}
 	}
 
 	// fill in missing information for files
