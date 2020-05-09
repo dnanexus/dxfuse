@@ -8,8 +8,8 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
-	"os/exec"
 	"os/user"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -25,8 +25,8 @@ import (
 
 type Config struct {
 	mountpoint string
-	dxEnv      dxda.DXEnvironment
-	options    dxfuse.Options
+	dxEnv dxda.DXEnvironment
+	options dxfuse.Options
 }
 
 var progName = filepath.Base(os.Args[0])
@@ -44,14 +44,14 @@ func usage() {
 
 var (
 	debugFuseFlag = flag.Bool("debugFuse", false, "Tap into FUSE debugging information")
-	daemon        = flag.Bool("daemon", false, "An internal flag, do not use it")
-	fsSync        = flag.Bool("sync", false, "Sychronize the filesystem and exit")
-	gid           = flag.Int("gid", -1, "User group id (gid)")
-	help          = flag.Bool("help", false, "display program options")
-	readOnly      = flag.Bool("readOnly", false, "mount the filesystem in read-only mode")
-	uid           = flag.Int("uid", -1, "User id (uid)")
-	verbose       = flag.Int("verbose", 0, "Enable verbose debugging")
-	version       = flag.Bool("version", false, "Print the version and exit")
+	daemon = flag.Bool("daemon", false, "An internal flag, do not use it")
+	fsSync = flag.Bool("sync", false, "Sychronize the filesystem and exit")
+	gid = flag.Int("gid", -1, "User group id (gid)")
+	help = flag.Bool("help", false, "display program options")
+	readOnly = flag.Bool("readOnly", false, "mount the filesystem in read-only mode")
+	uid = flag.Int("uid", -1, "User id (uid)")
+	verbose = flag.Int("verbose", 0, "Enable verbose debugging")
+	version = flag.Bool("version", false, "Print the version and exit")
 )
 
 func lookupProject(dxEnv *dxda.DXEnvironment, projectIdOrName string) (string, error) {
@@ -71,7 +71,7 @@ func lookupProject(dxEnv *dxda.DXEnvironment, projectIdOrName string) (string, e
 
 func initLog(logFile string) *os.File {
 	// Redirect the log output to a file
-	f, err := os.OpenFile(logFile, os.O_RDWR|os.O_CREATE|os.O_APPEND|os.O_TRUNC, 0666)
+	f, err := os.OpenFile(logFile, os.O_RDWR | os.O_CREATE | os.O_APPEND | os.O_TRUNC, 0666)
 	if err != nil {
 		log.Fatalf("error opening file: %v", err)
 	}
@@ -129,9 +129,9 @@ func fsDaemon(
 
 	// Fuse mount
 	cfg := &fuse.MountConfig{
-		FSName:      "dxfuse",
-		ErrorLogger: logger,
-		DebugLogger: fuse_logger,
+		FSName : "dxfuse",
+		ErrorLogger : logger,
+		DebugLogger : fuse_logger,
 
 		// This option makes writes accumulate in the kernel
 		// buffers before being handed over to dxfuse for processing.
@@ -140,8 +140,8 @@ func fsDaemon(
 		//
 		// Currently, instead of dxfuse receiving every 4KB synchronously,
 		// it can get 128KB.
-		DisableWritebackCaching: false,
-		Options:                 mountOptions,
+		DisableWritebackCaching : false,
+		Options : mountOptions,
 	}
 
 	logger.Printf("mounting-dxfuse")
@@ -238,11 +238,11 @@ func parseCmdLineArgs() Config {
 
 	uid, gid := initUidGid()
 	options := dxfuse.Options{
-		ReadOnly:     *readOnly,
-		Verbose:      *verbose > 0,
-		VerboseLevel: *verbose,
-		Uid:          uid,
-		Gid:          gid,
+		ReadOnly: *readOnly,
+		Verbose : *verbose > 0,
+		VerboseLevel : *verbose,
+		Uid : uid,
+		Gid : gid,
 	}
 
 	dxEnv, _, err := dxda.GetDxEnvironment()
@@ -252,9 +252,9 @@ func parseCmdLineArgs() Config {
 	}
 
 	return Config{
-		mountpoint: mountpoint,
-		dxEnv:      dxEnv,
-		options:    options,
+		mountpoint : mountpoint,
+		dxEnv : dxEnv,
+		options : options,
 	}
 }
 
@@ -283,7 +283,6 @@ func parseManifest(cfg Config) (*dxfuse.Manifest, error) {
 		if err != nil {
 			return nil, err
 		}
-		fmt.Printf("Filling in missing fields now")
 		if err := manifest.FillInMissingFields(context.TODO(), cfg.dxEnv); err != nil {
 			return nil, err
 		}
@@ -311,6 +310,7 @@ func parseManifest(cfg Config) (*dxfuse.Manifest, error) {
 		return manifest, nil
 	}
 }
+
 
 func startDaemon(cfg Config, logFile string) {
 	// initialize the log file
@@ -340,33 +340,34 @@ func buildDaemonCommandLine(cfg Config, fullManifestPath string) []string {
 	var daemonArgs []string
 	daemonArgs = append(daemonArgs, "-daemon")
 
-	if *debugFuseFlag {
+	if (*debugFuseFlag) {
 		daemonArgs = append(daemonArgs, "-debugFuse")
 	}
-	if *fsSync {
+	if (*fsSync) {
 		daemonArgs = append(daemonArgs, "-sync")
 	}
-	if *gid != -1 {
-		args := []string{"-gid", strconv.FormatInt(int64(*gid), 10)}
+	if (*gid != -1) {
+		args := []string { "-gid", strconv.FormatInt(int64(*gid), 10) }
 		daemonArgs = append(daemonArgs, args...)
 	}
-	if *readOnly {
+	if (*readOnly) {
 		daemonArgs = append(daemonArgs, "-readOnly")
 	}
-	if *uid != -1 {
-		args := []string{"-uid", strconv.FormatInt(int64(*uid), 10)}
+	if (*uid != -1) {
+		args := []string { "-uid", strconv.FormatInt(int64(*uid), 10) }
 		daemonArgs = append(daemonArgs, args...)
 	}
-	if *verbose > 0 {
-		args := []string{"-verbose", strconv.FormatInt(int64(*verbose), 10)}
+	if (*verbose > 0) {
+		args := []string { "-verbose", strconv.FormatInt(int64(*verbose), 10) }
 		daemonArgs = append(daemonArgs, args...)
 	}
 
-	positionalArgs := []string{cfg.mountpoint, fullManifestPath}
+	positionalArgs := []string{ cfg.mountpoint, fullManifestPath }
 	daemonArgs = append(daemonArgs, positionalArgs...)
 
 	return daemonArgs
 }
+
 
 // We are in the parent process.
 //
