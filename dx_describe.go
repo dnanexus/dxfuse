@@ -20,58 +20,58 @@ const (
 // -------------------------------------------------------------------
 // Description of a DNAx data object
 type DxDescribeDataObject struct {
-	Id             string
-	ProjId         string
-	Name           string
-	State          string
-	ArchivalState  string
-	Folder         string
-	Size           int64
-	CtimeSeconds   int64
-	MtimeSeconds   int64
-	Tags           []string
-	Properties     map[string]string
-	SymlinkPath    string
+	Id            string
+	ProjId        string
+	Name          string
+	State         string
+	ArchivalState string
+	Folder        string
+	Size          int64
+	CtimeSeconds  int64
+	MtimeSeconds  int64
+	Tags          []string
+	Properties    map[string]string
+	SymlinkPath   string
 }
 
 // https://documentation.dnanexus.com/developer/api/data-containers/projects#api-method-project-xxxx-describe
 type FileUploadParameters struct {
-	MinimumPartSize      int64  `json:"minimumPartSize"`
-	MaximumPartSize      int64  `json:"maximumPartSize"`
-	EmptyLastPartAllowed bool   `json:"emptyLastPartAllowed"`
-	MaximumNumParts      int64  `json:"maximumNumParts"`
-	MaximumFileSize      int64  `json:"maximumFileSize"`
+	MinimumPartSize      int64 `json:"minimumPartSize"`
+	MaximumPartSize      int64 `json:"maximumPartSize"`
+	EmptyLastPartAllowed bool  `json:"emptyLastPartAllowed"`
+	MaximumNumParts      int64 `json:"maximumNumParts"`
+	MaximumFileSize      int64 `json:"maximumFileSize"`
 }
 
 type DxDescribePrj struct {
-	Id             string
-	Name           string
-	Region         string
-	Version        int
-	DataUsageGiB   float64
-	CtimeSeconds   int64
-	MtimeSeconds   int64
-	UploadParams   FileUploadParameters
-	Level          int // one of VIEW, UPLOAD, CONTRIBUTE, ADMINISTER
+	Id           string
+	Name         string
+	Region       string
+	Version      int
+	DataUsageGiB float64
+	CtimeSeconds int64
+	MtimeSeconds int64
+	UploadParams FileUploadParameters
+	Level        int // one of VIEW, UPLOAD, CONTRIBUTE, ADMINISTER
 }
 
 // a DNAx directory. It holds files and sub-directories.
 type DxFolder struct {
-	path  string  // Full directory name, for example: { "/A/B/C", "foo/bar/baz" }
-	dataObjects  map[string]DxDescribeDataObject
-	subdirs []string
+	path        string // Full directory name, for example: { "/A/B/C", "foo/bar/baz" }
+	dataObjects map[string]DxDescribeDataObject
+	subdirs     []string
 }
 
 // -------------------------------------------------------------------
 
 type RequestWithScope struct {
-	Objects []string `json:"id"`
-	Scope map[string]string `json:"scope"`
+	Objects         []string                   `json:"id"`
+	Scope           map[string]string          `json:"scope"`
 	DescribeOptions map[string]map[string]bool `json:"describe"`
 }
 
 type Request struct {
-	Objects []string `json:"id"`
+	Objects         []string                   `json:"id"`
 	DescribeOptions map[string]map[string]bool `json:"describe"`
 }
 
@@ -84,22 +84,22 @@ type DxDescribeRawTop struct {
 }
 
 type DxSymLink struct {
-	Url string  `json:"object"`
+	Url string `json:"object"`
 }
 
 type DxDescribeRaw struct {
-	Id               string `json:"id"`
-	ProjId           string `json:"project"`
-	Name             string `json:"name"`
-	State            string `json:"state"`
-	ArchivalState    string `json:"archivalState"`
-	Folder           string `json:"folder"`
-	CreatedMillisec  int64 `json:"created"`
-	ModifiedMillisec int64 `json:"modified"`
-	Size             int64 `json:"size"`
-	Tags             []string `json:"tags"`
+	Id               string            `json:"id"`
+	ProjId           string            `json:"project"`
+	Name             string            `json:"name"`
+	State            string            `json:"state"`
+	ArchivalState    string            `json:"archivalState"`
+	Folder           string            `json:"folder"`
+	CreatedMillisec  int64             `json:"created"`
+	ModifiedMillisec int64             `json:"modified"`
+	Size             int64             `json:"size"`
+	Tags             []string          `json:"tags"`
 	Properties       map[string]string `json:"properties"`
-	SymlinkPath     *DxSymLink `json:"symlinkPath,omitempty"`
+	SymlinkPath      *DxSymLink        `json:"symlinkPath,omitempty"`
 }
 
 // Describe a large number of file-ids in one API call.
@@ -113,45 +113,45 @@ func submit(
 	// Limit the number of fields returned, because by default we
 	// get too much information, which is a burden on the server side.
 
-	describeOptions := map[string]map[string]bool {
-			"fields" : map[string]bool {
-				"id" : true,
-				"project" : true,
-				"name" : true,
-				"state" : true,
-				"archivalState" : true,
-				"folder" : true,
-				"created" : true,
-				"modified" : true,
-				"size" : true,
-				"tags" : true,
-				"properties" : true,
-				"symlinkPath" : true,
-				"drive" : true,
-			},
+	describeOptions := map[string]map[string]bool{
+		"fields": map[string]bool{
+			"id":            true,
+			"project":       true,
+			"name":          true,
+			"state":         true,
+			"archivalState": true,
+			"folder":        true,
+			"created":       true,
+			"modified":      true,
+			"size":          true,
+			"tags":          true,
+			"properties":    true,
+			"symlinkPath":   true,
+			"drive":         true,
+		},
 	}
 
 	var payload []byte
 	var err error
 
 	// If given a valid project or container provide the scope parameter to reduce load on the backend
-	if strings.HasPrefix(projectId, "project-") || strings.HasPrefix(projectId, "container-")  {
-		scope := map[string]string {
-			"project" : projectId,
+	if strings.HasPrefix(projectId, "project-") || strings.HasPrefix(projectId, "container-") {
+		scope := map[string]string{
+			"project": projectId,
 		}
-		request := RequestWithScope {
-			Objects : fileIds,
-			Scope: scope,
-			DescribeOptions : describeOptions,
+		request := RequestWithScope{
+			Objects:         fileIds,
+			Scope:           scope,
+			DescribeOptions: describeOptions,
 		}
 		payload, err = json.Marshal(request)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		request := Request {
-			Objects : fileIds,
-			DescribeOptions : describeOptions,
+		request := Request{
+			Objects:         fileIds,
+			DescribeOptions: describeOptions,
 		}
 		payload, err = json.Marshal(request)
 		if err != nil {
@@ -159,7 +159,7 @@ func submit(
 		}
 	}
 
-	log.Printf("payload = %s", string(payload))
+	//log.Printf("payload = %s", string(payload))
 
 	repJs, err := dxda.DxAPI(ctx, httpClient, NumRetriesDefault, dxEnv, "system/findDataObjects", string(payload))
 	if err != nil {
@@ -172,7 +172,7 @@ func submit(
 	}
 
 	var files = make(map[string]DxDescribeDataObject)
-	for _, descRawTop := range(reply.Results) {
+	for _, descRawTop := range reply.Results {
 		descRaw := descRawTop.Describe
 
 		symlinkUrl := ""
@@ -181,18 +181,18 @@ func submit(
 		}
 
 		desc := DxDescribeDataObject{
-			Id :  descRaw.Id,
-			ProjId : descRaw.ProjId,
-			Name : descRaw.Name,
-			State : descRaw.State,
-			ArchivalState : descRaw.ArchivalState,
-			Folder : descRaw.Folder,
-			Size : descRaw.Size,
-			CtimeSeconds : descRaw.CreatedMillisec / 1000,
-			MtimeSeconds : descRaw.ModifiedMillisec / 1000,
-			Tags : descRaw.Tags,
-			Properties : descRaw.Properties,
-			SymlinkPath : symlinkUrl,
+			Id:            descRaw.Id,
+			ProjId:        descRaw.ProjId,
+			Name:          descRaw.Name,
+			State:         descRaw.State,
+			ArchivalState: descRaw.ArchivalState,
+			Folder:        descRaw.Folder,
+			Size:          descRaw.Size,
+			CtimeSeconds:  descRaw.CreatedMillisec / 1000,
+			MtimeSeconds:  descRaw.ModifiedMillisec / 1000,
+			Tags:          descRaw.Tags,
+			Properties:    descRaw.Properties,
+			SymlinkPath:   symlinkUrl,
 		}
 		//fmt.Printf("%v\n", desc)
 		files[desc.Id] = desc
@@ -223,7 +223,7 @@ func DxDescribeBulkObjects(
 	}
 	// Don't forget the tail of the requests, that is smaller than the batch size
 	batches = append(batches, objIds)
-	for _, objIdBatch := range(batches) {
+	for _, objIdBatch := range batches {
 		m, err := submit(ctx, httpClient, dxEnv, projectId, objIdBatch)
 		if err != nil {
 			return nil, err
@@ -238,23 +238,23 @@ func DxDescribeBulkObjects(
 }
 
 type ListFolderRequest struct {
-	Folder string `json:"folder"`
-	Only   string `json:"only"`
-	IncludeHidden bool `json:"includeHidden"`
+	Folder        string `json:"folder"`
+	Only          string `json:"only"`
+	IncludeHidden bool   `json:"includeHidden"`
 }
 
 type ListFolderResponse struct {
-	Objects []ObjInfo  `json:"objects"`
-	Folders []string   `json:"folders"`
+	Objects []ObjInfo `json:"objects"`
+	Folders []string  `json:"folders"`
 }
 
 type ObjInfo struct {
-	Id string  `json:"id"`
+	Id string `json:"id"`
 }
 
 type DxListFolder struct {
 	objIds  []string
-	subdirs  []string
+	subdirs []string
 }
 
 // Issue a /project-xxxx/listFolder API call. Get
@@ -267,9 +267,9 @@ func listFolder(
 	dir string) (*DxListFolder, error) {
 
 	request := ListFolderRequest{
-		Folder : dir,
-		Only : "all",
-		IncludeHidden : false,
+		Folder:        dir,
+		Only:          "all",
+		IncludeHidden: false,
 	}
 	var payload []byte
 	payload, err := json.Marshal(request)
@@ -277,7 +277,7 @@ func listFolder(
 		return nil, err
 	}
 	dxRequest := fmt.Sprintf("%s/listFolder", projectId)
-	repJs, err := dxda.DxAPI(ctx, httpClient, NumRetriesDefault, dxEnv, dxRequest , string(payload))
+	repJs, err := dxda.DxAPI(ctx, httpClient, NumRetriesDefault, dxEnv, dxRequest, string(payload))
 	if err != nil {
 		return nil, err
 	}
@@ -290,12 +290,11 @@ func listFolder(
 		objIds = append(objIds, objInfo.Id)
 	}
 	retval := DxListFolder{
-		objIds : objIds,
-		subdirs : reply.Folders,
+		objIds:  objIds,
+		subdirs: reply.Folders,
 	}
 	return &retval, nil
 }
-
 
 func DxDescribeFolder(
 	ctx context.Context,
@@ -323,13 +322,13 @@ func DxDescribeFolder(
 		return nil, err
 	}
 	dataObjects := make(map[string]DxDescribeDataObject)
-	for _,oDesc := range dxObjs {
+	for _, oDesc := range dxObjs {
 		dataObjects[oDesc.Id] = oDesc
 	}
 	return &DxFolder{
-		path : folder,
-		dataObjects : dataObjects,
-		subdirs : folderInfo.subdirs,
+		path:        folder,
+		dataObjects: dataObjects,
+		subdirs:     folderInfo.subdirs,
 	}, nil
 }
 
@@ -338,23 +337,27 @@ type RequestDescribeProject struct {
 }
 
 type ReplyDescribeProject struct {
-	Id               string `json:"id"`
-	Name             string `json:"name"`
-	Region           string `json:"region"`
-	Version          int    `json:"version"`
-	DataUsage        float64 `json:"dataUsage"`
-	CreatedMillisec  int64 `json:"created"`
-	ModifiedMillisec int64 `json:"modified"`
-	UploadParams     FileUploadParameters  `json:"fileUploadParameters"`
-	Level            string `json:"level"`
+	Id               string               `json:"id"`
+	Name             string               `json:"name"`
+	Region           string               `json:"region"`
+	Version          int                  `json:"version"`
+	DataUsage        float64              `json:"dataUsage"`
+	CreatedMillisec  int64                `json:"created"`
+	ModifiedMillisec int64                `json:"modified"`
+	UploadParams     FileUploadParameters `json:"fileUploadParameters"`
+	Level            string               `json:"level"`
 }
 
 func projectPermissionsToInt(perm string) int {
 	switch perm {
-	case "VIEW": return PERM_VIEW
-	case "UPLOAD": return PERM_UPLOAD
-	case "CONTRIBUTE": return PERM_CONTRIBUTE
-	case "ADMINISTER": return PERM_ADMINISTER
+	case "VIEW":
+		return PERM_VIEW
+	case "UPLOAD":
+		return PERM_UPLOAD
+	case "CONTRIBUTE":
+		return PERM_CONTRIBUTE
+	case "ADMINISTER":
+		return PERM_ADMINISTER
 	}
 
 	log.Panicf("Unknown project permission %s", perm)
@@ -368,16 +371,16 @@ func DxDescribeProject(
 	projectId string) (*DxDescribePrj, error) {
 
 	var request RequestDescribeProject
-	request.Fields = map[string]bool {
-		"id" : true,
-		"name" : true,
-		"region" : true,
-		"version" : true,
-		"dataUsage" : true,
-		"created" : true,
-		"modified" : true,
-		"fileUploadParameters" : true,
-		"level" : true,
+	request.Fields = map[string]bool{
+		"id":                   true,
+		"name":                 true,
+		"region":               true,
+		"version":              true,
+		"dataUsage":            true,
+		"created":              true,
+		"modified":             true,
+		"fileUploadParameters": true,
+		"level":                true,
 	}
 	var payload []byte
 	payload, err := json.Marshal(request)
@@ -397,15 +400,15 @@ func DxDescribeProject(
 	}
 
 	prj := DxDescribePrj{
-		Id :      reply.Id,
-		Name :    reply.Name,
-		Region :  reply.Region,
-		Version : reply.Version,
-		DataUsageGiB : reply.DataUsage,
-		CtimeSeconds : reply.CreatedMillisec / 1000,
-		MtimeSeconds : reply.ModifiedMillisec/ 1000,
-		UploadParams : reply.UploadParams,
-		Level :        projectPermissionsToInt(reply.Level),
+		Id:           reply.Id,
+		Name:         reply.Name,
+		Region:       reply.Region,
+		Version:      reply.Version,
+		DataUsageGiB: reply.DataUsage,
+		CtimeSeconds: reply.CreatedMillisec / 1000,
+		MtimeSeconds: reply.ModifiedMillisec / 1000,
+		UploadParams: reply.UploadParams,
+		Level:        projectPermissionsToInt(reply.Level),
 	}
 	return &prj, nil
 }
