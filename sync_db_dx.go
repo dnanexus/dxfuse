@@ -382,7 +382,7 @@ func (sybx *SyncDbDx) uploadFileDataAndWait(
 	if sybx.options.Verbose {
 		sybx.log("Closing %s", fileId)
 	}
-	return sybx.ops.DxFileCloseAndWait(context.TODO(), client, fileId)
+	return sybx.ops.DxFileCloseAndWait(context.TODO(), client, upReq.dfi.ProjId, fileId)
 }
 
 
@@ -449,7 +449,7 @@ func (sybx *SyncDbDx) updateFileData(
 func (sybx *SyncDbDx) updateFileAttributes(client *http.Client, dfi DirtyFileInfo) error {
 	// describe the object state on the platform. The properties/tags have
 	// changed.
-	fDesc, err := DxDescribe(context.TODO(), client, &sybx.dxEnv, dfi.Id)
+	fDesc, err := DxDescribe(context.TODO(), client, &sybx.dxEnv, dfi.ProjId, dfi.Id)
 	if err != nil {
 		sybx.log(err.Error())
 		sybx.log("Failed ot describe file %v", dfi)

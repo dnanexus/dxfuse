@@ -231,6 +231,7 @@ func (ops *DxOps) DxFileNew(
 func (ops *DxOps) DxFileCloseAndWait(
 	ctx context.Context,
 	httpClient *http.Client,
+	projectId string,
 	fid string) error {
 	if ops.options.Verbose {
 		ops.log("file close-and-wait %s", fid)
@@ -251,7 +252,7 @@ func (ops *DxOps) DxFileCloseAndWait(
 	start := time.Now()
 	deadline := start.Add(fileCloseMaxWaitTime)
         for true {
-		fDesc, err := DxDescribe(ctx, httpClient, &ops.dxEnv, fid)
+		fDesc, err := DxDescribe(ctx, httpClient, &ops.dxEnv, projectId, fid)
 		if err != nil {
 			return err
 		}

@@ -120,7 +120,7 @@ def run_local_test():
     try:
         print("running local tests")
         p = get_script_path()
-        cmd = ["/bin/bash", p + "/local/local.sh"]
+        cmd = ["/bin/bash", p + "/../test/local/local.sh"]
         subprocess.check_call(cmd, stderr=subprocess.STDOUT)
     except subprocess.CalledProcessError as e:
         msg = ""
