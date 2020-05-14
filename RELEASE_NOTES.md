@@ -1,5 +1,9 @@
 # Release Notes
 
+## v0.22.2
+- Use `/system/findDataObjects` route for bulk object describe calls, this significantly improves performance
+ when the user has access to many projects.
+
 ## v0.22.1
 - Re-adding support for the `uid` and `gid` command line flags.
 - Allowing the older use of mounting with `sudo`, although, this is discouraged. The new command:
