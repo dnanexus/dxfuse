@@ -116,6 +116,7 @@ install dependencies:
 go get github.com/pbnjay/memory
 go get github.com/dnanexus/dxda
 go get -u github.com/jacobsa/fuse
+go get golang.org/x/sync/semaphore
 ```
 
 Assuming the go directory is `/go`, clone the code with:
