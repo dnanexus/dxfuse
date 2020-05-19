@@ -51,6 +51,7 @@ jobs:
           go get github.com/pbnjay/memory
           go get github.com/dnanexus/dxda
           go get -u github.com/jacobsa/fuse
+          go get golang.org/x/sync/semaphore
 
           mkdir -p /go/src/github.com/dnanexus
           cp -r $GITHUB_WORKSPACE /go/src/github.com/dnanexus

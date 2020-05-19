@@ -27,7 +27,7 @@ func (client *CmdClient) Sync() {
 	var reply bool
 	err = rpcClient.Call("CmdServerBox.GetLine", "sync", &reply)
 	if err != nil {
-		fmt.Printf("sync error: %s", err.Error())
+		fmt.Printf("sync error: %s\n", err.Error())
 		os.Exit(1)
 	}
 }
