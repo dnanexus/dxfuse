@@ -1,0 +1,69 @@
+name : Build and upload release packages
+on:
+  release:
+    types:
+      - created
+
+jobs:
+  linux:
+    name: Linux build
+    runs-on: ubuntu-18.04
+    env:
+        GOOS: linux
+        GOARCH: amd64
+        CGO_ENABLED: 1
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-go@v2
+        with:
+          go-version: '^1.14.2'
+      - name: Build Linux executable
+        run: |
+          set -x
+          go build -o dxfuse-linux cli/main.go
+          chmod +x dxfuse-linux
+      - name: Upload artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: dxfuse-linux
+          path: ./dxfuse-linux
+      - name: Upload release asset
+        uses: actions/upload-release-asset@v1.0.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: ./dxfuse-linux
+          asset_name: dxfuse-linux
+          asset_content_type: binary/octet-stream
+  macos:
+    name: Macos build
+    runs-on: macos-10.15
+    env:
+        GOOS: darwin
+        GOARCH: amd64
+        CGO_ENABLED: 1
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-go@v2
+        with:
+          go-version: '^1.14.2'
+      - name: Build Macos executable
+        run: |
+          set -x
+          go build -o dxfuse-macos cli/main.go
+          chmod +x dxfuse-macos
+      - name: Upload artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: dxfuse-macos
+          path: ./dxfuse-macos
+      - name: Upload release asset
+        uses: actions/upload-release-asset@v1.0.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: ./dxfuse-macos
+          asset_name: dxfuse-macos
+          asset_content_type: binary/octet-stream

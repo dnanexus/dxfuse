@@ -1,4 +1,4 @@
-name : Master Workflow
+name : Tests
 on:
   push:
     branches:
@@ -10,23 +10,23 @@ on:
 
 jobs:
   test:
-    name: Test
+    name: Build and test linux
     runs-on: ubuntu-18.04
-
     steps:
       - uses: actions/checkout@v2
+      - uses: actions/setup-go@v2
+        with:
+          go-version: '^1.14.2'
 
       - name: Install & build
-        env:
-          GOPATH :  "/go"
         run: |
+          set -x
+          pwd
           sudo apt-get update
-
           sudo apt-get install -y apt-utils make \
           wget git build-essential apt-transport-https \
           openssl libssl-dev zip unzip libffi-dev \
           python python-pip python-dev
-
 
           # Install printing with colors python package
           pip install setuptools wheel
@@ -37,25 +37,7 @@ jobs:
           # I have no idea why.
           pip install dxpy
 
-          # setup golang directory
-          sudo mkdir -p /go
-          sudo chown $(id -u):$(id -g) -R /go
-
-          # install golang
-          wget https://dl.google.com/go/go1.14.1.linux-amd64.tar.gz
-          sudo tar -C /usr/local -xzf go1.14.1.linux-amd64.tar.gz
-          export PATH="$PATH:/usr/local/go/bin/"
-
-          go version
-          # Install go packages
-          go get github.com/pbnjay/memory
-          go get github.com/dnanexus/dxda
-          go get -u github.com/jacobsa/fuse
-          go get golang.org/x/sync/semaphore
-
-          mkdir -p /go/src/github.com/dnanexus
-          cp -r $GITHUB_WORKSPACE /go/src/github.com/dnanexus
-          go build -o /go/bin/dxfuse /go/src/github.com/dnanexus/dxfuse/cli/main.go
+          go build -o dxfuse cli/main.go
 
       - name: Login to dnanexus
         env:
@@ -66,18 +48,23 @@ jobs:
           dx login --staging --token $DX_TOKEN --noprojects
           dx select dxfuse_test_data
 
-      - name: Build the tests
-        env:
-          GOPATH :  "/go"
-        run: |
-          export PATH="$PATH:$HOME/.local/bin"
-          cd /go/src/github.com/dnanexus/dxfuse/test
-          make
-
       - name: Run the tests
-        env:
-          GOPATH :  "/go"
         run: |
           export PATH="$PATH:$HOME/.local/bin"
-          cd /go/src/github.com/dnanexus/dxfuse/
           ./scripts/run_tests.py --test correct --size large
+  macos:
+    name: Macos build
+    runs-on: macos-10.15
+    env:
+        GOOS: darwin
+        GOARCH: amd64
+        CGO_ENABLED: 1
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-go@v2
+        with:
+          go-version: '^1.14.2'
+      - name: Install & build
+        run: |
+          set -x
+          go build -o dxfuse-macos cli/main.go

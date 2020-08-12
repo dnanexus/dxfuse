@@ -13,46 +13,46 @@ import (
 )
 
 const (
-	KiB                   = 1024
-	MiB                   = 1024 * KiB
-	GiB                   = 1024 * MiB
+	KiB = 1024
+	MiB = 1024 * KiB
+	GiB = 1024 * MiB
 )
 const (
-	CreatedFilesDir     = "created_files"
-	DatabaseFile        = "metadata.db"
-	LogFile             = "dxfuse.log"
+	CreatedFilesDir = "created_files"
+	DatabaseFile    = "metadata.db"
+	LogFile         = "dxfuse.log"
 )
 const (
-	HttpClientPoolSize  = 4
+	HttpClientPoolSize        = 4
 	FileWriteInactivityThresh = 5 * time.Minute
-	WritableFileSizeLimit = 16 * MiB
-	MaxDirSize          = 10 * 1000
-	MaxNumFileHandles   = 1000 * 1000
-	NumRetriesDefault   = 3
-	Version             = "v0.22.2"
+	WritableFileSizeLimit     = 16 * MiB
+	MaxDirSize                = 10 * 1000
+	MaxNumFileHandles         = 1000 * 1000
+	NumRetriesDefault         = 3
+	Version                   = "v0.22.3"
 )
 const (
-	InodeInvalid       = 0
-	InodeRoot          = fuseops.RootInodeID  // This is an OS constant
+	InodeInvalid = 0
+	InodeRoot    = fuseops.RootInodeID // This is an OS constant
 )
 const (
 	// It turns out that in order for regular users to be able to create file,
 	// we need to use 777 permissions for directories.
-	dirReadOnlyMode = 0555 | os.ModeDir
-	dirReadWriteMode = 0777 | os.ModeDir
-	fileReadOnlyMode = 0444
+	dirReadOnlyMode   = 0555 | os.ModeDir
+	dirReadWriteMode  = 0777 | os.ModeDir
+	fileReadOnlyMode  = 0444
 	fileReadWriteMode = 0644
 )
 const (
 	// flags for writing files to disk
-	DIRTY_FILES_ALL = 14       // all modified files
-	DIRTY_FILES_INACTIVE = 15  // only files there were unmodified recently
+	DIRTY_FILES_ALL      = 14 // all modified files
+	DIRTY_FILES_INACTIVE = 15 // only files there were unmodified recently
 )
 
 const (
 	// Permissions
-	PERM_VIEW = 1
-	PERM_UPLOAD = 2
+	PERM_VIEW       = 1
+	PERM_UPLOAD     = 2
 	PERM_CONTRIBUTE = 3
 	PERM_ADMINISTER = 4
 )
@@ -65,13 +65,12 @@ type DxDownloadURL struct {
 }
 
 type Options struct {
-	ReadOnly            bool
-	Verbose             bool
-	VerboseLevel        int
-	Uid                 uint32
-	Gid                 uint32
+	ReadOnly     bool
+	Verbose      bool
+	VerboseLevel int
+	Uid          uint32
+	Gid          uint32
 }
-
 
 // A node is a generalization over files and directories
 type Node interface {
@@ -79,26 +78,25 @@ type Node interface {
 	GetAttrs() fuseops.InodeAttributes
 }
 
-
 // directories
 type Dir struct {
-	Parent      string  // the parent directory, used for debugging
-	Dname       string  // This is the last part of the full path
-	FullPath    string // combine parent and dname, then normalize
-	Inode       int64
-	Ctime       time.Time // DNAx does not record times per directory.
-	Mtime       time.Time // we use the project creation time, and mtime as an approximation.
-	Mode        os.FileMode  // uint32
-	Uid         uint32
-	Gid         uint32
+	Parent   string // the parent directory, used for debugging
+	Dname    string // This is the last part of the full path
+	FullPath string // combine parent and dname, then normalize
+	Inode    int64
+	Ctime    time.Time   // DNAx does not record times per directory.
+	Mtime    time.Time   // we use the project creation time, and mtime as an approximation.
+	Mode     os.FileMode // uint32
+	Uid      uint32
+	Gid      uint32
 
 	// extra information, used internally
-	ProjId      string
-	ProjFolder  string
-	Populated   bool
+	ProjId     string
+	ProjFolder string
+	Populated  bool
 
 	// is this a faux dir?
-	faux        bool
+	faux bool
 }
 
 func (d Dir) GetAttrs() (a fuseops.InodeAttributes) {
@@ -117,16 +115,15 @@ func (d Dir) GetInode() fuseops.InodeID {
 	return fuseops.InodeID(d.Inode)
 }
 
-
 // Kinds of files
 const (
-	FK_Regular = 10
-	FK_Symlink = 11
-	FK_Applet = 12
+	FK_Regular  = 10
+	FK_Symlink  = 11
+	FK_Applet   = 12
 	FK_Workflow = 13
-	FK_Record = 14
+	FK_Record   = 14
 	FK_Database = 15
-	FK_Other = 16
+	FK_Other    = 16
 )
 
 // A Unix file can stand for any DNAx data object. For example, it could be a workflow or an applet.
@@ -135,39 +132,39 @@ const (
 // Note: this struct is immutable by convention. The up-to-date data is always on the database,
 // not in memory.
 type File struct {
-	Kind       int     // Kind of object this is
-	Id         string  // Required to build a download URL
-	ProjId     string  // Note: this could be a container
+	Kind   int    // Kind of object this is
+	Id     string // Required to build a download URL
+	ProjId string // Note: this could be a container
 
 	// One of {open, closing, closed}.
 	// Closed is the only state where the file can be read
-	State      string
+	State string
 
 	// One of {live, archival, archived, unarchiving}.
 	// Live is the only state where the file can be read.
 	ArchivalState string
 
-	Name       string
-	Size       int64
-	Inode      int64
-	Ctime      time.Time
-	Mtime      time.Time
-	Mode       os.FileMode  // uint32
-	Uid        uint32
-	Gid        uint32
+	Name  string
+	Size  int64
+	Inode int64
+	Ctime time.Time
+	Mtime time.Time
+	Mode  os.FileMode // uint32
+	Uid   uint32
+	Gid   uint32
 
 	// tags and properties
 	Tags       []string
 	Properties map[string]string
 
 	// for a symlink, it holds the path.
-	Symlink   string
+	Symlink string
 
 	// For a regular file, a path to a local copy (if any).
 	LocalPath string
 
 	// is the file modified
-	dirtyData bool
+	dirtyData     bool
 	dirtyMetadata bool
 }
 
@@ -189,11 +186,11 @@ func (f File) GetInode() fuseops.InodeID {
 
 // A file that is scheduled for removal
 type DeadFile struct {
-	Kind       int     // Kind of object this is
-	Id         string  // Required to build a download URL
-	ProjId     string  // Note: this could be a container
-	Inode      int64
-	LocalPath  string
+	Kind      int    // Kind of object this is
+	Id        string // Required to build a download URL
+	ProjId    string // Note: this could be a container
+	Inode     int64
+	LocalPath string
 }
 
 // Information required to upload file data to the platform.
@@ -208,16 +205,16 @@ type DirtyFileInfo struct {
 	dirtyMetadata bool
 
 	// will be "" for files created locally, and not uploaded yet
-	Id            string
-	FileSize      int64
-	Mtime         int64
-	LocalPath     string
-	Tags          []string
-	Properties    map[string]string
-	Name          string
-	Directory     string
-	ProjFolder    string
-	ProjId        string
+	Id         string
+	FileSize   int64
+	Mtime      int64
+	LocalPath  string
+	Tags       []string
+	Properties map[string]string
+	Name       string
+	Directory  string
+	ProjFolder string
+	ProjId     string
 }
 
 // A handle used when operating on a filesystem
@@ -225,7 +222,7 @@ type DirtyFileInfo struct {
 type OpHandle struct {
 	httpClient *http.Client
 	txn        *sql.Tx
-	err         error
+	err        error
 }
 
 func (oph *OpHandle) RecordError(err error) error {
@@ -236,31 +233,31 @@ func (oph *OpHandle) RecordError(err error) error {
 // Utility functions
 
 func MaxInt64(x, y int64) int64 {
-    if x < y {
-        return y
-    }
-    return x
+	if x < y {
+		return y
+	}
+	return x
 }
 
 func MinInt64(x, y int64) int64 {
-    if x > y {
-        return y
-    }
-    return x
+	if x > y {
+		return y
+	}
+	return x
 }
 
 func MaxInt(x, y int) int {
-    if x < y {
-        return y
-    }
-    return x
+	if x < y {
+		return y
+	}
+	return x
 }
 
 func MinInt(x, y int) int {
-    if x > y {
-        return y
-    }
-    return x
+	if x > y {
+		return y
+	}
+	return x
 }
 
 // convert time in seconds since 1-Jan 1970, to the equivalent
@@ -280,13 +277,12 @@ func LogMsg(moduleName string, a string, args ...interface{}) {
 	log.Printf("%s %s: %s", Time2string(now), moduleName, msg)
 }
 
-
 //
 // 1024   => 1KB
 // 10240  => 10KB
 // 1100000 => 1MB
 func BytesToString(numBytes int64) string {
-	byteModifier := []string {"B", "KB", "MB", "GB", "TB", "EB", "ZB" }
+	byteModifier := []string{"B", "KB", "MB", "GB", "TB", "EB", "ZB"}
 
 	digits := make([]int, 0)
 	for numBytes > 0 {
