@@ -49,16 +49,7 @@ jobs:
           dx login --staging --token $DX_TOKEN --noprojects
           dx select dxfuse_test_data
 
-      - name: Build the tests
-        env:
-          GOPATH :  "/go"
-        run: |
-          export PATH="$PATH:$HOME/.local/bin"
-          cd test
-          make
-
       - name: Run the tests
         run: |
           export PATH="$PATH:$HOME/.local/bin"
-          cd /go/src/github.com/dnanexus/dxfuse/
           ./scripts/run_tests.py --test correct --size large
