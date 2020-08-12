@@ -111,23 +111,10 @@ upload FILE`, and (2) `cp FILE to fuse, sync fuse`.
 # Building
 
 To build the code from source, you'll need, at the very least, the `go` and `git` tools.
-install dependencies:
 ```
-go get github.com/pbnjay/memory
-go get github.com/dnanexus/dxda
-go get -u github.com/jacobsa/fuse
-go get golang.org/x/sync/semaphore
-```
-
-Assuming the go directory is `/go`, clone the code with:
-```
-cd /go/src/github.com/dnanexus/dxfuse
 git clone git@github.com:dnanexus/dxfuse.git
-```
-
-Build the code:
-```
-go build -o /go/bin/dxfuse /go/src/github.com/dnanexus/dxfuse/cli/main.go
+cd dxfuse
+go build -o dxfuse cli/main.go
 ```
 
 # Usage
