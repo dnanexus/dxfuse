@@ -1,4 +1,4 @@
-name : Master Workflow
+name : Tests
 on:
   push:
     branches:
@@ -10,7 +10,7 @@ on:
 
 jobs:
   test:
-    name: Test
+    name: Build and test linux
     runs-on: ubuntu-18.04
     steps:
       - uses: actions/checkout@v2
@@ -52,3 +52,19 @@ jobs:
         run: |
           export PATH="$PATH:$HOME/.local/bin"
           ./scripts/run_tests.py --test correct --size large
+  macos:
+    name: Macos build
+    runs-on: macos-10.15
+    env:
+        GOOS: darwin
+        GOARCH: amd64
+        CGO_ENABLED: 1
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-go@v2
+        with:
+          go-version: '^1.14.2'
+      - name: Install & build
+        run: |
+          set -x
+          go build -o dxfuse-macos cli/main.go
