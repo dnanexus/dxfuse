@@ -1,0 +1,52 @@
+name : Build release artifacts
+on:
+  push:
+    branches:
+      - DEVEX-1756-gha
+jobs:
+  linux:
+    name: Linux build
+    runs-on: ubuntu-18.04
+    env:
+        GOOS: linux
+        GOARCH: amd64
+        CGO_ENABLED: 1
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-go@v2
+        with:
+          go-version: '^1.14.2'
+      - name: Install & build
+        run: |
+          set -x
+          go build -o dxfuse-linux cli/main.go
+          chmod +x dxfuse-linux
+          ls -l
+      - name: Upload artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: dxfuse-linux
+          path: ./dxfuse-linux
+  macos:
+    name: Macos build
+    runs-on: ubuntu-18.04
+    env:
+        GOOS: darwin
+        GOARCH: amd64
+        CGO_ENABLED: 1
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-go@v2
+        with:
+          go-version: '^1.14.2'
+      - name: Install & build
+        run: |
+          set -x
+          go build -o dxfuse-macos cli/main.go
+          chmod +x dxfuse-macos
+          ls -l
+      - name: Upload artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: dxfuse-macos
+          path: ./dxfuse-macos

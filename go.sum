@@ -4,8 +4,6 @@ github.com/PuerkitoBio/goquery v1.5.1/go.mod h1:GsLWisAFVj4WgDibEWF4pvYnkVQBpKBK
 github.com/andybalholm/cascadia v1.1.0/go.mod h1:GsXiBklL0woXo1j/WYWtSYYC4ouU9PqHO0sqidkEA4Y=
 github.com/dnanexus/dxda v0.5.1 h1:bDzP08Q5v/TiHWjl+rixgvmecmgeY0NmpWgwo5l3Fio=
 github.com/dnanexus/dxda v0.5.1/go.mod h1:Nllx9MZtLqeTGA7crgn/MtU0j5XlZ6zb+akPgRdd1ag=
-github.com/dnanexus/dxfuse v0.22.3 h1:22pMzhksZqW5kS/Frjbt7qvcygLyvU+joB4nCKjDymM=
-github.com/dnanexus/dxfuse v0.22.3/go.mod h1:Q/f8WWXBUQ19uNshgtGKBphrP7GRwwRInB3RaZjbsLs=
 github.com/go-gl/glfw/v3.3/glfw v0.0.0-20200222043503-6f7a984d4dc4/go.mod h1:tQ2UAYgL5IevRw8kRxooKSPJfGvJ9fJQFa0TUsXzTg8=
 github.com/google/subcommands v1.2.0/go.mod h1:ZjhPrFU+Olkh9WazFPsl27BQ4UPiG37m3yTrtFlrHVk=
 github.com/jacobsa/fuse v0.0.0-20200706075950-f8927095af03 h1:sRdTE2abfdMznz2TiNxKVgqAYsgtjRu7JOHvzVKs0mo=
