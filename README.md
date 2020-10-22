@@ -112,7 +112,7 @@ upload FILE`, and (2) `cp FILE to fuse, sync fuse`.
 
 To build the code from source, you'll need, at the very least, the `go` and `git` tools.
 ```
-git clone git@github.com:dnanexus/dxfuse.git
+git clone https://github.com/dnanexus/dxfuse.git
 cd dxfuse
 go build -o dxfuse cli/main.go
 ```
