@@ -38,7 +38,7 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "options:\n")
 	// Hide experimental options
 	flag.VisitAll(func(f *flag.Flag) {
-		if f.Name == "readWrite" || f.Name == "daemon" {
+		if f.Name == "readOnly" || f.Name == "readWrite" || f.Name == "daemon" {
 			return
 		}
 		name, usage := flag.UnquoteUsage(f)
@@ -54,6 +54,7 @@ var (
 	daemon        = flag.Bool("daemon", false, "An internal flag, do not use it")
 	fsSync        = flag.Bool("sync", false, "Sychronize the filesystem and exit")
 	help          = flag.Bool("help", false, "display program options")
+	readOnly      = flag.Bool("readOnly", true, "DEPRECATED, now the default behavior. Mount the filesystem in read-only mode")
 	readWrite     = flag.Bool("readWrite", false, "mount the filesystem in read-write mode (Experimental, not recommended), default is read-only")
 	uid           = flag.Int("uid", -1, "User id (uid)")
 	gid           = flag.Int("gid", -1, "User group id (gid)")
