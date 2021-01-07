@@ -357,8 +357,8 @@ func buildDaemonCommandLine(cfg Config, fullManifestPath string) []string {
 		args := []string{"-gid", strconv.FormatInt(int64(*gid), 10)}
 		daemonArgs = append(daemonArgs, args...)
 	}
-	if !*readWrite {
-		daemonArgs = append(daemonArgs, "-readOnly")
+	if *readWrite {
+		daemonArgs = append(daemonArgs, "-readWrite")
 	}
 	if *uid != -1 {
 		args := []string{"-uid", strconv.FormatInt(int64(*uid), 10)}
@@ -440,7 +440,6 @@ func main() {
 	flag.Parse()
 	cfg := parseCmdLineArgs()
 	validateConfig(cfg)
-
 	logFile := dxfuse.MakeFSBaseDir() + "/" + dxfuse.LogFile
 	fmt.Printf("The log file is located at %s\n", logFile)
 
