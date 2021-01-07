@@ -236,6 +236,21 @@ func parseCmdLineArgs() Config {
 		usage()
 		os.Exit(0)
 	}
+	// -readOnly and -readWrite flags are mutually exclusive
+	readOnlyFlagSet := false
+	readWriteFlagSet := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "readOnly" {
+			readOnlyFlagSet = true
+		} else if f.Name == "readWrite" {
+			readWriteFlagSet = true
+		}
+	})
+	if readWriteFlagSet && readOnlyFlagSet {
+		fmt.Printf("Cannot provide both -readOnly and -readWrite flags\n")
+		usage()
+		os.Exit(2)
+	}
 
 	numArgs := flag.NArg()
 	if numArgs < 2 {
