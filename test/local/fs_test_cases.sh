@@ -2,7 +2,7 @@
 ## constants
 
 projName="dxfuse_test_data"
-dxfuse="$GOPATH/bin/dxfuse -readWrite"
+dxfuse="$GOPATH/bin/dxfuse"
 dxDirOnProject="mini"
 baseDir=$HOME/dxfuse_test
 mountpoint=${baseDir}/MNT

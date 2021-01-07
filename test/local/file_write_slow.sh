@@ -2,7 +2,7 @@
 ## constants
 
 projName="dxfuse_test_data"
-dxfuse="$GOPATH/bin/dxfuse -readWrite"
+dxfuse="$GOPATH/bin/dxfuse"
 baseDir=$HOME/dxfuse_test
 mountpoint=${baseDir}/MNT
 
@@ -155,9 +155,9 @@ function file_write_slow {
 
     # Start the dxfuse daemon in the background, and wait for it to initilize.
     echo "Mounting dxfuse"
-    flags=""
+    flags="-readWrite"
     if [[ $verbose != "" ]]; then
-        flags="-verbose 2"
+        flags="$flags -verbose 2"
     fi
     $dxfuse $flags $mountpoint dxfuse_test_data
     sleep 1
