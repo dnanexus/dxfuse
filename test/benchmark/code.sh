@@ -123,9 +123,9 @@ main() {
     # download with dxfuse
     # Start the dxfuse daemon in the background, and wait for it to initilize.
     echo "Mounting dxfuse"
-    flags=""
+    flags="-readWrite"
     if [[ $verbose != "" ]]; then
-        flags="-verbose 1"
+        flags="$flags -verbose 1"
     fi
     dxfuse $flags $mountpoint $DX_PROJECT_CONTEXT_ID
     sleep 1

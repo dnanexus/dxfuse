@@ -115,9 +115,9 @@ function faux_dirs {
 
     # Start the dxfuse daemon in the background, and wait for it to initilize.
     echo "Mounting dxfuse"
-    flags=""
+    flags="-readWrite"
     if [[ $verbose != "" ]]; then
-        flags="-verbose 2"
+        flags="$flags -verbose 2"
     fi
     $dxfuse $flags $mountpoint dxfuse_test_data dxfuse_test_read_only ArchivedStuff
     sleep 1

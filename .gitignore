@@ -3,3 +3,4 @@ __pycache__
 ENV
 cmd_results.txt
 diff.txt
+dxfuse
