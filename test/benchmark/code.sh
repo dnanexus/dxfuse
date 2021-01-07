@@ -127,7 +127,7 @@ main() {
     if [[ $verbose != "" ]]; then
         flags="-verbose 1"
     fi
-    dxfuse $flags $mountpoint $DX_PROJECT_CONTEXT_ID
+    dxfuse -readWrite $flags $mountpoint $DX_PROJECT_CONTEXT_ID
     sleep 1
     projName=$(ls $mountpoint)
     echo "projName = $projName"

@@ -526,7 +526,7 @@ main() {
 
     # Running on a cloud worker
     source environment >& /dev/null
-    dxfuse="dxfuse"
+    dxfuse="dxfuse -readWrite"
 
     # clean and make fresh directories
     mkdir -p $mountpoint
