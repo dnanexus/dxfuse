@@ -1077,7 +1077,9 @@ func (pgs *PrefetchGlobalState) CacheLookup(hid fuseops.HandleID, startOfs int64
 		return 0
 
 	case PFM_PREFETCH_IN_PROGRESS:
-		pfm.log("pfm prefetch in progress")
+		if pgs.verbose {
+			pfm.log("pfm prefetch in progress")
+		}
 		// ongoing prefetch IO
 		pgs.markAccessedAndMaybeStartPrefetch(pfm, startOfs, endOfs)
 		retCode, len := pgs.getDataFromCache(pfm, startOfs, endOfs, data)

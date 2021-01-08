@@ -8,33 +8,32 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"path/filepath"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/dnanexus/dxda"
 )
 
-
 const (
-	nsDirType = 1
+	nsDirType     = 1
 	nsDataObjType = 2
 )
 
 type MetadataDb struct {
 	// an open handle to the database
-	db               *sql.DB
-	dbFullPath        string
+	db         *sql.DB
+	dbFullPath string
 
 	// configuration information for accessing dnanexus servers
-	dxEnv             dxda.DXEnvironment
+	dxEnv dxda.DXEnvironment
 
 	// mapping from mounted directory to project ID
 	baseDir2ProjectId map[string]string
 
-	inodeCnt          int64
-	options           Options
+	inodeCnt int64
+	options  Options
 }
 
 func NewMetadataDb(
@@ -42,18 +41,18 @@ func NewMetadataDb(
 	dxEnv dxda.DXEnvironment,
 	options Options) (*MetadataDb, error) {
 	// create a connection to the database, that will be kept open
-	db, err := sql.Open("sqlite3", dbFullPath + "?mode=rwc")
+	db, err := sql.Open("sqlite3", dbFullPath+"?mode=rwc")
 	if err != nil {
 		return nil, fmt.Errorf("Could not open the database %s", dbFullPath)
 	}
 
 	return &MetadataDb{
-		db : db,
-		dbFullPath : dbFullPath,
-		dxEnv : dxEnv,
+		db:                db,
+		dbFullPath:        dbFullPath,
+		dxEnv:             dxEnv,
 		baseDir2ProjectId: make(map[string]string),
-		inodeCnt : InodeRoot + 1,
-		options : options,
+		inodeCnt:          InodeRoot + 1,
+		options:           options,
 	}, nil
 }
 
@@ -73,9 +72,9 @@ func (mdb *MetadataDb) opOpen() *OpHandle {
 	}
 
 	return &OpHandle{
-		httpClient : nil,
-		txn : txn,
-		err : nil,
+		httpClient: nil,
+		txn:        txn,
+		err:        nil,
 	}
 }
 
@@ -92,7 +91,6 @@ func (mdb *MetadataDb) opClose(oph *OpHandle) {
 		}
 	}
 }
-
 
 // Construct a local sql database that holds metadata for
 // a large number of dx:files. This metadata_db will be consulted
@@ -128,7 +126,7 @@ func tagsMarshal(tags []string) string {
 		return ""
 	}
 	payload, err := json.Marshal(MTags{
-		Elements : tags,
+		Elements: tags,
 	})
 	if err != nil {
 		log.Panicf("failed to marshal tags (%v), %s", tags, err.Error())
@@ -150,12 +148,11 @@ func tagsUnmarshal(buf string) []string {
 	var coded MTags
 	err = json.Unmarshal(originalBytes, &coded)
 	if err != nil {
-		log.Panicf("failed to unmarshal tags (%s), %s",	buf, err.Error())
+		log.Panicf("failed to unmarshal tags (%s), %s", buf, err.Error())
 		return nil
 	}
 	return coded.Elements
 }
-
 
 // Marshal a DNAx object properties to/from a string that
 // is stored in a database table. We use base64 encoding for the
@@ -169,7 +166,7 @@ func propertiesMarshal(props map[string]string) string {
 		return ""
 	}
 	payload, err := json.Marshal(MProperties{
-		Elements : props,
+		Elements: props,
 	})
 	if err != nil {
 		log.Panicf("failed to marshal properties (%v), %s", props, err.Error())
@@ -465,7 +462,7 @@ func (mdb *MetadataDb) lookupDirByInode(oph *OpHandle, parent string, dname stri
 		var populated int
 		var ctime int64
 		var mtime int64
-		var mode  int
+		var mode int
 
 		rows.Scan(&d.ProjId, &d.ProjFolder, &populated, &ctime, &mtime, &mode)
 
@@ -497,7 +494,6 @@ func (mdb *MetadataDb) lookupDirByInode(oph *OpHandle, parent string, dname stri
 
 	return d, true, nil
 }
-
 
 // search for a file with a particular inode.
 //
@@ -615,7 +611,6 @@ func (mdb *MetadataDb) UpdateInodeFileId(inode int64, fileId string) error {
 	return nil
 }
 
-
 // The directory is in the database, read it in its entirety.
 func (mdb *MetadataDb) directoryReadAllEntries(
 	oph *OpHandle,
@@ -649,13 +644,13 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 		rows.Scan(&inode, &projId, &dname, &ctime, &mtime, &mode)
 
 		subdirs[dname] = Dir{
-			Parent : dirFullName,
-			Dname : dname,
-			FullPath : filepath.Clean(filepath.Join(dirFullName, dname)),
-			Inode : inode,
-			Ctime : SecondsToTime(ctime),
-			Mtime : SecondsToTime(mtime),
-			Mode : os.FileMode(mode),
+			Parent:   dirFullName,
+			Dname:    dname,
+			FullPath: filepath.Clean(filepath.Join(dirFullName, dname)),
+			Inode:    inode,
+			Ctime:    SecondsToTime(ctime),
+			Mtime:    SecondsToTime(mtime),
+			Mode:     os.FileMode(mode),
 		}
 	}
 	rows.Close()
@@ -686,7 +681,7 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 		var mode int
 		var dirtyData int
 		var dirtyMetadata int
-		rows.Scan(&f.Kind,&f.Id, &f.ProjId, &f.State, &f.ArchivalState, &f.Inode,
+		rows.Scan(&f.Kind, &f.Id, &f.ProjId, &f.State, &f.ArchivalState, &f.Inode,
 			&f.Size, &ctime, &mtime, &mode,
 			&tags, &props, &f.Symlink, &f.LocalPath, &dirtyData, &dirtyMetadata, &f.Name)
 		f.Ctime = SecondsToTime(ctime)
@@ -723,7 +718,7 @@ func (mdb *MetadataDb) createDataObject(
 	size int64,
 	ctime int64,
 	mtime int64,
-	tags  []string,
+	tags []string,
 	properties map[string]string,
 	mode os.FileMode,
 	parentDir string,
@@ -732,7 +727,7 @@ func (mdb *MetadataDb) createDataObject(
 	localPath string) (int64, error) {
 	if mdb.options.VerboseLevel > 1 {
 		mdb.log("createDataObject %s:%s %s", projId, objId,
-			filepath.Clean(parentDir + "/" + fname))
+			filepath.Clean(parentDir+"/"+fname))
 	}
 	// File doesn't exist, we need to choose a new inode number.
 	// Note: it is on stable storage, and will not change.
@@ -795,7 +790,7 @@ func (mdb *MetadataDb) createEmptyDir(
 	sqlStmt := fmt.Sprintf(`
  		        INSERT INTO namespace
 			VALUES ('%s', '%s', '%d', '%d');`,
-		parentDir, basename, nsDirType,	inode)
+		parentDir, basename, nsDirType, inode)
 	if _, err := oph.txn.Exec(sqlStmt); err != nil {
 		mdb.log("createEmptyDir: error inserting into namespace table %s/%s, err=%s",
 			parentDir, basename, err.Error())
@@ -903,7 +898,7 @@ func symlinkOfFile(kind int, o DxDescribeDataObject) string {
 		kind = FK_Symlink
 	}
 
-	switch (kind) {
+	switch kind {
 	case FK_Symlink:
 		return o.SymlinkPath
 	default:
@@ -934,7 +929,12 @@ func (mdb *MetadataDb) populateDir(
 	if mdb.options.VerboseLevel > 1 {
 		mdb.log("inserting files")
 	}
-
+	var fileMode os.FileMode
+	if mdb.options.ReadOnly {
+		fileMode = fileReadOnlyMode
+	} else {
+		fileMode = fileReadWriteMode
+	}
 	for _, o := range dxObjs {
 		kind := mdb.kindOfFile(o)
 		symlink := symlinkOfFile(kind, o)
@@ -953,7 +953,7 @@ func (mdb *MetadataDb) populateDir(
 			o.MtimeSeconds,
 			o.Tags,
 			o.Properties,
-			fileReadWriteMode,
+			fileMode,
 			dirPath,
 			o.Name,
 			symlink,
@@ -973,14 +973,14 @@ func (mdb *MetadataDb) populateDir(
 		// is false.
 		_, err := mdb.createEmptyDir(
 			oph,
-			projId, filepath.Clean(projFolder + "/" + subDirName),
+			projId, filepath.Clean(projFolder+"/"+subDirName),
 			ctime, mtime,
 			dirReadWriteMode,
-			filepath.Clean(dirPath + "/" + subDirName),
+			filepath.Clean(dirPath+"/"+subDirName),
 			false)
 		if err != nil {
 			mdb.log("Error creating empty directory %s while populating directory %s",
-				filepath.Clean(projFolder + "/" + subDirName), dirPath)
+				filepath.Clean(projFolder+"/"+subDirName), dirPath)
 			return err
 		}
 	}
@@ -1092,7 +1092,6 @@ func (mdb *MetadataDb) directoryReadFromDNAx(
 	return nil
 }
 
-
 // Add a directory with its contents to an exisiting database
 func (mdb *MetadataDb) ReadDirAll(ctx context.Context, oph *OpHandle, dir *Dir) (map[string]File, map[string]Dir, error) {
 	if mdb.options.Verbose {
@@ -1118,7 +1117,6 @@ func (mdb *MetadataDb) ReadDirAll(ctx context.Context, oph *OpHandle, dir *Dir) 
 	// Now that the directory is in the database, we can read it with a local query.
 	return mdb.directoryReadAllEntries(oph, dir.FullPath)
 }
-
 
 // Search for a file/subdir in a directory
 // Look for file [filename] in directory [parent]/[dname].
@@ -1196,7 +1194,7 @@ func (mdb *MetadataDb) PopulateRoot(ctx context.Context, oph *OpHandle, manifest
 	for _, d := range dirSkel {
 		_, err := mdb.createEmptyDir(
 			oph,
-			"", "",   // There is no backing project/folder
+			"", "", // There is no backing project/folder
 			nowSeconds, nowSeconds,
 			dirReadOnlyMode, // skeleton directories are scaffolding, they cannot be modified.
 			d, true)
@@ -1283,16 +1281,16 @@ func (mdb *MetadataDb) CreateFile(
 	inode, err := mdb.createDataObject(
 		oph,
 		FK_Regular,
-		true,  // file is dirty, it should be uploaded.
+		true, // file is dirty, it should be uploaded.
 		false,
 		dir.ProjId,
 		"closed",
 		"live",
-		"",  // no file-id yet
-		0,    /* the file is empty */
+		"", // no file-id yet
+		0,  /* the file is empty */
 		nowSeconds,
 		nowSeconds,
-		nil,  // A local file initially doesn't have tags or properties
+		nil, // A local file initially doesn't have tags or properties
 		nil,
 		mode,
 		dir.FullPath,
@@ -1306,18 +1304,18 @@ func (mdb *MetadataDb) CreateFile(
 
 	// 3. return a File structure
 	return File{
-		Kind: FK_Regular,
-		Id : "",
-		ProjId : dir.ProjId,
-		ArchivalState : "live",
-		Name : fname,
-		Size : 0,
-		Inode : inode,
-		Ctime : SecondsToTime(nowSeconds),
-		Mtime : SecondsToTime(nowSeconds),
-		Mode : mode,
-		Symlink: "",
-		LocalPath : localPath,
+		Kind:          FK_Regular,
+		Id:            "",
+		ProjId:        dir.ProjId,
+		ArchivalState: "live",
+		Name:          fname,
+		Size:          0,
+		Inode:         inode,
+		Ctime:         SecondsToTime(nowSeconds),
+		Mtime:         SecondsToTime(nowSeconds),
+		Mode:          mode,
+		Symlink:       "",
+		LocalPath:     localPath,
 	}, nil
 }
 
@@ -1410,8 +1408,6 @@ func (mdb *MetadataDb) UpdateFileLocalPath(
 	return nil
 }
 
-
-
 // Move a file
 // 1) Can move a file from one directory to another,
 //    or leave it in the same directory
@@ -1439,8 +1435,7 @@ func (mdb *MetadataDb) MoveFile(
 	return nil
 }
 
-
-type MoveRecord struct  {
+type MoveRecord struct {
 	oldFullPath   string
 	name          string
 	newParent     string
@@ -1529,7 +1524,7 @@ func (mdb *MetadataDb) MoveDir(
  		        SELECT parent, name, inode, obj_type
                         FROM namespace
 			WHERE parent LIKE '%s';`,
-		oldDir.FullPath + "%")
+		oldDir.FullPath+"%")
 	rows, err := oph.txn.Query(sqlStmt)
 	if err != nil {
 		return oph.RecordError(err)
@@ -1558,15 +1553,15 @@ func (mdb *MetadataDb) MoveDir(
 		midPath := newName + "/" + strings.TrimPrefix(parent, oldDir.FullPath)
 		var newProjFolder string
 		if nsObjType == nsDirType {
-			newProjFolder  = filepath.Clean(newParentDir.ProjFolder + "/" + midPath + "/" + name)
+			newProjFolder = filepath.Clean(newParentDir.ProjFolder + "/" + midPath + "/" + name)
 		}
 		mr := MoveRecord{
-			oldFullPath : parent + "/" + name,
-			name : name,
-			newParent : filepath.Clean(newParentDir.FullPath + "/" + midPath),
-			newProjFolder : newProjFolder,
-			inode : inode,
-			nsObjType : nsObjType,
+			oldFullPath:   parent + "/" + name,
+			name:          name,
+			newParent:     filepath.Clean(newParentDir.FullPath + "/" + midPath),
+			newProjFolder: newProjFolder,
+			inode:         inode,
+			nsObjType:     nsObjType,
 		}
 		records = append(records, mr)
 	}
@@ -1575,12 +1570,12 @@ func (mdb *MetadataDb) MoveDir(
 	// add the top level directory (A) to be moved. Note, that the top level directory may
 	// change name.
 	records = append(records, MoveRecord{
-		oldFullPath : oldDir.FullPath,
-		name : newName,
-		newParent : filepath.Clean(newParentDir.FullPath),
-		newProjFolder : filepath.Clean(filepath.Join(newParentDir.ProjFolder, newName)),
-		inode : oldDir.Inode,
-		nsObjType: nsDirType,
+		oldFullPath:   oldDir.FullPath,
+		name:          newName,
+		newParent:     filepath.Clean(newParentDir.FullPath),
+		newProjFolder: filepath.Clean(filepath.Join(newParentDir.ProjFolder, newName)),
+		inode:         oldDir.Inode,
+		nsObjType:     nsDirType,
 	})
 	if mdb.options.Verbose {
 		mdb.log("found %d records under directory %s: %v", len(records), oldDir.FullPath, records)
@@ -1694,7 +1689,7 @@ func (mdb *MetadataDb) DirtyFilesGetAndReset(flag int) ([]DirtyFileInfo, error) 
 	rows.Close()
 
 	// Figure out the project folder for each file
-	for i, _ := range(fAr) {
+	for i, _ := range fAr {
 		projId, projFolder, err := mdb.lookupDirByName(oph, fAr[i].Directory)
 		if err != nil {
 			return nil, err

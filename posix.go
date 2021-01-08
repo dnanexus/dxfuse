@@ -32,13 +32,13 @@ import (
 //           zoo     regular file
 //
 type PosixDir struct {
-	path          string   // entire directory path
+	path        string // entire directory path
 	dataObjects []DxDescribeDataObject
 	subdirs     []string
 
 	// additional subdirectories holding files that have multiple versions,
 	// and could not be placed in the original location.
-	fauxSubdirs  map[string]([]DxDescribeDataObject)
+	fauxSubdirs map[string]([]DxDescribeDataObject)
 }
 
 type Posix struct {
@@ -47,7 +47,7 @@ type Posix struct {
 
 func NewPosix(options Options) *Posix {
 	return &Posix{
-		options : options,
+		options: options,
 	}
 }
 
@@ -102,7 +102,6 @@ func (px *Posix) pickFauxDirNames(subdirs []string, uniqueFileNames []string, nu
 	return dirNames
 }
 
-
 // Find all the unique file names.
 //
 func (px *Posix) uniqueFileNames(dxObjs []DxDescribeDataObject) []string {
@@ -127,7 +126,7 @@ func (px *Posix) chooseAllObjectsWithName(
 	name string) []DxDescribeDataObject {
 
 	objs := make([]DxDescribeDataObject, 0)
-	for _, o := range(dxObjs) {
+	for _, o := range dxObjs {
 		if o.Name == name {
 			objs = append(objs, o)
 		}
@@ -137,7 +136,6 @@ func (px *Posix) chooseAllObjectsWithName(
 	sort.Slice(objs, func(i, j int) bool { return objs[i].CtimeSeconds > objs[j].CtimeSeconds })
 	return objs
 }
-
 
 // main entry point
 //
@@ -159,7 +157,7 @@ func (px *Posix) FixDir(dxFolder *DxFolder) (*PosixDir, error) {
 	for _, subDirName := range dxFolder.subdirs {
 		// Make SURE that the subdirectory does not contain a slash.
 		lastPart := strings.TrimPrefix(subDirName, dxFolder.path)
-		lastPart = strings.TrimPrefix(lastPart,"/")
+		lastPart = strings.TrimPrefix(lastPart, "/")
 		if strings.Contains(lastPart, "/") {
 			px.log("Dropping subdirectory %s, it contains a slash", lastPart)
 			continue
@@ -216,40 +214,44 @@ func (px *Posix) FixDir(dxFolder *DxFolder) (*PosixDir, error) {
 	// Take all the data-objects that have names that aren't already taken
 	// up by subdirs. They go in the top level
 	var topLevelObjs []DxDescribeDataObject
+	if len(allDxObjs) == len(uniqueFileNames) && len(subdirSet) < 1 {
+		px.log("Dir contains no duplicate filenames or subdirs with the same name as a filename, all objects are top level")
+		topLevelObjs = allDxObjs
+	} else {
+		for _, oName := range uniqueFileNames {
+			dxObjs := px.chooseAllObjectsWithName(allDxObjs, oName)
+			if px.options.VerboseLevel > 1 {
+				px.log("name=%s len(objs)=%d", oName, len(dxObjs))
+			}
 
-	for _, oName := range(uniqueFileNames) {
-		dxObjs := px.chooseAllObjectsWithName(allDxObjs, oName)
-		if px.options.VerboseLevel > 1 {
-			px.log("name=%s len(objs)=%d", oName, len(dxObjs))
-		}
-
-		_, ok := subdirSet[oName]
-		if !ok {
-			// There is no directory with this name, we
-			// place the object at the toplevel
-			topLevelObjs = append(topLevelObjs, dxObjs[0])
-			dxObjs = dxObjs[1:]
-		}
-
-		// spread the remaining copies across the faux subdirectories
-		for i, obj := range(dxObjs) {
-			dName := fauxDirNames[i]
-			vec, ok := fauxSubDirs[dName]
+			_, ok := subdirSet[oName]
 			if !ok {
-				// need to start a new faux subdir called "dName"
-				v := make([]DxDescribeDataObject, 1)
-				v[0] = obj
-				fauxSubDirs[dName] = v
-			} else {
-				fauxSubDirs[dName] = append(vec, obj)
+				// There is no directory with this name, we
+				// place the object at the toplevel
+				topLevelObjs = append(topLevelObjs, dxObjs[0])
+				dxObjs = dxObjs[1:]
+			}
+
+			// spread the remaining copies across the faux subdirectories
+			for i, obj := range dxObjs {
+				dName := fauxDirNames[i]
+				vec, ok := fauxSubDirs[dName]
+				if !ok {
+					// need to start a new faux subdir called "dName"
+					v := make([]DxDescribeDataObject, 1)
+					v[0] = obj
+					fauxSubDirs[dName] = v
+				} else {
+					fauxSubDirs[dName] = append(vec, obj)
+				}
 			}
 		}
 	}
 
 	posixDxFolder := &PosixDir{
-		path: dxFolder.path,
+		path:        dxFolder.path,
 		dataObjects: topLevelObjs,
-		subdirs: subdirs,
+		subdirs:     subdirs,
 		fauxSubdirs: fauxSubDirs,
 	}
 	if px.options.VerboseLevel > 1 {
