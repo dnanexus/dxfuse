@@ -31,7 +31,7 @@ trap teardown EXIT
 # Ensure that only one sync command may run at a time
 function sync_concurrency_test {
     mkdir -p $mountpoint
-    $dxfuse $mountpoint $projName
+    $dxfuse -readWrite $mountpoint $projName
     sleep 1
     dd if=/dev/urandom of=50MB bs=1M count=50
     writeable_dir=$(cat /dev/urandom | env LC_CTYPE=C LC_ALL=C tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
