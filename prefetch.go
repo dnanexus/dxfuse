@@ -890,7 +890,6 @@ func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 	// the next chunk(s)
 
 	if pfm.state == PFM_DETECT_SEQ {
-		pfm.log("set to pfm in progress")
 		pfm.state = PFM_PREFETCH_IN_PROGRESS
 	}
 
