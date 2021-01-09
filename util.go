@@ -26,10 +26,10 @@ const (
 	HttpClientPoolSize        = 4
 	FileWriteInactivityThresh = 5 * time.Minute
 	WritableFileSizeLimit     = 16 * MiB
-	MaxDirSize                = 10 * 1000
+	MaxDirSize                = 255 * 1000
 	MaxNumFileHandles         = 1000 * 1000
 	NumRetriesDefault         = 3
-	Version                   = "v0.22.4"
+	Version                   = "v0.23.0"
 )
 const (
 	InodeInvalid = 0

@@ -27,7 +27,7 @@ import (
 
 const (
 	// namespace for xattrs
-	XATTR_TAG = "tag"
+	XATTR_TAG  = "tag"
 	XATTR_PROP = "prop"
 	XATTR_BASE = "base"
 )
@@ -48,7 +48,7 @@ type Filesys struct {
 
 	// a pool of http clients, for short requests, such as file creation,
 	// or file describe.
-	httpClientPool    chan(*http.Client)
+	httpClientPool chan (*http.Client)
 
 	// metadata database
 	mdb *MetadataDb
@@ -70,11 +70,11 @@ type Filesys struct {
 
 	// all open files
 	fhCounter uint64
-	fhTable map[fuseops.HandleID]*FileHandle
+	fhTable   map[fuseops.HandleID]*FileHandle
 
 	// all open directories
 	dhCounter uint64
-	dhTable map[fuseops.HandleID]*DirHandle
+	dhTable   map[fuseops.HandleID]*DirHandle
 
 	tmpFileCounter uint64
 
@@ -98,20 +98,20 @@ const (
 type FileHandle struct {
 	// a lock allowing multiple readers or a single writer.
 	accessMode int
-	inode     int64
-	size      int64   // this is up-to-date only for remote files
-	hid       fuseops.HandleID
+	inode      int64
+	size       int64 // this is up-to-date only for remote files
+	hid        fuseops.HandleID
 
 	// URL used for downloading file ranges.
 	// Used for read-only files.
-	url      *DxDownloadURL
+	url *DxDownloadURL
 
 	// A file-descriptor for files with a local copy
-	fd       *os.File
+	fd *os.File
 }
 
 type DirHandle struct {
-	d Dir
+	d       Dir
 	entries []fuseutil.Dirent
 }
 
@@ -122,24 +122,24 @@ func NewDxfuse(
 
 	// initialize a pool of http-clients.
 	httpIoPool := make(chan *http.Client, HttpClientPoolSize)
-	for i:=0; i < HttpClientPoolSize; i++ {
+	for i := 0; i < HttpClientPoolSize; i++ {
 		httpIoPool <- dxda.NewHttpClient()
 	}
 
 	dxfuseBaseDir := MakeFSBaseDir()
 	fsys := &Filesys{
-		dxEnv : dxEnv,
-		options: options,
-		mutex : &sync.Mutex{},
-		httpClientPool: httpIoPool,
-		ops : NewDxOps(dxEnv, options),
-		fhCounter : 1,
-		fhTable : make(map[fuseops.HandleID]*FileHandle),
-		dhCounter : 1,
-		dhTable : make(map[fuseops.HandleID]*DirHandle),
-		tmpFileCounter : 0,
-		shutdownCalled : false,
-		createdFilesDir : dxfuseBaseDir + "/" + CreatedFilesDir,
+		dxEnv:           dxEnv,
+		options:         options,
+		mutex:           &sync.Mutex{},
+		httpClientPool:  httpIoPool,
+		ops:             NewDxOps(dxEnv, options),
+		fhCounter:       1,
+		fhTable:         make(map[fuseops.HandleID]*FileHandle),
+		dhCounter:       1,
+		dhTable:         make(map[fuseops.HandleID]*DirHandle),
+		tmpFileCounter:  0,
+		shutdownCalled:  false,
+		createdFilesDir: dxfuseBaseDir + "/" + CreatedFilesDir,
 	}
 
 	// Create a directory for new files
@@ -176,10 +176,10 @@ func NewDxfuse(
 	fsys.pgs = NewPrefetchGlobalState(options.VerboseLevel, dxEnv)
 
 	// describe all the projects, we need their upload parameters
-	httpClient := <- fsys.httpClientPool
+	httpClient := <-fsys.httpClientPool
 	defer func() {
 		fsys.httpClientPool <- httpClient
-	} ()
+	}()
 
 	if options.ReadOnly {
 		// we don't need the file upload module
@@ -264,12 +264,12 @@ func (fsys *Filesys) opOpen() *OpHandle {
 	if err != nil {
 		log.Panic("Could not open transaction")
 	}
-	httpClient := <- fsys.httpClientPool
+	httpClient := <-fsys.httpClientPool
 
 	return &OpHandle{
-		httpClient : httpClient,
-		txn : txn,
-		err : nil,
+		httpClient: httpClient,
+		txn:        txn,
+		err:        nil,
 	}
 }
 
@@ -280,9 +280,9 @@ func (fsys *Filesys) opOpenNoHttpClient() *OpHandle {
 	}
 
 	return &OpHandle{
-		httpClient : nil,
-		txn : txn,
-		err : nil,
+		httpClient: nil,
+		txn:        txn,
+		err:        nil,
 	}
 }
 
@@ -473,7 +473,7 @@ func (fsys *Filesys) SetInodeAttributes(ctx context.Context, op *fuseops.SetInod
 		attrs.Mtime = *op.Mtime
 	}
 	// we don't handle atime
-	err = fsys.mdb.UpdateFileAttrs(ctx, oph, file.Inode, int64(attrs.Size), attrs.Mtime, &attrs.Mode);
+	err = fsys.mdb.UpdateFileAttrs(ctx, oph, file.Inode, int64(attrs.Size), attrs.Mtime, &attrs.Mode)
 	if err != nil {
 		fsys.log("database error in OpenFile %s", err.Error())
 		return fuse.EIO
@@ -598,7 +598,7 @@ func (fsys *Filesys) MkDir(ctx context.Context, op *fuseops.MkDirOp) error {
 		nowSeconds,
 		nowSeconds,
 		mode,
-		parentDir.FullPath + "/" + op.Name)
+		parentDir.FullPath+"/"+op.Name)
 	if err != nil {
 		fsys.log("database error in MkDir")
 		return fuse.EIO
@@ -617,14 +617,13 @@ func (fsys *Filesys) MkDir(ctx context.Context, op *fuseops.MkDirOp) error {
 	}
 	tWindow := fsys.calcExpirationTime(childAttrs)
 	op.Entry = fuseops.ChildInodeEntry{
-		Child : fuseops.InodeID(dnode),
-		Attributes : childAttrs,
-		AttributesExpiration : tWindow,
-		EntryExpiration : tWindow,
+		Child:                fuseops.InodeID(dnode),
+		Attributes:           childAttrs,
+		AttributesExpiration: tWindow,
+		EntryExpiration:      tWindow,
 	}
 	return nil
 }
-
 
 func (fsys *Filesys) RmDir(ctx context.Context, op *fuseops.RmDirOp) error {
 	fsys.mutex.Lock()
@@ -795,10 +794,10 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	// soon change. We are writing new content into the file.
 	tWindow := fsys.calcExpirationTime(childAttrs)
 	op.Entry = fuseops.ChildInodeEntry{
-		Child : fuseops.InodeID(file.Inode),
-		Attributes : childAttrs,
-		AttributesExpiration : tWindow,
-		EntryExpiration : tWindow,
+		Child:                fuseops.InodeID(file.Inode),
+		Attributes:           childAttrs,
+		AttributesExpiration: tWindow,
+		EntryExpiration:      tWindow,
 	}
 
 	// Note: we can't open the file in exclusive mode, because another process
@@ -810,11 +809,11 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	}
 
 	fh := FileHandle{
-		accessMode : AM_RW_Local,
-		inode : file.Inode,
-		size : file.Size,
-		url : nil,
-		fd : writer,
+		accessMode: AM_RW_Local,
+		inode:      file.Inode,
+		size:       file.Size,
+		url:        nil,
+		fd:         writer,
 	}
 	op.Handle = fsys.insertIntoFileHandleTable(&fh)
 	return nil
@@ -1144,9 +1143,9 @@ func (fsys *Filesys) readEntireDir(ctx context.Context, oph *OpHandle, dir Dir) 
 		}
 		dirEnt := fuseutil.Dirent{
 			Offset: 0,
-			Inode : fuseops.InodeID(oDesc.Inode),
-			Name : oname,
-			Type : dType,
+			Inode:  fuseops.InodeID(oDesc.Inode),
+			Name:   oname,
+			Type:   dType,
 		}
 		dEntries = append(dEntries, dirEnt)
 	}
@@ -1155,9 +1154,9 @@ func (fsys *Filesys) readEntireDir(ctx context.Context, oph *OpHandle, dir Dir) 
 	for subDirName, dirDesc := range subdirs {
 		dirEnt := fuseutil.Dirent{
 			Offset: 0,
-			Inode : fuseops.InodeID(dirDesc.Inode),
-			Name : subDirName,
-			Type : fuseutil.DT_Directory,
+			Inode:  fuseops.InodeID(dirDesc.Inode),
+			Name:   subDirName,
+			Type:   fuseutil.DT_Directory,
 		}
 		dEntries = append(dEntries, dirEnt)
 	}
@@ -1178,7 +1177,6 @@ func (fsys *Filesys) readEntireDir(ctx context.Context, oph *OpHandle, dir Dir) 
 
 	return dEntries, nil
 }
-
 
 // OpenDir return nil error allows open dir
 // COMMON for drivers
@@ -1206,7 +1204,7 @@ func (fsys *Filesys) OpenDir(ctx context.Context, op *fuseops.OpenDirOp) error {
 	}
 
 	dh := &DirHandle{
-		d : dir,
+		d:       dir,
 		entries: dentries,
 	}
 	op.Handle = fsys.insertIntoDirHandleTable(dh)
@@ -1253,7 +1251,6 @@ func (fsys *Filesys) ReleaseDirHandle(ctx context.Context, op *fuseops.ReleaseDi
 	return nil
 }
 
-
 // ===
 // File handling
 //
@@ -1272,10 +1269,10 @@ func (fsys *Filesys) openRegularFile(
 		}
 		fh := &FileHandle{
 			accessMode: AM_RW_Local,
-			inode : f.Inode,
-			size : f.Size,
-			url: nil,
-			fd : reader,
+			inode:      f.Inode,
+			size:       f.Size,
+			url:        nil,
+			fd:         reader,
 		}
 
 		return fh, nil
@@ -1297,10 +1294,10 @@ func (fsys *Filesys) openRegularFile(
 
 	fh := &FileHandle{
 		accessMode: AM_RO_Remote,
-		inode : f.Inode,
-		size : f.Size,
-		url: &u,
-		fd : nil,
+		inode:      f.Inode,
+		size:       f.Size,
+		url:        &u,
+		fd:         nil,
 	}
 
 	return fh, nil
@@ -1364,14 +1361,14 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 		// directly. There is no need to generate a preauthenticated
 		// URL.
 		fh = &FileHandle{
-			accessMode : AM_RO_Remote,
-			inode : file.Inode,
-			size : file.Size,
-			url : &DxDownloadURL{
-				URL : file.Symlink,
-				Headers : nil,
+			accessMode: AM_RO_Remote,
+			inode:      file.Inode,
+			size:       file.Size,
+			url: &DxDownloadURL{
+				URL:     file.Symlink,
+				Headers: nil,
 			},
-			fd : nil,
+			fd: nil,
 		}
 	default:
 		// can't open an applet/workflow/etc.
@@ -1390,7 +1387,6 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 	}
 	return nil
 }
-
 
 func (fsys *Filesys) getWritableFD(ctx context.Context, handle fuseops.HandleID) (*os.File, error) {
 	fsys.mutex.Lock()
@@ -1411,7 +1407,6 @@ func (fsys *Filesys) getWritableFD(ctx context.Context, handle fuseops.HandleID)
 	}
 	return fh.fd, nil
 }
-
 
 // read a remote immutable file
 //
@@ -1458,7 +1453,7 @@ func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp,
 	}
 
 	// Take an http client from the pool. Return it when done.
-	httpClient := <- fsys.httpClientPool
+	httpClient := <-fsys.httpClientPool
 	err := dxda.DxHttpRequestData(
 		ctx,
 		httpClient,
@@ -1476,7 +1471,7 @@ func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp,
 func (fsys *Filesys) ReadFile(ctx context.Context, op *fuseops.ReadFileOp) error {
 	// Here, we start from the file handle
 	fsys.mutex.Lock()
-	fh,ok := fsys.fhTable[op.Handle]
+	fh, ok := fsys.fhTable[op.Handle]
 	if !ok {
 		// invalid file handle. It doesn't exist in the table
 		fsys.mutex.Unlock()
@@ -1518,7 +1513,7 @@ func (fsys *Filesys) prepareFileForWrite(ctx context.Context, op *fuseops.WriteF
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
 
-	fh,ok := fsys.fhTable[op.Handle]
+	fh, ok := fsys.fhTable[op.Handle]
 	if !ok {
 		// invalid file handle. It doesn't exist in the table
 		return nil, fuse.EINVAL
@@ -1596,7 +1591,7 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 
 	// Try to efficiently calculate the size and mtime, instead
 	// of doing a filesystem call.
-	fSize := MaxInt64(op.Offset + int64(nBytes), fh.size)
+	fSize := MaxInt64(op.Offset+int64(nBytes), fh.size)
 	mtime := time.Now()
 
 	// Update the file attributes in the database (size, mtime)
@@ -1729,7 +1724,7 @@ func (fsys *Filesys) xattrParseName(name string) (string, string, error) {
 		return "", "", fuse.EINVAL
 	}
 	namespace := name[:prefixLen]
-	attrName := name[len(namespace) + 1 : ]
+	attrName := name[len(namespace)+1:]
 	return namespace, attrName, nil
 }
 
@@ -1809,7 +1804,6 @@ func (fsys *Filesys) RemoveXattr(ctx context.Context, op *fuseops.RemoveXattrOp)
 	return nil
 }
 
-
 func (fsys *Filesys) getXattrFill(op *fuseops.GetXattrOp, val_str string) error {
 	value := []byte(val_str)
 	op.BytesRead = len(value)
@@ -1829,7 +1823,7 @@ func (fsys *Filesys) GetXattr(ctx context.Context, op *fuseops.GetXattrOp) error
 	oph := fsys.opOpen()
 	defer fsys.opClose(oph)
 
-	if fsys.options.Verbose {
+	if fsys.options.VerboseLevel > 1 {
 		fsys.log("GetXattr %d", op.Inode)
 	}
 
@@ -1874,7 +1868,7 @@ func (fsys *Filesys) GetXattr(ctx context.Context, op *fuseops.GetXattrOp) error
 			return fsys.getXattrFill(op, file.State)
 		case "archivalState":
 			return fsys.getXattrFill(op, file.ArchivalState)
-		case "id" :
+		case "id":
 			return fsys.getXattrFill(op, file.Id)
 		}
 	}
@@ -1903,14 +1897,14 @@ func (fsys *Filesys) ListXattr(ctx context.Context, op *fuseops.ListXattrOp) err
 	// collect all the properties into one array
 	var xattrKeys []string
 	for _, tag := range file.Tags {
-		xattrKeys = append(xattrKeys, XATTR_TAG + "." + tag)
+		xattrKeys = append(xattrKeys, XATTR_TAG+"."+tag)
 	}
 	for key, _ := range file.Properties {
-		xattrKeys = append(xattrKeys, XATTR_PROP + "." + key)
+		xattrKeys = append(xattrKeys, XATTR_PROP+"."+key)
 	}
 	// Special attributes
-	for _, key := range []string{ "state", "archivalState", "id"} {
-		xattrKeys = append(xattrKeys, XATTR_BASE + "." + key)
+	for _, key := range []string{"state", "archivalState", "id"} {
+		xattrKeys = append(xattrKeys, XATTR_BASE+"."+key)
 	}
 	if fsys.options.Verbose {
 		fsys.log("attribute keys: %v", xattrKeys)
@@ -1924,7 +1918,7 @@ func (fsys *Filesys) ListXattr(ctx context.Context, op *fuseops.ListXattrOp) err
 
 		if len(dst) >= keyLen {
 			copy(dst, key)
-			dst[keyLen-1] = 0  // null terminate the string
+			dst[keyLen-1] = 0 // null terminate the string
 			dst = dst[keyLen:]
 		} else if len(op.Dst) != 0 {
 			return syscall.ERANGE
