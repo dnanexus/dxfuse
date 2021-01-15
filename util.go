@@ -28,8 +28,8 @@ const (
 	WritableFileSizeLimit     = 16 * MiB
 	MaxDirSize                = 255 * 1000
 	MaxNumFileHandles         = 1000 * 1000
-	NumRetriesDefault         = 3
-	Version                   = "v0.23.1"
+	NumRetriesDefault         = 10
+	Version                   = "v0.23.2"
 )
 const (
 	InodeInvalid = 0
