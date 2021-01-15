@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
 	"github.com/dnanexus/dxda"
 )
 
@@ -28,8 +29,8 @@ func DxFindProject(
 	projName string) (string, error) {
 
 	request := FindProjectRequest{
-		Name : projName,
-		Level : "VIEW",
+		Name:  projName,
+		Level: "VIEW",
 	}
 	var payload []byte
 	payload, err := json.Marshal(request)

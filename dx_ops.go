@@ -3,8 +3,8 @@ package dxfuse
 import (
 	"context"
 	"crypto/md5"
-	"encoding/json"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -14,13 +14,13 @@ import (
 )
 
 const (
-	fileCloseWaitTime = 5 * time.Second
+	fileCloseWaitTime    = 5 * time.Second
 	fileCloseMaxWaitTime = 10 * time.Minute
 )
 
 type DxOps struct {
 	dxEnv   dxda.DXEnvironment
-	options  Options
+	options Options
 
 	// http error that occurs when an upload has taken too long
 	timeoutExpirationErrorRe *regexp.Regexp
@@ -29,9 +29,9 @@ type DxOps struct {
 func NewDxOps(dxEnv dxda.DXEnvironment, options Options) *DxOps {
 	timeoutRe := regexp.MustCompile(`<Message>Request has expired</Message>`)
 	return &DxOps{
-		dxEnv : dxEnv,
-		options : options,
-		timeoutExpirationErrorRe : timeoutRe,
+		dxEnv:                    dxEnv,
+		options:                  options,
+		timeoutExpirationErrorRe: timeoutRe,
 	}
 }
 
@@ -39,11 +39,10 @@ func (ops *DxOps) log(a string, args ...interface{}) {
 	LogMsg("dx_ops", a, args...)
 }
 
-
 type RequestFolderNew struct {
-	ProjId   string `json:"project"`
-	Folder   string `json:"folder"`
-	Parents  bool   `json:"parents"`
+	ProjId  string `json:"project"`
+	Folder  string `json:"folder"`
+	Parents bool   `json:"parents"`
 }
 
 type ReplyFolderNew struct {
@@ -87,10 +86,9 @@ func (ops *DxOps) DxFolderNew(
 	return nil
 }
 
-
 type RequestFolderRemove struct {
-	ProjId   string `json:"project"`
-	Folder   string `json:"folder"`
+	ProjId string `json:"project"`
+	Folder string `json:"folder"`
 }
 
 type ReplyFolderRemove struct {
@@ -133,16 +131,14 @@ func (ops *DxOps) DxFolderRemove(
 	return nil
 }
 
-
 type RequestRemoveObjects struct {
-	Objects   []string `json:"objects"`
-	Force     bool   `json:"force"`
+	Objects []string `json:"objects"`
+	Force   bool     `json:"force"`
 }
 
 type ReplyRemoveObjects struct {
 	Id string `json:"id"`
 }
-
 
 func (ops *DxOps) DxRemoveObjects(
 	ctx context.Context,
@@ -181,11 +177,11 @@ func (ops *DxOps) DxRemoveObjects(
 }
 
 type RequestNewFile struct {
-	ProjId   string `json:"project"`
-	Name     string `json:"name"`
-	Folder   string `json:"folder"`
-	Parents  bool   `json:"parents"`
-	Nonce    string `json:"nonce"`
+	ProjId  string `json:"project"`
+	Name    string `json:"name"`
+	Folder  string `json:"folder"`
+	Parents bool   `json:"parents"`
+	Nonce   string `json:"nonce"`
 }
 
 type ReplyNewFile struct {
@@ -248,10 +244,10 @@ func (ops *DxOps) DxFileCloseAndWait(
 		return err
 	}
 
-        // wait for file to achieve closed state
+	// wait for file to achieve closed state
 	start := time.Now()
 	deadline := start.Add(fileCloseMaxWaitTime)
-        for true {
+	for true {
 		fDesc, err := DxDescribe(ctx, httpClient, &ops.dxEnv, projectId, fid)
 		if err != nil {
 			return err
@@ -282,9 +278,9 @@ func (ops *DxOps) DxFileCloseAndWait(
 }
 
 type RequestUploadChunk struct {
-	Size  int     `json:"size"`
-	Index int     `json:"index"`
-	Md5   string  `json:"md5"`
+	Size  int    `json:"size"`
+	Index int    `json:"index"`
+	Md5   string `json:"md5"`
 }
 
 type ReplyUploadChunk struct {
@@ -313,9 +309,9 @@ func (ops *DxOps) DxFileUploadPart(
 
 	md5Sum := md5.Sum(data)
 	uploadReq := RequestUploadChunk{
-		Size: len(data),
+		Size:  len(data),
 		Index: index,
-		Md5: hex.EncodeToString(md5Sum[:]),
+		Md5:   hex.EncodeToString(md5Sum[:]),
 	}
 
 	reqJson, err := json.Marshal(uploadReq)
@@ -357,10 +353,9 @@ func (ops *DxOps) DxFileUploadPart(
 	return nil
 }
 
-
 type RequestRename struct {
-	ProjId string  `json:"project"`
-	Name   string  `json:"name"`
+	ProjId string `json:"project"`
+	Name   string `json:"name"`
 }
 
 type ReplyRename struct {
@@ -404,11 +399,10 @@ func (ops *DxOps) DxRename(
 	return nil
 }
 
-
 type RequestMove struct {
-	Objects    []string `json:"objects"`
-	Folders    []string `json:"folders"`
-	Destination  string `json:"destination"`
+	Objects     []string `json:"objects"`
+	Folders     []string `json:"folders"`
+	Destination string   `json:"destination"`
 }
 
 type ReplyMove struct {
@@ -421,9 +415,9 @@ type ReplyMove struct {
 func (ops *DxOps) DxMove(
 	ctx context.Context,
 	httpClient *http.Client,
-	projId      string,
+	projId string,
 	objectIds []string,
-	folders   []string,
+	folders []string,
 	destination string) error {
 
 	if ops.options.Verbose {
@@ -495,19 +489,18 @@ func (ops *DxOps) DxRenameFolder(
 	return nil
 }
 
-
 type RequestClone struct {
-	Objects []string `json:"objects"`
-	Folders []string `json:"folders"`
-	Project string   `json:"project"`
-	Destination string `json:"destination"`
-	Parents bool     `json:"parents"`
+	Objects     []string `json:"objects"`
+	Folders     []string `json:"folders"`
+	Project     string   `json:"project"`
+	Destination string   `json:"destination"`
+	Parents     bool     `json:"parents"`
 }
 
 type ReplyClone struct {
-	Id string `json:"id"`
-	Project string `json:"project"`
-	Exists []string `json:"exists"`
+	Id      string   `json:"id"`
+	Project string   `json:"project"`
+	Exists  []string `json:"exists"`
 }
 
 func (ops *DxOps) DxClone(
@@ -545,7 +538,7 @@ func (ops *DxOps) DxClone(
 		return false, err
 	}
 
-	for _,id := range reply.Exists {
+	for _, id := range reply.Exists {
 		if id == srcId {
 			// was not copied, because there is an existing
 			// copy in the destination project.
@@ -562,7 +555,7 @@ type RequestSetProperties struct {
 }
 
 type ReplySetProperties struct {
-	Id  string `json:"id"`
+	Id string `json:"id"`
 }
 
 func (ops *DxOps) DxSetProperties(
@@ -598,12 +591,12 @@ func (ops *DxOps) DxSetProperties(
 }
 
 type RequestAddTags struct {
-	ProjId    string  `json:"project"`
-	Tags    []string  `json:"tags"`
+	ProjId string   `json:"project"`
+	Tags   []string `json:"tags"`
 }
 
 type ReplyAddTags struct {
-	Id  string `json:"id"`
+	Id string `json:"id"`
 }
 
 func (ops *DxOps) DxAddTags(
@@ -638,14 +631,13 @@ func (ops *DxOps) DxAddTags(
 	return nil
 }
 
-
 type RequestRemoveTags struct {
-	ProjId    string  `json:"project"`
-	Tags    []string  `json:"tags"`
+	ProjId string   `json:"project"`
+	Tags   []string `json:"tags"`
 }
 
 type ReplyRemoveTags struct {
-	Id  string `json:"id"`
+	Id string `json:"id"`
 }
 
 func (ops *DxOps) DxRemoveTags(

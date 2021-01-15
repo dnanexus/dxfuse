@@ -15,21 +15,21 @@ import (
 
 type Nonce struct {
 	seed    *rand.Rand
-	counter  uint64
+	counter uint64
 }
 
 const (
-	charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	charset  = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	nonceLen = 32
-	maxLen = 128
+	maxLen   = 128
 )
 
 func NewNonce() *Nonce {
 	nano := time.Now().UnixNano()
 	source := rand.NewSource(nano)
 	return &Nonce{
-		seed : rand.New(source),
-		counter : 0,
+		seed:    rand.New(source),
+		counter: 0,
 	}
 }
 
