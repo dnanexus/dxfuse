@@ -428,6 +428,13 @@ func startDaemonAndWaitForInitializationToComplete(cfg Config, logFile string) {
 	// build the command line arguments for the daemon
 	daemonArgs := buildDaemonCommandLine(cfg, fullManifestPath)
 	mountCmd := exec.Command(progPath, daemonArgs...)
+	// Redirect stderr in case of go panic to write the stacktrace in the logfile
+	// Required since dxfuse daemon is a subprocess and not running in the foreground
+	f, err := os.OpenFile(logFile, os.O_RDWR|os.O_CREATE|os.O_APPEND|os.O_TRUNC, 0666)
+	if err != nil {
+		log.Fatalf("error opening logfile: %v", err)
+	}
+	mountCmd.Stderr = f
 
 	// Start the command.
 	fmt.Println("starting fs daemon")
