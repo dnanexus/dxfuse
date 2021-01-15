@@ -17,35 +17,35 @@ import (
 
 const (
 	maxNumBulkDataThreads = 8
-	numFileThreads = 4
-	sweepPeriodicTime = 1 * time.Minute
+	numFileThreads        = 4
+	sweepPeriodicTime     = 1 * time.Minute
 )
 
 type Chunk struct {
-	fileId         string
-	index          int
+	fileId       string
+	index        int
 	data         []byte
-	fwg           *sync.WaitGroup
-	errorReports   chan error   // report errors if any
+	fwg          *sync.WaitGroup
+	errorReports chan error // report errors if any
 }
 
 type FileUpdateReq struct {
-	dfi           DirtyFileInfo
-	partSize      int64
-	uploadParams  FileUploadParameters
+	dfi          DirtyFileInfo
+	partSize     int64
+	uploadParams FileUploadParameters
 }
 
 type SyncDbDx struct {
-	dxEnv               dxda.DXEnvironment
-	options             Options
-	projId2Desc         map[string]DxDescribePrj
-	fileUpdateQueue     chan FileUpdateReq
-	chunkQueue          chan *Chunk
-	sweepStopChan       chan struct{}
-	sweepStoppedChan    chan struct{}
-	minChunkSize        int64
-	numBulkDataThreads  int
-	wg                  sync.WaitGroup
+	dxEnv              dxda.DXEnvironment
+	options            Options
+	projId2Desc        map[string]DxDescribePrj
+	fileUpdateQueue    chan FileUpdateReq
+	chunkQueue         chan *Chunk
+	sweepStopChan      chan struct{}
+	sweepStoppedChan   chan struct{}
+	minChunkSize       int64
+	numBulkDataThreads int
+	wg                 sync.WaitGroup
 	mutex              *sync.Mutex
 	mdb                *MetadataDb
 	ops                *DxOps
@@ -80,21 +80,20 @@ func NewSyncDbDx(
 		minChunkSize = 16 * MiB
 	}
 
-
 	sybx := &SyncDbDx{
-		dxEnv : dxEnv,
-		options : options,
-		projId2Desc : projId2Desc,
-		fileUpdateQueue : nil,
-		chunkQueue : chunkQueue,
-		sweepStopChan : nil,
-		sweepStoppedChan : nil,
-		minChunkSize : minChunkSize,
-		numBulkDataThreads : numBulkDataThreads,
-		mutex : mutex,
-		mdb : mdb,
-		ops : NewDxOps(dxEnv, options),
-		nonce : NewNonce(),
+		dxEnv:              dxEnv,
+		options:            options,
+		projId2Desc:        projId2Desc,
+		fileUpdateQueue:    nil,
+		chunkQueue:         chunkQueue,
+		sweepStopChan:      nil,
+		sweepStoppedChan:   nil,
+		minChunkSize:       minChunkSize,
+		numBulkDataThreads: numBulkDataThreads,
+		mutex:              mutex,
+		mdb:                mdb,
+		ops:                NewDxOps(dxEnv, options),
+		nonce:              NewNonce(),
 	}
 
 	// bunch of background threads to upload bulk file data.
@@ -116,7 +115,6 @@ func (sybx *SyncDbDx) log(a string, args ...interface{}) {
 	LogMsg("sync_db_dx", a, args...)
 }
 
-
 func (sybx *SyncDbDx) startSweepWorker() {
 	// start a periodic thread to synchronize the database with
 	// the platform
@@ -127,7 +125,7 @@ func (sybx *SyncDbDx) startSweepWorker() {
 
 func (sybx *SyncDbDx) stopSweepWorker() {
 	close(sybx.sweepStopChan)
-	<- sybx.sweepStoppedChan
+	<-sybx.sweepStoppedChan
 
 	sybx.sweepStopChan = nil
 	sybx.sweepStoppedChan = nil
@@ -164,7 +162,7 @@ func (sybx *SyncDbDx) bulkDataWorker() {
 	client := dxda.NewHttpClient()
 
 	for true {
-		chunk, ok := <- sybx.chunkQueue
+		chunk, ok := <-sybx.chunkQueue
 		if !ok {
 			return
 		}
@@ -189,7 +187,6 @@ func (sybx *SyncDbDx) bulkDataWorker() {
 		}
 	}
 }
-
 
 func divideRoundUp(x int64, y int64) int64 {
 	return (x + y - 1) / y
@@ -234,10 +231,10 @@ func (sybx *SyncDbDx) calcPartSize(param FileUploadParameters, fileSize int64) (
 	// 1) We have seen that using the minimum-part-size as reported by AWS is actually a bit
 	//    too small, so we add a little bit to it.
 	// 2) To make it easy to understanding the part sizes we make them a multiple of MiB.
-	minPartSize := MaxInt64(sybx.minChunkSize, param.MinimumPartSize + KiB)
+	minPartSize := MaxInt64(sybx.minChunkSize, param.MinimumPartSize+KiB)
 	preferedChunkSize := divideRoundUp(minPartSize, MiB) * MiB
 	for preferedChunkSize < param.MaximumPartSize {
-		if (checkPartSizeSolution(param, fileSize, preferedChunkSize)) {
+		if checkPartSizeSolution(param, fileSize, preferedChunkSize) {
 			return preferedChunkSize, nil
 		}
 		preferedChunkSize *= 2
@@ -306,18 +303,18 @@ func (sybx *SyncDbDx) uploadFileData(
 	ofs := int64(0)
 	cIndex := 1
 	for ofs <= fileEndOfs {
-		chunkEndOfs := MinInt64(ofs + upReq.partSize - 1, fileEndOfs)
+		chunkEndOfs := MinInt64(ofs+upReq.partSize-1, fileEndOfs)
 		chunkLen := chunkEndOfs - ofs
 		buf, err := readLocalFileExtent(upReq.dfi.LocalPath, ofs, int(chunkLen))
 		if err != nil {
 			return err
 		}
 		chunk := &Chunk{
-			fileId : fileId,
-			index : cIndex,
-			data : buf,
-			fwg : &fileWg,
-			errorReports : errorReports,
+			fileId:       fileId,
+			index:        cIndex,
+			data:         buf,
+			fwg:          &fileWg,
+			errorReports: errorReports,
 		}
 		// enqueue an upload request. This can block, if there
 		// are many chunks.
@@ -333,7 +330,7 @@ func (sybx *SyncDbDx) uploadFileData(
 	close(errorReports)
 
 	// check the error codes
-	for err := range(errorReports) {
+	for err := range errorReports {
 		return err
 	}
 	return nil
@@ -385,7 +382,6 @@ func (sybx *SyncDbDx) uploadFileDataAndWait(
 	return sybx.ops.DxFileCloseAndWait(context.TODO(), client, upReq.dfi.ProjId, fileId)
 }
 
-
 // Upload
 func (sybx *SyncDbDx) updateFileData(
 	client *http.Client,
@@ -407,7 +403,7 @@ func (sybx *SyncDbDx) updateFileData(
 		// an error could occur here if the directory has been removed
 		// while we were trying to upload the file.
 		sybx.log("Error in creating file (%s:%s/%s) on dnanexus: %s",
-			upReq.dfi.ProjId, upReq.dfi.ProjFolder,	upReq.dfi.Name,
+			upReq.dfi.ProjId, upReq.dfi.ProjFolder, upReq.dfi.Name,
 			err.Error())
 		return "", err
 	}
@@ -462,7 +458,7 @@ func (sybx *SyncDbDx) updateFileAttributes(client *http.Client, dfi DirtyFileInf
 	fsProps := dfi.Properties
 	opProps := make(map[string]*string)
 
-	for key, dnaxValue := range(dnaxProps) {
+	for key, dnaxValue := range dnaxProps {
 		fsValue, ok := fsProps[key]
 		if !ok {
 			// property was removed
@@ -473,7 +469,7 @@ func (sybx *SyncDbDx) updateFileAttributes(client *http.Client, dfi DirtyFileInf
 		}
 	}
 
-	for key, fsValue := range(fsProps) {
+	for key, fsValue := range fsProps {
 		_, ok := dnaxProps[key]
 		if !ok {
 			// a new property
@@ -501,16 +497,16 @@ func (sybx *SyncDbDx) updateFileAttributes(client *http.Client, dfi DirtyFileInf
 
 	// make hash-tables for easy access
 	dnaxTagsTbl := make(map[string]bool)
-	for _, tag := range(dnaxTags) {
+	for _, tag := range dnaxTags {
 		dnaxTagsTbl[tag] = true
 	}
 	fsTagsTbl := make(map[string]bool)
-	for _, tag := range(fsTags) {
+	for _, tag := range fsTags {
 		fsTagsTbl[tag] = true
 	}
 
 	var tagsRemoved []string
-	for _, tag := range(dnaxTags) {
+	for _, tag := range dnaxTags {
 		_, ok := fsTagsTbl[tag]
 		if !ok {
 			tagsRemoved = append(tagsRemoved, tag)
@@ -518,7 +514,7 @@ func (sybx *SyncDbDx) updateFileAttributes(client *http.Client, dfi DirtyFileInf
 	}
 
 	var tagsAdded []string
-	for _, tag := range(fsTags) {
+	for _, tag := range fsTags {
 		_, ok := dnaxTagsTbl[tag]
 		if !ok {
 			tagsAdded = append(tagsAdded, tag)
@@ -531,7 +527,7 @@ func (sybx *SyncDbDx) updateFileAttributes(client *http.Client, dfi DirtyFileInf
 		}
 	}
 
-	if len(tagsAdded) != 0  {
+	if len(tagsAdded) != 0 {
 		err := sybx.ops.DxAddTags(context.TODO(), client, dfi.ProjId, dfi.Id, tagsAdded)
 		if err != nil {
 			return err
@@ -609,9 +605,9 @@ to the platform due to part size constraints. Error=%s`,
 	}
 
 	sybx.fileUpdateQueue <- FileUpdateReq{
-		dfi : dfi,
-		partSize : partSize,
-		uploadParams : projDesc.UploadParams,
+		dfi:          dfi,
+		partSize:     partSize,
+		uploadParams: projDesc.UploadParams,
 	}
 	return nil
 }
@@ -636,7 +632,7 @@ func (sybx *SyncDbDx) sweep(flag int) error {
 	}
 
 	// enqueue them on the "to-upload" list
-	for _, file := range(dirtyFiles) {
+	for _, file := range dirtyFiles {
 		sybx.enqueueUpdateFileReq(file)
 	}
 
@@ -657,7 +653,7 @@ func (sybx *SyncDbDx) periodicSync() {
 		select {
 		default:
 			// normal case, we weren't stopped
-		case <- sybx.sweepStopChan:
+		case <-sybx.sweepStopChan:
 			sybx.log("stopped sweep thread")
 			close(sybx.sweepStoppedChan)
 			return

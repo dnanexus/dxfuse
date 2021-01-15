@@ -1,5 +1,23 @@
 # Release Notes
 
+## v0.23.2
+- Increase the default number of retries of http requests from 3 --> 10.
+
+## v0.23.1
+- Bump dxda dependency from v0.5.1 --> v0.5.4. 
+
+## v0.23.0
+- Default to read-only mode. `-readOnly` flag is deprecated.
+- Experimental `-readWrite` flag, but not guarantees are made about uploads
+- Raise object limit from 10k --> 255k objects in a directory
+- Continue prefetching sequential data from a file if half of the data from the previous range is read, not the entire chunk. Heuristic changed for running `plink` with dxfuse.
+
+## v0.22.4
+- Migrate to go modules.  No longer require cloning and building from within `$GOPATH`
+
+## v0.22.3
+- Rebuild with dxda update of https://github.com/dnanexus/dxda/commit/1827fc34f1cdf648a672fd75ad317c2acb6d10b3 to retry 502 errors inside a DNAnexus job
+
 ## v0.22.2
 - Use `/system/findDataObjects` route for bulk object describe calls, this significantly improves performance
  when the user has access to many projects.
@@ -15,7 +33,6 @@ The older method:
 ```
 sudo dxfuse -uid $(id -u) -gid $(id -g) MNT your_project
 ```
-
 
 ## v0.22
 - Use github actions for continuous integration (CI/CD)
