@@ -121,20 +121,10 @@ func (px *Posix) uniqueFileNames(dxObjs []DxDescribeDataObject) []string {
 
 // pick all the objects with "name" from the list. Return an empty array
 // if none exist. Sort them from newest to oldest.
-func (px *Posix) chooseAllObjectsWithName(
-	dxObjs []DxDescribeDataObject,
-	name string) []DxDescribeDataObject {
-
-	objs := make([]DxDescribeDataObject, 0)
-	for _, o := range dxObjs {
-		if o.Name == name {
-			objs = append(objs, o)
-		}
-	}
-
+func (px *Posix) SortObjectsByCtime(dxObjs []DxDescribeDataObject) []DxDescribeDataObject {
 	// sort by date
-	sort.Slice(objs, func(i, j int) bool { return objs[i].CtimeSeconds > objs[j].CtimeSeconds })
-	return objs
+	sort.Slice(dxObjs, func(i, j int) bool { return dxObjs[i].CtimeSeconds > dxObjs[j].CtimeSeconds })
+	return dxObjs
 }
 
 // main entry point
@@ -193,6 +183,15 @@ func (px *Posix) FixDir(dxFolder *DxFolder) (*PosixDir, error) {
 		px.log("unique file names=%v", uniqueFileNames)
 	}
 
+	dxObjsPerUniqueFilename := make(map[string][]DxDescribeDataObject)
+
+	// Create a map of object names to obj describes
+	// To be used in spreading objects across faux subdirs
+	// objName: [obj1Desc, obj2Desc]
+	for _, dxObj := range allDxObjs {
+		dxObjsPerUniqueFilename[dxObj.Name] = append(dxObjsPerUniqueFilename[dxObj.Name], dxObj)
+	}
+
 	// Iteratively, take unique files from the remaining objects, and place them in
 	// subdirectories 1, 2, 3, ... Be careful to create unused directory names
 	fauxSubDirs := make(map[string][]DxDescribeDataObject)
@@ -214,36 +213,31 @@ func (px *Posix) FixDir(dxFolder *DxFolder) (*PosixDir, error) {
 	// Take all the data-objects that have names that aren't already taken
 	// up by subdirs. They go in the top level
 	var topLevelObjs []DxDescribeDataObject
-	if len(allDxObjs) == len(uniqueFileNames) && len(subdirSet) < 1 {
-		px.log("Dir contains no duplicate filenames or subdirs with the same name as a filename, all objects are top level")
-		topLevelObjs = allDxObjs
-	} else {
-		for _, oName := range uniqueFileNames {
-			dxObjs := px.chooseAllObjectsWithName(allDxObjs, oName)
-			if px.options.VerboseLevel > 1 {
-				px.log("name=%s len(objs)=%d", oName, len(dxObjs))
-			}
+	for _, oName := range uniqueFileNames {
+		dxObjs := px.SortObjectsByCtime(dxObjsPerUniqueFilename[oName])
+		if px.options.VerboseLevel > 1 {
+			px.log("name=%s len(objs)=%d", oName, len(dxObjs))
+		}
 
-			_, ok := subdirSet[oName]
+		_, ok := subdirSet[oName]
+		if !ok {
+			// There is no directory with this name, we
+			// place the object at the toplevel
+			topLevelObjs = append(topLevelObjs, dxObjs[0])
+			dxObjs = dxObjs[1:]
+		}
+
+		// spread the remaining copies across the faux subdirectories
+		for i, obj := range dxObjs {
+			dName := fauxDirNames[i]
+			vec, ok := fauxSubDirs[dName]
 			if !ok {
-				// There is no directory with this name, we
-				// place the object at the toplevel
-				topLevelObjs = append(topLevelObjs, dxObjs[0])
-				dxObjs = dxObjs[1:]
-			}
-
-			// spread the remaining copies across the faux subdirectories
-			for i, obj := range dxObjs {
-				dName := fauxDirNames[i]
-				vec, ok := fauxSubDirs[dName]
-				if !ok {
-					// need to start a new faux subdir called "dName"
-					v := make([]DxDescribeDataObject, 1)
-					v[0] = obj
-					fauxSubDirs[dName] = v
-				} else {
-					fauxSubDirs[dName] = append(vec, obj)
-				}
+				// need to start a new faux subdir called "dName"
+				v := make([]DxDescribeDataObject, 1)
+				v[0] = obj
+				fauxSubDirs[dName] = v
+			} else {
+				fauxSubDirs[dName] = append(vec, obj)
 			}
 		}
 	}
