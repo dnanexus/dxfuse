@@ -56,5 +56,3 @@ function sync_concurrency_test {
 
     teardown
 }
-
-sync_concurrency_test
