@@ -18,7 +18,7 @@ function teardown {
         return
     fi
     teardown_complete=1
-    rm -f 50MB
+    rm -f 15MB
     dx rm -r $projName:/$writeable_dir
     echo "unmounting dxfuse"
     cd $HOME
@@ -33,12 +33,11 @@ function sync_concurrency_test {
     mkdir -p $mountpoint
     $dxfuse -readWrite $mountpoint $projName
     sleep 1
-    dd if=/dev/urandom of=50MB bs=1M count=50
+    dd if=/dev/urandom of=15MB bs=1M count=15
     writeable_dir=$(cat /dev/urandom | env LC_CTYPE=C LC_ALL=C tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
     dx mkdir $projName:/$writeable_dir
     # Start copy and dxfuse sync
-    cp 50MB $mountpoint/$projName/$writeable_dir &
-    CP_PID=$!
+    cp 15MB $mountpoint/$projName/$writeable_dir &
     $dxfuse -sync &
     SYNC_PID=$!
     sleep 1
@@ -46,7 +45,6 @@ function sync_concurrency_test {
     sync_output=$($dxfuse -sync 2>&1)
 
     if echo "$sync_output" | grep -q "another sync operation is already running"; then
-        wait $CP_PID
         wait $SYNC_PID
         echo "$sync_output"
         # Sync should function again now that the first sync command has completed
