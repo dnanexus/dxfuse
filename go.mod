@@ -1,6 +1,6 @@
 module github.com/dnanexus/dxfuse
 
-go 1.14
+go 1.15
 
 require (
 	github.com/dnanexus/dxda v0.5.4
