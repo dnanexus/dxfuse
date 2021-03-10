@@ -209,9 +209,9 @@ will create the directory structure:
 Browsing through directory `Cards/J`, is equivalent to traversing the remote `proj-1019001:/Joker` folder.
 
 
-# File creation and modification
+# Experimental file creation and modification
 
-dxfuse allows creating new files and modifing existing files,
+dxfuse has an unstable experimental mode that allows creating new files and modifing existing files,
 inspite of the fact that only immutable files exist on DNAx. The
 mismatch between what the filesystem allows (updating a file), and
 what is available natively on the platform makes the update operation
