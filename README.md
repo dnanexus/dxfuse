@@ -39,7 +39,7 @@ dxfuse approximates a normal POSIX filesystem, but does not always have the same
 
 There are several limitations currently:
 - Primarily intended for Linux, but can be used on OSX
-- Limits directories to 10,000 elements
+- Limits directories to 255,000 elements
 - Updates to the project emanating from other machines are not reflected locally
 - Rename does not allow removing the target file or directory. This is because this cannot be
   done automatically by dnanexus.
