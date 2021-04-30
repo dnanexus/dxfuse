@@ -1478,7 +1478,16 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 		return fuse.EINVAL
 	}
 
-	// we are not holding the global lock while we are doing IO
+	if op.Offset != fh.nextWriteOffset {
+		fsys.log("ERROR: Only sequential writes are supported")
+		return syscall.ENOTSUP
+	}
+
+	node, ok, err := fsys.mdb.LookupByInode(ctx, oph, int64(op.Inode))
+	if err != nil {
+		fsys.log("database error in OpenFile %s", err.Error())
+		return fuse.EIO
+	}
 
 	// Try to efficiently calculate the size and mtime, instead
 	// of doing a filesystem call.
@@ -1495,17 +1504,30 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 		fsys.log("database error in updating attributes for WriteFile %s", err.Error())
 		return fuse.EIO
 	}
+	for {
+		bytesCopied := copy(fh.uploadBuffer, op.Data)
+		fh.nextWriteOffset += int64(bytesCopied)
+		if len(fh.uploadBuffer) == cap(fh.uploadBuffer) {
+			// file-xxxx/upload
+			// PUT data
+		}
+		if bytesCopied == len(op.Data) {
+			break
+		}
 
-	nBytes, err := fh.fd.WriteAt(op.Data, op.Offset)
+		op.Data = op.Data[bytesCopied:]
+
+	}
 	// for data to write
 	// 	copy data to buffer
 	// 	  if buffer is full:
 	// 		upload to platform
-	// 		clear buffer
+	// 		empty slice
+	// 		fh.uploadBuffer = fh.uploadBuffer[:0]
 	//
 	//
 
-	return err
+	return nil
 }
 
 func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) error {
@@ -1520,8 +1542,9 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	if fh == nil {
 		return nil
 	}
-	if fh.lastPartId == 0 {
-		// upload and close 1 part file
+
+	if len(fh.uploadBuffer) > 0 {
+
 	}
 
 	return nil
