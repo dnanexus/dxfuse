@@ -18,9 +18,8 @@ const (
 	GiB = 1024 * MiB
 )
 const (
-	CreatedFilesDir = "created_files"
-	DatabaseFile    = "metadata.db"
-	LogFile         = "dxfuse.log"
+	DatabaseFile = "metadata.db"
+	LogFile      = "dxfuse.log"
 )
 const (
 	HttpClientPoolSize        = 4
@@ -159,9 +158,6 @@ type File struct {
 
 	// for a symlink, it holds the path.
 	Symlink string
-
-	// For a regular file, a path to a local copy (if any).
-	LocalPath string
 
 	// is the file modified
 	dirtyData     bool
