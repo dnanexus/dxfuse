@@ -1293,8 +1293,8 @@ func (mdb *MetadataDb) CreateFile(
 		dir.ProjId,
 		"open",
 		"live",
-		fileId, // no file-id yet
-		0,      /* the file is empty */
+		fileId,
+		0, /* the file is empty */
 		nowSeconds,
 		nowSeconds,
 		nil, // A local file initially doesn't have tags or properties
@@ -1311,7 +1311,7 @@ func (mdb *MetadataDb) CreateFile(
 	// 3. return a File structure
 	return File{
 		Kind:          FK_Regular,
-		Id:            "",
+		Id:            fileId,
 		ProjId:        dir.ProjId,
 		ArchivalState: "live",
 		Name:          fname,

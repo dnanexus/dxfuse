@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -81,12 +80,12 @@ type Filesys struct {
 	shutdownCalled bool
 }
 
-// Files can be in two access modes: remote-read-only or local-read-write
+// Files can be in two access modes: remote-read-only or remote-append-only
 const (
 	// read only file that is on the cloud
 	AM_RO_Remote = 1
 
-	// 'open' file that is being appended to on the cloud
+	// 'open' file that is being appended to on the platform
 	// file is not readable until it is in the 'closed' state
 	// at which point it is set to readonly and AM_RO_Remote
 	AM_WO_Remote = 2
@@ -99,6 +98,8 @@ type FileHandle struct {
 	size       int64 // this is up-to-date only for remote files
 	hid        fuseops.HandleID
 
+	Id string // To avoid looking up the file-id for each /upload call
+
 	// URL used for downloading file ranges.
 	// Used for read-only files.
 	url *DxDownloadURL
@@ -107,7 +108,7 @@ type FileHandle struct {
 	// Used to indiciate the last part number written
 	// Incremented for each buffer that is uploaded to the cloud
 	// Used to determine next part and buffer size
-	lastPartId      int64
+	lastPartId      int
 	nextWriteOffset int64
 	uploadBuffer    []byte
 }
@@ -778,6 +779,7 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 		inode:           file.Inode,
 		size:            file.Size,
 		url:             nil,
+		Id:              file.Id,
 		lastPartId:      0,
 		nextWriteOffset: 0,
 		uploadBuffer:    make([]byte, 0, 5*1024*1024),
@@ -1232,6 +1234,7 @@ func (fsys *Filesys) openRegularFile(
 			accessMode:      AM_WO_Remote,
 			inode:           f.Inode,
 			size:            f.Size,
+			Id:              f.Id,
 			url:             nil,
 			lastPartId:      0,
 			nextWriteOffset: 0,
@@ -1261,6 +1264,7 @@ func (fsys *Filesys) openRegularFile(
 		inode:           f.Inode,
 		size:            f.Size,
 		url:             &u,
+		Id:              f.Id,
 		lastPartId:      0,
 		nextWriteOffset: 0,
 		uploadBuffer:    nil,
@@ -1330,6 +1334,7 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 			accessMode: AM_RO_Remote,
 			inode:      file.Inode,
 			size:       file.Size,
+			Id:         file.Id,
 			url: &DxDownloadURL{
 				URL:     file.Symlink,
 				Headers: nil,
@@ -1450,17 +1455,9 @@ func (fsys *Filesys) ReadFile(ctx context.Context, op *fuseops.ReadFileOp) error
 	switch fh.accessMode {
 	case AM_RO_Remote:
 		return fsys.readRemoteFile(ctx, op, fh)
-	case AM_RW_Local:
-		// the file has a local copy
-		n, err := fh.fd.ReadAt(op.Dst, op.Offset)
-		if err == io.ErrUnexpectedEOF || err == io.EOF {
-			// we don't report EOF to FUSE, it notices
-			// it because the number of bytes read is smaller
-			// than requested.
-			err = nil
-		}
-		op.BytesRead = n
-		return err
+	case AM_WO_Remote:
+		// the file is being appened to, not readable in this state
+		return syscall.EPERM
 	default:
 		log.Panicf("Invalid file access mode %d", fh.accessMode)
 		return fuse.EIO
@@ -1483,50 +1480,41 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 		return syscall.ENOTSUP
 	}
 
-	node, ok, err := fsys.mdb.LookupByInode(ctx, oph, int64(op.Inode))
-	if err != nil {
-		fsys.log("database error in OpenFile %s", err.Error())
-		return fuse.EIO
-	}
+	numBytesToWrite := int64(len(op.Data))
 
-	// Try to efficiently calculate the size and mtime, instead
-	// of doing a filesystem call.
-	fSize := MaxInt64(op.Offset+int64(nBytes), fh.size)
-	mtime := time.Now()
-
-	// Update the file attributes in the database (size, mtime)
-	fsys.mutex.Lock()
-	defer fsys.mutex.Unlock()
-	oph := fsys.opOpenNoHttpClient()
+	oph := fsys.opOpen()
 	defer fsys.opClose(oph)
 
-	if err := fsys.mdb.UpdateFileAttrs(ctx, oph, fh.inode, fSize, mtime, nil); err != nil {
-		fsys.log("database error in updating attributes for WriteFile %s", err.Error())
-		return fuse.EIO
-	}
 	for {
 		bytesCopied := copy(fh.uploadBuffer, op.Data)
 		fh.nextWriteOffset += int64(bytesCopied)
 		if len(fh.uploadBuffer) == cap(fh.uploadBuffer) {
+			fh.lastPartId++
+			partId := fh.lastPartId
+			fsys.ops.DxFileUploadPart(context.TODO(), oph.httpClient)
+
 			// file-xxxx/upload
 			// PUT data
 		}
 		if bytesCopied == len(op.Data) {
 			break
 		}
-
 		op.Data = op.Data[bytesCopied:]
-
 	}
-	// for data to write
-	// 	copy data to buffer
-	// 	  if buffer is full:
-	// 		upload to platform
-	// 		empty slice
-	// 		fh.uploadBuffer = fh.uploadBuffer[:0]
-	//
-	//
 
+	// Try to efficiently calculate the size and mtime, instead
+	// of doing a filesystem call.
+	fSize := MaxInt64(op.Offset+numBytesToWrite, fh.size)
+	mtime := time.Now()
+
+	// Update the file attributes in the database (size, mtime)
+	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
+
+	if err := fsys.mdb.UpdateFileAttrs(ctx, oph, fh.inode, fSize, mtime, nil); err != nil {
+		fsys.log("database error in updating attributes for WriteFile %s", err.Error())
+		return fuse.EIO
+	}
 	return nil
 }
 
@@ -1542,8 +1530,20 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	if fh == nil {
 		return nil
 	}
+	oph := fsys.opOpen()
+	defer fsys.opClose(oph)
+	file, isDir, err := fsys.lookupFileByInode(ctx, oph, int64(op.Inode))
+	if isDir {
+		return fuse.ENOATTR
+	}
+	if err != nil {
+		return err
+	}
 
 	if len(fh.uploadBuffer) > 0 {
+		fh.lastPartId++
+		partId := fh.lastPartId
+		fsys.ops.DxFileUploadPart(context.TODO(), oph.httpClient, file.Id, int(partId), fh.uploadBuffer)
 
 	}
 
@@ -1589,25 +1589,10 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 		fsys.pgs.RemoveStreamEntry(fh.hid)
 		return nil
 
-	case AM_RW_Local:
-		// A new file created locally. We need to upload it
-		// to the platform.
+	case AM_WO_Remote:
 		if fsys.options.Verbose {
 			fsys.log("Close new file (inode=%d)", fh.inode)
 		}
-
-		// flush and close the local file
-		// We leave the local file in place. This allows read/write
-		// without additional network transfers.
-		if err := fh.fd.Sync(); err != nil {
-			return err
-		}
-		if err := fh.fd.Close(); err != nil {
-			return err
-		}
-		fh.fd = nil
-
-		// the sync daemon will upload the file asynchronously
 		return nil
 
 	default:
