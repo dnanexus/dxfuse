@@ -194,7 +194,7 @@ func NewDxfuse(
 	fsys.projId2Desc = projId2Desc
 
 	// initialize sync daemon
-	fsys.sybx = NewSyncDbDx(options, dxEnv, projId2Desc, mdb, fsys.mutex)
+	//fsys.sybx = NewSyncDbDx(options, dxEnv, projId2Desc, mdb, fsys.mutex)
 
 	// create an endpoint for communicating with the user
 	fsys.cmdSrv = NewCmdServer(options, fsys.sybx)
@@ -1598,9 +1598,6 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 		return nil
 
 	case AM_WO_Remote:
-		if fsys.options.Verbose {
-			fsys.log("Close new file (inode=%d)", fh.inode)
-		}
 		return nil
 
 	default:
