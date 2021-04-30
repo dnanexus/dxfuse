@@ -1485,16 +1485,22 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 	oph := fsys.opOpen()
 	defer fsys.opClose(oph)
 
+	// until all op.Data bytes are copied to upload buffer
+	//   copy bytes to buffer
+	//   update nextWriteOffset
+	//   if buffer is now full
+	//     increment part index
+	//     upload file part with full buffer
+	//   if all bytes have been copied break
+	//   strip bytes copied from op.Data for next copy
+
 	for {
 		bytesCopied := copy(fh.uploadBuffer, op.Data)
 		fh.nextWriteOffset += int64(bytesCopied)
 		if len(fh.uploadBuffer) == cap(fh.uploadBuffer) {
 			fh.lastPartId++
 			partId := fh.lastPartId
-			fsys.ops.DxFileUploadPart(context.TODO(), oph.httpClient)
-
-			// file-xxxx/upload
-			// PUT data
+			fsys.ops.DxFileUploadPart(context.TODO(), oph.httpClient, fh.Id, partId, fh.uploadBuffer)
 		}
 		if bytesCopied == len(op.Data) {
 			break
@@ -1530,23 +1536,25 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	if fh == nil {
 		return nil
 	}
+	if fh.accessMode != AM_WO_Remote {
+		// This isn't a writeable file, there is no dirty data to flush
+		return nil
+	}
+
 	oph := fsys.opOpen()
 	defer fsys.opClose(oph)
-	file, isDir, err := fsys.lookupFileByInode(ctx, oph, int64(op.Inode))
-	if isDir {
-		return fuse.ENOATTR
-	}
-	if err != nil {
-		return err
-	}
 
 	if len(fh.uploadBuffer) > 0 {
 		fh.lastPartId++
 		partId := fh.lastPartId
-		fsys.ops.DxFileUploadPart(context.TODO(), oph.httpClient, file.Id, int(partId), fh.uploadBuffer)
-
+		fsys.ops.DxFileUploadPart(context.TODO(), oph.httpClient, fh.Id, int(partId), fh.uploadBuffer)
 	}
+	file, _, _ := fsys.lookupFileByInode(ctx, oph, int64(op.Inode))
 
+	if fsys.options.Verbose {
+		fsys.log("Flush and closing inode %d, %s", op.Inode, fh.Id)
+	}
+	fsys.ops.DxFileCloseAndWait(context.TODO(), oph.httpClient, file.ProjId, fh.Id)
 	return nil
 }
 
