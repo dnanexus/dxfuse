@@ -148,7 +148,7 @@ func fsDaemon(
 		//
 		// Currently, instead of dxfuse receiving every 4KB synchronously,
 		// it can get 128KB.
-		DisableWritebackCaching: false,
+		DisableWritebackCaching: true,
 		Options:                 mountOptions,
 	}
 

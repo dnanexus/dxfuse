@@ -685,7 +685,7 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 		var dirtyMetadata int
 		rows.Scan(&f.Kind, &f.Id, &f.ProjId, &f.State, &f.ArchivalState, &f.Inode,
 			&f.Size, &ctime, &mtime, &mode,
-			&tags, &props, &f.Symlink, &f.LocalPath, &dirtyData, &dirtyMetadata, &f.Name)
+			&tags, &props, &f.Symlink, &dirtyData, &dirtyMetadata, &f.Name)
 		f.Ctime = SecondsToTime(ctime)
 		f.Mtime = SecondsToTime(mtime)
 		f.Tags = tagsUnmarshal(tags)
@@ -741,7 +741,7 @@ func (mdb *MetadataDb) createDataObject(
 	// Create an entry for the file
 	sqlStmt := fmt.Sprintf(`
  	        INSERT INTO data_objects
-		VALUES ('%d', '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%s', '%s', '%s', '%s', '%d', '%d');`,
+		VALUES ('%d', '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%s', '%s', '%s', '%d', '%d');`,
 		kind, objId, projId, state, archivalState, inode, size, ctime, mtime, int(mode),
 		mTags, mProps, symlink,
 		boolToInt(dirtyData), boolToInt(dirtyMetadata))
@@ -1265,16 +1265,16 @@ func (mdb *MetadataDb) CreateFile(
 	fname string,
 	mode os.FileMode) (File, error) {
 	if mdb.options.Verbose {
-		mdb.log("CreateFile %s/%s proj=%s",
-			dir.FullPath, fname, dir.ProjId)
+		mdb.log("CreateFile %s/%s projpath=%s%s",
+			dir.FullPath, fname, dir.ProjFolder, dir.ProjId)
 	}
 
 	// Create remote file
 	fileId, err := mdb.ops.DxFileNew(
-		context.TODO(), oph.httpClient, "noncestring",
+		context.TODO(), oph.httpClient, NewNonce().String(),
 		dir.ProjId,
 		fname,
-		dir.FullPath)
+		dir.ProjFolder)
 	if err != nil {
 		mdb.log("CreateFile error creating data object")
 		return File{}, err

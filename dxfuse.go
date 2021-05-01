@@ -111,6 +111,10 @@ type FileHandle struct {
 	lastPartId      int
 	nextWriteOffset int64
 	uploadBuffer    []byte
+	// Keep track of bytes written to buffer
+	wb int
+	// Lock for writing
+	mutex *sync.Mutex
 }
 
 type DirHandle struct {
@@ -782,7 +786,9 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 		Id:              file.Id,
 		lastPartId:      0,
 		nextWriteOffset: 0,
-		uploadBuffer:    make([]byte, 0, 5*1024*1024),
+		uploadBuffer:    make([]byte, 0, 64*1024*1024),
+		wb:              0,
+		mutex:           &sync.Mutex{},
 	}
 	op.Handle = fsys.insertIntoFileHandleTable(&fh)
 	return nil
@@ -1240,6 +1246,8 @@ func (fsys *Filesys) openRegularFile(
 			nextWriteOffset: 0,
 			// 5MB slice capacity
 			uploadBuffer: make([]byte, 0, 5*1024*1024),
+			wb:           0,
+			mutex:        &sync.Mutex{},
 		}
 
 		return fh, nil
@@ -1268,6 +1276,8 @@ func (fsys *Filesys) openRegularFile(
 		lastPartId:      0,
 		nextWriteOffset: 0,
 		uploadBuffer:    nil,
+		wb:              0,
+		mutex:           nil,
 	}
 
 	return fh, nil
@@ -1342,6 +1352,8 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 			lastPartId:      0,
 			nextWriteOffset: 0,
 			uploadBuffer:    nil,
+			wb:              0,
+			mutex:           nil,
 		}
 	default:
 		// can't open an applet/workflow/etc.
@@ -1359,26 +1371,6 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 		fsys.pgs.CreateStreamEntry(fh.hid, file, *fh.url)
 	}
 	return nil
-}
-
-func (fsys *Filesys) getWritableFD(ctx context.Context, handle fuseops.HandleID) (*os.File, error) {
-	fsys.mutex.Lock()
-	defer fsys.mutex.Unlock()
-
-	fh, ok := fsys.fhTable[handle]
-	if !ok {
-		// File handle doesn't exist
-		return nil, fuse.EINVAL
-	}
-
-	if fh.accessMode != 6 {
-		// This isn't a writeable file, there is no dirty data to flush
-		return nil, nil
-	}
-	if fh.fd == nil {
-		return nil, nil
-	}
-	return fh.fd, nil
 }
 
 // read a remote immutable file
@@ -1469,12 +1461,25 @@ func (fsys *Filesys) ReadFile(ctx context.Context, op *fuseops.ReadFileOp) error
 // Note: the file-open operation doesn't state if the file is going to be opened for
 // reading or writing.
 func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) error {
+	fsys.mutex.Lock()
 	fh, ok := fsys.fhTable[op.Handle]
+	if !ok {
+		// invalid file handle. It doesn't exist in the table
+		fsys.mutex.Unlock()
+		return fuse.EINVAL
+	}
+	fsys.log("Unlocking fs")
+	fsys.mutex.Unlock()
 	if !ok {
 		// invalid file handle. It doesn't exist in the table
 		return fuse.EINVAL
 	}
+	// One write at a time per fh so that sequential offsets work properly
+	fh.mutex.Lock()
+	fsys.log("ACQUIRED filehandle LOCK")
+	defer fh.mutex.Unlock()
 
+	fsys.log("op.Offest: %d, fh.nextWriteOffest: %d", op.Offset, fh.nextWriteOffset)
 	if op.Offset != fh.nextWriteOffset {
 		fsys.log("ERROR: Only sequential writes are supported")
 		return syscall.ENOTSUP
@@ -1495,17 +1500,44 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 	//   strip bytes copied from op.Data for next copy
 
 	for {
-		bytesCopied := copy(fh.uploadBuffer, op.Data)
+		fsys.log("Copying into buffer")
+		fsys.log("bufferLen: %d bufferCap: %d opDataLen: %d", len(fh.uploadBuffer), cap(fh.uploadBuffer), len(op.Data))
+		sliceUpperBound := fh.wb + len(op.Data)
+		if sliceUpperBound > cap(fh.uploadBuffer) {
+			sliceUpperBound = cap(fh.uploadBuffer)
+		}
+		// expand slice
+		fh.uploadBuffer = fh.uploadBuffer[:sliceUpperBound]
+		fsys.log("%v, %v", fh.wb, sliceUpperBound)
+		// copy data into slice
+		bytesCopied := copy(fh.uploadBuffer[fh.wb:sliceUpperBound], op.Data)
+		fsys.log("Copied: %v", bytesCopied)
+		// increment next write offset
 		fh.nextWriteOffset += int64(bytesCopied)
+		//fsys.log("%v", fh.uploadBuffer)
+		fsys.log("bufferLen: %d bufferCap: %d opDataLen: %d", len(fh.uploadBuffer), cap(fh.uploadBuffer), len(op.Data))
 		if len(fh.uploadBuffer) == cap(fh.uploadBuffer) {
+			// increment part id
 			fh.lastPartId++
 			partId := fh.lastPartId
+			// upload full 5MB buffer!
+			fsys.log("uploading part")
 			fsys.ops.DxFileUploadPart(context.TODO(), oph.httpClient, fh.Id, partId, fh.uploadBuffer)
+			fsys.log("zeroing buffer i hope")
+			fh.uploadBuffer = fh.uploadBuffer[:0]
+			fh.wb = 0
+			fsys.log("%v", fh.uploadBuffer)
+
 		}
+		// increment current buffer slice counter
+		fh.wb += bytesCopied
+		// all data copied into buffer slice, break
 		if bytesCopied == len(op.Data) {
 			break
 		}
+		// trim data
 		op.Data = op.Data[bytesCopied:]
+
 	}
 
 	// Try to efficiently calculate the size and mtime, instead
@@ -1563,16 +1595,7 @@ func (fsys *Filesys) SyncFile(ctx context.Context, op *fuseops.SyncFileOp) error
 		fsys.log("Sync inode %d", op.Inode)
 	}
 
-	fd, err := fsys.getWritableFD(ctx, op.Handle)
-	if err != nil {
-		return err
-	}
-	if fd == nil {
-		return nil
-	}
-
-	// we aren't holding the filesystem lock at this point
-	return fd.Sync()
+	return nil
 }
 
 func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseFileHandleOp) error {
