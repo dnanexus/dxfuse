@@ -1244,8 +1244,8 @@ func (fsys *Filesys) openRegularFile(
 			url:             nil,
 			lastPartId:      0,
 			nextWriteOffset: 0,
-			// 5MB slice capacity
-			uploadBuffer: make([]byte, 0, 5*1024*1024),
+			// 16MB slice capacity
+			uploadBuffer: make([]byte, 0, 16*1024*1024),
 			wb:           0,
 			mutex:        &sync.Mutex{},
 		}
@@ -1586,7 +1586,16 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	if fsys.options.Verbose {
 		fsys.log("Flush and closing inode %d, %s", op.Inode, fh.Id)
 	}
+	// Update the file attributes in the database (size, mtime)
+	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
+
+	if err := fsys.mdb.UpdateFileAttrs(ctx, oph, fh.inode, fSize, mtime, nil); err != nil {
+		fsys.log("database error in updating attributes for WriteFile %s", err.Error())
+		return fuse.EIO
+	}
 	fsys.ops.DxFileCloseAndWait(context.TODO(), oph.httpClient, file.ProjId, fh.Id)
+
 	return nil
 }
 
