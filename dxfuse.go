@@ -471,8 +471,9 @@ func (fsys *Filesys) SetInodeAttributes(ctx context.Context, op *fuseops.SetInod
 	if op.Mtime != nil {
 		attrs.Mtime = *op.Mtime
 	}
+	// Don't allow chmod
 	// we don't handle atime
-	err = fsys.mdb.UpdateFileAttrs(ctx, oph, file.Inode, int64(attrs.Size), attrs.Mtime, &attrs.Mode)
+	err = fsys.mdb.UpdateFileAttrs(ctx, oph, file.Inode, int64(attrs.Size), attrs.Mtime, nil)
 	if err != nil {
 		fsys.log("database error in OpenFile %s", err.Error())
 		return fuse.EIO
@@ -1468,7 +1469,6 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 		fsys.mutex.Unlock()
 		return fuse.EINVAL
 	}
-	fsys.log("Unlocking fs")
 	fsys.mutex.Unlock()
 	if !ok {
 		// invalid file handle. It doesn't exist in the table
@@ -1476,10 +1476,9 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 	}
 	// One write at a time per fh so that sequential offsets work properly
 	fh.mutex.Lock()
-	fsys.log("ACQUIRED filehandle LOCK")
 	defer fh.mutex.Unlock()
 
-	fsys.log("op.Offest: %d, fh.nextWriteOffest: %d", op.Offset, fh.nextWriteOffset)
+	//fsys.log("op.Offest: %d, fh.nextWriteOffest: %d", op.Offset, fh.nextWriteOffset)
 	if op.Offset != fh.nextWriteOffset {
 		fsys.log("ERROR: Only sequential writes are supported")
 		return syscall.ENOTSUP
@@ -1489,6 +1488,7 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 
 	oph := fsys.opOpen()
 	defer fsys.opClose(oph)
+	//fsys.log("Copying bytes")
 
 	// until all op.Data bytes are copied to upload buffer
 	//   copy bytes to buffer
@@ -1499,35 +1499,41 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 	//   if all bytes have been copied break
 	//   strip bytes copied from op.Data for next copy
 
+	fh.size += numBytesToWrite
+	mtime := time.Now()
+
 	for {
-		fsys.log("Copying into buffer")
-		fsys.log("bufferLen: %d bufferCap: %d opDataLen: %d", len(fh.uploadBuffer), cap(fh.uploadBuffer), len(op.Data))
+		//fsys.log("Copying into buffer")
+		//fsys.log("bufferLen: %d bufferCap: %d opDataLen: %d", len(fh.uploadBuffer), cap(fh.uploadBuffer), len(op.Data))
 		sliceUpperBound := fh.wb + len(op.Data)
 		if sliceUpperBound > cap(fh.uploadBuffer) {
 			sliceUpperBound = cap(fh.uploadBuffer)
 		}
 		// expand slice
 		fh.uploadBuffer = fh.uploadBuffer[:sliceUpperBound]
-		fsys.log("%v, %v", fh.wb, sliceUpperBound)
+		//fsys.log("%v, %v", fh.wb, sliceUpperBound)
 		// copy data into slice
 		bytesCopied := copy(fh.uploadBuffer[fh.wb:sliceUpperBound], op.Data)
-		fsys.log("Copied: %v", bytesCopied)
+		//fsys.log("Copied: %v", bytesCopied)
 		// increment next write offset
 		fh.nextWriteOffset += int64(bytesCopied)
 		//fsys.log("%v", fh.uploadBuffer)
-		fsys.log("bufferLen: %d bufferCap: %d opDataLen: %d", len(fh.uploadBuffer), cap(fh.uploadBuffer), len(op.Data))
+		//fsys.log("bufferLen: %d bufferCap: %d opDataLen: %d", len(fh.uploadBuffer), cap(fh.uploadBuffer), len(op.Data))
 		if len(fh.uploadBuffer) == cap(fh.uploadBuffer) {
 			// increment part id
 			fh.lastPartId++
 			partId := fh.lastPartId
 			// upload full 5MB buffer!
-			fsys.log("uploading part")
+			fsys.log("uploading part!")
 			fsys.ops.DxFileUploadPart(context.TODO(), oph.httpClient, fh.Id, partId, fh.uploadBuffer)
 			fsys.log("zeroing buffer i hope")
 			fh.uploadBuffer = fh.uploadBuffer[:0]
 			fh.wb = 0
 			fsys.log("%v", fh.uploadBuffer)
-
+			if err := fsys.mdb.UpdateFileAttrs(ctx, oph, fh.inode, fh.size, mtime, nil); err != nil {
+				fsys.log("database error in updating attributes for WriteFile %s", err.Error())
+				return fuse.EIO
+			}
 		}
 		// increment current buffer slice counter
 		fh.wb += bytesCopied
@@ -1542,17 +1548,12 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 
 	// Try to efficiently calculate the size and mtime, instead
 	// of doing a filesystem call.
-	fSize := MaxInt64(op.Offset+numBytesToWrite, fh.size)
-	mtime := time.Now()
 
 	// Update the file attributes in the database (size, mtime)
-	fsys.mutex.Lock()
-	defer fsys.mutex.Unlock()
+	// fsys.mutex.Lock()
+	// defer fsys.mutex.Unlock()
 
-	if err := fsys.mdb.UpdateFileAttrs(ctx, oph, fh.inode, fSize, mtime, nil); err != nil {
-		fsys.log("database error in updating attributes for WriteFile %s", err.Error())
-		return fuse.EIO
-	}
+	// fsys.log("done writing")
 	return nil
 }
 
@@ -1590,11 +1591,20 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
 
-	if err := fsys.mdb.UpdateFileAttrs(ctx, oph, fh.inode, fSize, mtime, nil); err != nil {
-		fsys.log("database error in updating attributes for WriteFile %s", err.Error())
+	go fsys.ops.DxFileCloseAndWait(context.TODO(), oph.httpClient, file.ProjId, fh.Id)
+
+	mtime := time.Now()
+	var mode os.FileMode = fileReadOnlyMode
+
+	if err := fsys.mdb.UpdateFileAttrs(ctx, oph, fh.inode, fh.size, mtime, &mode); err != nil {
+		fsys.log("database error in updating attributes for FlushFile %s", err.Error())
 		return fuse.EIO
 	}
-	fsys.ops.DxFileCloseAndWait(context.TODO(), oph.httpClient, file.ProjId, fh.Id)
+
+	if err := fsys.mdb.UpdateClosedFileMetadata(ctx, oph, fh.inode); err != nil {
+		fsys.log("database error in updating attributes for closed FlushFile %s", err.Error())
+		return fuse.EIO
+	}
 
 	return nil
 }
@@ -1765,13 +1775,17 @@ func (fsys *Filesys) getXattrFill(op *fuseops.GetXattrOp, val_str string) error 
 }
 
 func (fsys *Filesys) GetXattr(ctx context.Context, op *fuseops.GetXattrOp) error {
+	if op.Name == "security.capability" {
+		return fuse.ENOATTR
+	}
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
 	oph := fsys.opOpen()
 	defer fsys.opClose(oph)
+	fsys.log("GetXattr %v", op)
 
 	if fsys.options.VerboseLevel > 1 {
-		fsys.log("GetXattr %d", op.Inode)
+		fsys.log("GetXattr %v", op)
 	}
 
 	// Grab the inode.
