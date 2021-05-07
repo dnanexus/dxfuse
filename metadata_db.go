@@ -930,12 +930,7 @@ func (mdb *MetadataDb) populateDir(
 	if mdb.options.VerboseLevel > 1 {
 		mdb.log("inserting files")
 	}
-	var fileMode os.FileMode
-	if mdb.options.ReadOnly {
-		fileMode = fileReadOnlyMode
-	} else {
-		fileMode = fileReadWriteMode
-	}
+
 	for _, o := range dxObjs {
 		kind := mdb.kindOfFile(o)
 		symlink := symlinkOfFile(kind, o)
@@ -954,7 +949,7 @@ func (mdb *MetadataDb) populateDir(
 			o.MtimeSeconds,
 			o.Tags,
 			o.Properties,
-			fileMode,
+			fileReadOnlyMode,
 			dirPath,
 			o.Name,
 			symlink)
@@ -1383,6 +1378,29 @@ func (mdb *MetadataDb) UpdateFileAttrs(
 			WHERE inode = '%d';`,
 			fileSize, modTimeSec, int(*mode), inode)
 	}
+
+	if _, err := oph.txn.Exec(sqlStmt); err != nil {
+		mdb.log(err.Error())
+		mdb.log("UpdateFile error executing transaction")
+		return oph.RecordError(err)
+	}
+	return nil
+}
+
+func (mdb *MetadataDb) UpdateClosedFileMetadata(
+	ctx context.Context,
+	oph *OpHandle,
+	inode int64) error {
+
+	sqlStmt := ""
+	// don't update the mode
+	if mdb.options.Verbose {
+		mdb.log("Update inode=%d state=closed", inode)
+	}
+	sqlStmt = fmt.Sprintf(`
+ 		        UPDATE data_objects
+                        SET state = 'closed', dirty_data='0'
+			WHERE inode = '%d';`, inode)
 
 	if _, err := oph.txn.Exec(sqlStmt); err != nil {
 		mdb.log(err.Error())
