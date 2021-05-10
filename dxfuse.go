@@ -89,7 +89,7 @@ const (
 	// 'open' file that is being appended to on the platform
 	// file is not readable until it is in the 'closed' state
 	// at which point it is set to readonly and AM_RO_Remote
-	AM_WO_Remote = 2
+	AM_AO_Remote = 2
 )
 
 type FileHandle struct {
@@ -781,7 +781,7 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	}
 
 	fh := FileHandle{
-		accessMode:        AM_WO_Remote,
+		accessMode:        AM_AO_Remote,
 		inode:             file.Inode,
 		size:              file.Size,
 		url:               nil,
@@ -1239,7 +1239,7 @@ func (fsys *Filesys) openRegularFile(
 
 	if f.dirtyData {
 		fh := &FileHandle{
-			accessMode:      AM_WO_Remote,
+			accessMode:      AM_AO_Remote,
 			inode:           f.Inode,
 			size:            f.Size,
 			Id:              f.Id,
@@ -1449,7 +1449,7 @@ func (fsys *Filesys) ReadFile(ctx context.Context, op *fuseops.ReadFileOp) error
 	switch fh.accessMode {
 	case AM_RO_Remote:
 		return fsys.readRemoteFile(ctx, op, fh)
-	case AM_WO_Remote:
+	case AM_AO_Remote:
 		// the file is being appened to, not readable in this state
 		return syscall.EPERM
 	default:
@@ -1570,7 +1570,7 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	if fh == nil {
 		return nil
 	}
-	if fh.accessMode != AM_WO_Remote {
+	if fh.accessMode != AM_AO_Remote {
 		// This isn't a writeable file, there is no dirty data to flush
 		return nil
 	}
@@ -1640,7 +1640,7 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 		fsys.pgs.RemoveStreamEntry(fh.hid)
 		return nil
 
-	case AM_WO_Remote:
+	case AM_AO_Remote:
 		return nil
 
 	default:
