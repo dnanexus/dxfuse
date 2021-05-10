@@ -173,7 +173,7 @@ func fsDaemon(
 }
 
 func waitForReady(logFile string) string {
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 90; i++ {
 		time.Sleep(1 * time.Second)
 
 		// read the log file and look for either "ready" or "error"
