@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -110,9 +111,9 @@ type FileHandle struct {
 	// Used to determine next part and buffer size
 	lastPartId      int
 	nextWriteOffset int64
-	uploadBuffer    []byte
+	writeBuffer     []byte
 	// Keep track of bytes written to buffer
-	wb int
+	writeBufferOffset int
 	// Lock for writing
 	mutex *sync.Mutex
 }
@@ -780,16 +781,16 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	}
 
 	fh := FileHandle{
-		accessMode:      AM_WO_Remote,
-		inode:           file.Inode,
-		size:            file.Size,
-		url:             nil,
-		Id:              file.Id,
-		lastPartId:      0,
-		nextWriteOffset: 0,
-		uploadBuffer:    make([]byte, 0, 64*1024*1024),
-		wb:              0,
-		mutex:           &sync.Mutex{},
+		accessMode:        AM_WO_Remote,
+		inode:             file.Inode,
+		size:              file.Size,
+		url:               nil,
+		Id:                file.Id,
+		lastPartId:        0,
+		nextWriteOffset:   0,
+		writeBuffer:       make([]byte, 0, 96*1024*1024),
+		writeBufferOffset: 0,
+		mutex:             &sync.Mutex{},
 	}
 	op.Handle = fsys.insertIntoFileHandleTable(&fh)
 	return nil
@@ -1245,10 +1246,10 @@ func (fsys *Filesys) openRegularFile(
 			url:             nil,
 			lastPartId:      0,
 			nextWriteOffset: 0,
-			// 16MB slice capacity
-			uploadBuffer: make([]byte, 0, 16*1024*1024),
-			wb:           0,
-			mutex:        &sync.Mutex{},
+			// 96MB slice capacity
+			writeBuffer:       make([]byte, 0, 96*1024*1024),
+			writeBufferOffset: 0,
+			mutex:             &sync.Mutex{},
 		}
 
 		return fh, nil
@@ -1269,16 +1270,16 @@ func (fsys *Filesys) openRegularFile(
 	json.Unmarshal(body, &u)
 
 	fh := &FileHandle{
-		accessMode:      AM_RO_Remote,
-		inode:           f.Inode,
-		size:            f.Size,
-		url:             &u,
-		Id:              f.Id,
-		lastPartId:      0,
-		nextWriteOffset: 0,
-		uploadBuffer:    nil,
-		wb:              0,
-		mutex:           nil,
+		accessMode:        AM_RO_Remote,
+		inode:             f.Inode,
+		size:              f.Size,
+		url:               &u,
+		Id:                f.Id,
+		lastPartId:        0,
+		nextWriteOffset:   0,
+		writeBuffer:       nil,
+		writeBufferOffset: 0,
+		mutex:             nil,
 	}
 
 	return fh, nil
@@ -1350,11 +1351,11 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 				URL:     file.Symlink,
 				Headers: nil,
 			},
-			lastPartId:      0,
-			nextWriteOffset: 0,
-			uploadBuffer:    nil,
-			wb:              0,
-			mutex:           nil,
+			lastPartId:        0,
+			nextWriteOffset:   0,
+			writeBuffer:       nil,
+			writeBufferOffset: 0,
+			mutex:             nil,
 		}
 	default:
 		// can't open an applet/workflow/etc.
@@ -1478,17 +1479,16 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 	fh.mutex.Lock()
 	defer fh.mutex.Unlock()
 
-	//fsys.log("op.Offest: %d, fh.nextWriteOffest: %d", op.Offset, fh.nextWriteOffset)
 	if op.Offset != fh.nextWriteOffset {
 		fsys.log("ERROR: Only sequential writes are supported")
+		fsys.log("%v", fh.writeBufferOffset)
+		fsys.log("op.Offest: %d, fh.nextWriteOffest: %d", op.Offset, fh.nextWriteOffset)
 		return syscall.ENOTSUP
 	}
 
-	numBytesToWrite := int64(len(op.Data))
-
+	bytesToWrite := op.Data
 	oph := fsys.opOpen()
 	defer fsys.opClose(oph)
-	//fsys.log("Copying bytes")
 
 	// until all op.Data bytes are copied to upload buffer
 	//   copy bytes to buffer
@@ -1499,50 +1499,51 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 	//   if all bytes have been copied break
 	//   strip bytes copied from op.Data for next copy
 
-	fh.size += numBytesToWrite
-	mtime := time.Now()
-
 	for {
-		//fsys.log("Copying into buffer")
-		//fsys.log("bufferLen: %d bufferCap: %d opDataLen: %d", len(fh.uploadBuffer), cap(fh.uploadBuffer), len(op.Data))
-		sliceUpperBound := fh.wb + len(op.Data)
-		if sliceUpperBound > cap(fh.uploadBuffer) {
-			sliceUpperBound = cap(fh.uploadBuffer)
+		sliceUpperBound := fh.writeBufferOffset + len(bytesToWrite)
+		if sliceUpperBound > cap(fh.writeBuffer) {
+			sliceUpperBound = cap(fh.writeBuffer)
 		}
 		// expand slice
-		fh.uploadBuffer = fh.uploadBuffer[:sliceUpperBound]
-		//fsys.log("%v, %v", fh.wb, sliceUpperBound)
+		fh.writeBuffer = fh.writeBuffer[:sliceUpperBound]
 		// copy data into slice
-		bytesCopied := copy(fh.uploadBuffer[fh.wb:sliceUpperBound], op.Data)
+		bytesCopied := copy(fh.writeBuffer[fh.writeBufferOffset:sliceUpperBound], bytesToWrite)
+		fh.size += int64(bytesCopied)
+		if bytesCopied != 128*1024 {
+			fsys.log("bytesCopied: %v", bytesCopied)
+			fsys.log("upperBound: %v", sliceUpperBound)
+			fsys.log("bufferlen: %v, buffcap: %v", len(fh.writeBuffer), cap(fh.writeBuffer))
+		}
 		//fsys.log("Copied: %v", bytesCopied)
 		// increment next write offset
 		fh.nextWriteOffset += int64(bytesCopied)
-		//fsys.log("%v", fh.uploadBuffer)
-		//fsys.log("bufferLen: %d bufferCap: %d opDataLen: %d", len(fh.uploadBuffer), cap(fh.uploadBuffer), len(op.Data))
-		if len(fh.uploadBuffer) == cap(fh.uploadBuffer) {
+		// increment current buffer slice offset
+		fh.writeBufferOffset += bytesCopied
+		//fsys.log("bufferLen: %d bufferCap: %d opDataLen: %d", len(fh.writeBuffer), cap(fh.writeBuffer), len(op.Data))
+		if len(fh.writeBuffer) == cap(fh.writeBuffer) {
 			// increment part id
 			fh.lastPartId++
 			partId := fh.lastPartId
-			// upload full 5MB buffer!
-			fsys.log("uploading part!")
-			fsys.ops.DxFileUploadPart(context.TODO(), oph.httpClient, fh.Id, partId, fh.uploadBuffer)
-			fsys.log("zeroing buffer i hope")
-			fh.uploadBuffer = fh.uploadBuffer[:0]
-			fh.wb = 0
-			fsys.log("%v", fh.uploadBuffer)
-			if err := fsys.mdb.UpdateFileAttrs(ctx, oph, fh.inode, fh.size, mtime, nil); err != nil {
+			// upload buffer
+			fsys.ops.DxFileUploadPart(context.TODO(), oph.httpClient, fh.Id, partId, fh.writeBuffer)
+			fh.writeBuffer = fh.writeBuffer[:0]
+			// increasing buffer size for next part
+			nextCap := 96 * 1024 * 1024 * math.Pow(1.0003, float64(partId))
+			nextBufferCapacity := math.Round(nextCap)
+			fsys.log("Nextbuffercap: %v", nextBufferCapacity)
+			fh.writeBuffer = make([]byte, 0, int64(nextBufferCapacity))
+			fh.writeBufferOffset = 0
+			if err := fsys.mdb.UpdateFileAttrs(ctx, oph, fh.inode, fh.size, time.Now(), nil); err != nil {
 				fsys.log("database error in updating attributes for WriteFile %s", err.Error())
 				return fuse.EIO
 			}
 		}
-		// increment current buffer slice counter
-		fh.wb += bytesCopied
 		// all data copied into buffer slice, break
-		if bytesCopied == len(op.Data) {
+		if bytesCopied == len(bytesToWrite) {
 			break
 		}
-		// trim data
-		op.Data = op.Data[bytesCopied:]
+		// trim data if it was only partially copied
+		bytesToWrite = bytesToWrite[bytesCopied:]
 
 	}
 
@@ -1577,10 +1578,10 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	oph := fsys.opOpen()
 	defer fsys.opClose(oph)
 
-	if len(fh.uploadBuffer) > 0 {
+	if len(fh.writeBuffer) > 0 {
 		fh.lastPartId++
 		partId := fh.lastPartId
-		fsys.ops.DxFileUploadPart(context.TODO(), oph.httpClient, fh.Id, int(partId), fh.uploadBuffer)
+		fsys.ops.DxFileUploadPart(context.TODO(), oph.httpClient, fh.Id, int(partId), fh.writeBuffer)
 	}
 	file, _, _ := fsys.lookupFileByInode(ctx, oph, int64(op.Inode))
 
