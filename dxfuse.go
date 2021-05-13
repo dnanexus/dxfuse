@@ -1578,11 +1578,13 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	oph := fsys.opOpen()
 	defer fsys.opClose(oph)
 
+	// upload the last file part
 	if len(fh.writeBuffer) > 0 {
 		fh.lastPartId++
 		partId := fh.lastPartId
 		fsys.ops.DxFileUploadPart(context.TODO(), oph.httpClient, fh.Id, int(partId), fh.writeBuffer)
 	}
+	// required to get project-id for close call
 	file, _, _ := fsys.lookupFileByInode(ctx, oph, int64(op.Inode))
 
 	if fsys.options.Verbose {
@@ -1592,6 +1594,7 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
 
+	// close file, but do not wait, could take several minutes
 	go fsys.ops.DxFileCloseAndWait(context.TODO(), oph.httpClient, file.ProjId, fh.Id)
 
 	mtime := time.Now()

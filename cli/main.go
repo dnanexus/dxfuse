@@ -141,13 +141,7 @@ func fsDaemon(
 		ErrorLogger: logger,
 		DebugLogger: fuse_logger,
 
-		// This option makes writes accumulate in the kernel
-		// buffers before being handed over to dxfuse for processing.
-		// It significantly improves file-write performance. Still,
-		// what you get isn't great.
-		//
-		// Currently, instead of dxfuse receiving every 4KB synchronously,
-		// it can get 128KB.
+		// Required for sequential writes
 		DisableWritebackCaching: true,
 		Options:                 mountOptions,
 	}
