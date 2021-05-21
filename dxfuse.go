@@ -1365,18 +1365,22 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 	// add to the open-file table, so we can recognize future accesses to
 	// the same handle.
 	op.Handle = fsys.insertIntoFileHandleTable(fh)
-	op.KeepPageCache = true
-	op.UseDirectIO = true
 
 	if fh.accessMode == AM_RO_Remote {
-		// Create an entry in the prefetch table, if the file is eligable
+		// enable page cache for reads because file contents are immutable
+		op.KeepPageCache = true
+		op.UseDirectIO = false
+		// Create an entry in the prefetch table
 		fsys.pgs.CreateStreamEntry(fh.hid, file, *fh.url)
+	} else {
+		// disable page cache for writes, files being appended to are not readable
+		op.KeepPageCache = false
+		op.UseDirectIO = true
 	}
 	return nil
 }
 
 // read a remote immutable file
-//
 func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp, fh *FileHandle) error {
 	// This is a regular file
 	reqSize := int64(len(op.Dst))
