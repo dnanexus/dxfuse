@@ -26,7 +26,7 @@ const (
 	periodicTime = 30 * time.Second
 	slowIoThresh = 60 // when does a slow IO become worth reporting
 
-	prefetchMinIoSize = (256 * KiB) // threshold for deciding the file is sequentially accessed
+	prefetchMinIoSize = (1024 * KiB) // threshold for deciding the file is sequentially accessed
 	prefetchIoFactor  = 4
 
 	numSlotsInChunk = 64
@@ -246,11 +246,11 @@ func NewPrefetchGlobalState(verboseLevel int, dxEnv dxda.DXEnvironment) *Prefetc
 		// on a remote machine the timeouts are too great
 		// for large IO sizes. It is common to see 90 second
 		// IOs.
-		prefetchMaxIoSize = 1 * MiB
+		prefetchMaxIoSize = 16 * MiB
 	} else {
 		// on a worker we can use large sizes, because
 		// we have a good network connection to S3 and dnanexus servers
-		prefetchMaxIoSize = 16 * MiB
+		prefetchMaxIoSize = 96 * MiB
 	}
 
 	// calculate how much memory will be used in the worst cast.
