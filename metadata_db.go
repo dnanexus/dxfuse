@@ -753,6 +753,7 @@ func (mdb *MetadataDb) createDataObject(
 
 	sqlStatementPrep, _ := oph.txn.Prepare(`INSERT INTO namespace
 		VALUES ($1, $2, $3, $4);`)
+	defer sqlStatementPrep.Close()
 	if _, err := sqlStatementPrep.Exec(parentDir, fname, nsDataObjType, inode); err != nil {
 		mdb.log("Error inserting %s/%s into the namespace table  err=%s", parentDir, fname, err.Error())
 		return 0, oph.RecordError(err)
@@ -1134,6 +1135,7 @@ func (mdb *MetadataDb) LookupInDir(ctx context.Context, oph *OpHandle, dir *Dir,
 	SELECT obj_type,inode
 		FROM namespace
 	WHERE parent = ? AND name = ?;`)
+	defer sqlStmtPrep.Close()
 	rows, err := sqlStmtPrep.Query(dir.FullPath, dirOrFileName)
 
 	if err != nil {
