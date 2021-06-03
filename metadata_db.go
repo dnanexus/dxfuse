@@ -751,11 +751,10 @@ func (mdb *MetadataDb) createDataObject(
 		return 0, oph.RecordError(err)
 	}
 
-	sqlStmt = fmt.Sprintf(`
- 		        INSERT INTO namespace
-			VALUES ('%s', '%s', '%d', '%d');`,
-		parentDir, fname, nsDataObjType, inode)
-	if _, err := oph.txn.Exec(sqlStmt); err != nil {
+	sqlStatementPrep, _ := oph.txn.Prepare(`INSERT INTO namespace
+		VALUES ($1, $2, $3, $4);`)
+	defer sqlStatementPrep.Close()
+	if _, err := sqlStatementPrep.Exec(parentDir, fname, nsDataObjType, inode); err != nil {
 		mdb.log("Error inserting %s/%s into the namespace table  err=%s", parentDir, fname, err.Error())
 		return 0, oph.RecordError(err)
 	}
@@ -1132,12 +1131,13 @@ func (mdb *MetadataDb) LookupInDir(ctx context.Context, oph *OpHandle, dir *Dir,
 	}
 
 	// point lookup in the namespace
-	sqlStmt := fmt.Sprintf(`
- 		        SELECT obj_type,inode
-                        FROM namespace
-			WHERE parent = '%s' AND name = '%s';`,
-		dir.FullPath, dirOrFileName)
-	rows, err := oph.txn.Query(sqlStmt)
+	sqlStmtPrep, _ := oph.txn.Prepare(`
+	SELECT obj_type,inode
+		FROM namespace
+	WHERE parent = ? AND name = ?;`)
+	defer sqlStmtPrep.Close()
+	rows, err := sqlStmtPrep.Query(dir.FullPath, dirOrFileName)
+
 	if err != nil {
 		return nil, false, oph.RecordError(err)
 	}
