@@ -1529,7 +1529,10 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 			fh.lastPartId++
 			partId := fh.lastPartId
 			// upload buffer
-			fsys.ops.DxFileUploadPart(context.TODO(), oph.httpClient, fh.Id, partId, fh.writeBuffer)
+			err := fsys.ops.DxFileUploadPart(context.TODO(), oph.httpClient, fh.Id, partId, fh.writeBuffer)
+			if err != nil {
+				return fsys.translateError(err)
+			}
 			fh.writeBuffer = fh.writeBuffer[:0]
 			// increasing buffer size for next part
 			nextCap := 96 * 1024 * 1024 * math.Pow(1.0003, float64(partId))
@@ -1586,7 +1589,10 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	if len(fh.writeBuffer) > 0 {
 		fh.lastPartId++
 		partId := fh.lastPartId
-		fsys.ops.DxFileUploadPart(context.TODO(), oph.httpClient, fh.Id, int(partId), fh.writeBuffer)
+		err := fsys.ops.DxFileUploadPart(context.TODO(), oph.httpClient, fh.Id, int(partId), fh.writeBuffer)
+		if err != nil {
+			return fsys.translateError(err)
+		}
 	}
 	// required to get project-id for close call
 	file, _, _ := fsys.lookupFileByInode(ctx, oph, int64(op.Inode))
