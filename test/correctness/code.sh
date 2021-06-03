@@ -532,11 +532,11 @@ main() {
     mkdir -p $mountpoint
 
     # generate random alphanumeric strings
-    base_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+    base_dir=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null| base64 | tr -dc 'a-zA-Z0-9'|fold -w 12|head -n1)
     base_dir="base_$base_dir"
-    faux_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+    faux_dir=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null| base64 | tr -dc 'a-zA-Z0-9'|fold -w 12|head -n1)
     faux_dir="faux_$faux_dir"
-    expr_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+    expr_dir=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null| base64 | tr -dc 'a-zA-Z0-9'|fold -w 12|head -n1)
     expr_dir="expr_$expr_dir"
     writeable_dirs=($base_dir $faux_dir $expr_dir)
     for d in ${writeable_dirs[@]}; do
