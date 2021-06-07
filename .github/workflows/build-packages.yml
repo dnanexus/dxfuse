@@ -4,6 +4,10 @@ on:
     types:
       - created
 
+permissions:
+  contents: write
+  actions: write
+
 jobs:
   linux:
     name: Linux build
