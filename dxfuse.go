@@ -1369,7 +1369,7 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 	if fh.accessMode == AM_RO_Remote {
 		// enable page cache for reads because file contents are immutable
 		op.KeepPageCache = true
-		op.UseDirectIO = false
+		op.UseDirectIO = true
 		// Create an entry in the prefetch table
 		fsys.pgs.CreateStreamEntry(fh.hid, file, *fh.url)
 	} else {
@@ -1513,17 +1513,10 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 		// copy data into slice
 		bytesCopied := copy(fh.writeBuffer[fh.writeBufferOffset:sliceUpperBound], bytesToWrite)
 		fh.size += int64(bytesCopied)
-		if bytesCopied != 128*1024 {
-			fsys.log("bytesCopied: %v", bytesCopied)
-			fsys.log("upperBound: %v", sliceUpperBound)
-			fsys.log("bufferlen: %v, buffcap: %v", len(fh.writeBuffer), cap(fh.writeBuffer))
-		}
-		//fsys.log("Copied: %v", bytesCopied)
 		// increment next write offset
 		fh.nextWriteOffset += int64(bytesCopied)
 		// increment current buffer slice offset
 		fh.writeBufferOffset += bytesCopied
-		//fsys.log("bufferLen: %d bufferCap: %d opDataLen: %d", len(fh.writeBuffer), cap(fh.writeBuffer), len(op.Data))
 		if len(fh.writeBuffer) == cap(fh.writeBuffer) {
 			// increment part id
 			fh.lastPartId++
@@ -1604,8 +1597,8 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
 
-	// close file, but do not wait, could take several minutes
-	go fsys.ops.DxFileCloseAndWait(context.TODO(), oph.httpClient, file.ProjId, fh.Id)
+	// close file and wait
+	fsys.ops.DxFileCloseAndWait(context.TODO(), oph.httpClient, file.ProjId, fh.Id)
 
 	mtime := time.Now()
 	var mode os.FileMode = fileReadOnlyMode
