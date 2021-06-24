@@ -38,7 +38,7 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "options:\n")
 	// Hide experimental options
 	flag.VisitAll(func(f *flag.Flag) {
-		if f.Name == "readOnly" || f.Name == "readWrite" || f.Name == "daemon" {
+		if f.Name == "readOnly" || f.Name == "appendFileMode" || f.Name == "daemon" {
 			return
 		}
 		name, usage := flag.UnquoteUsage(f)
@@ -50,16 +50,16 @@ func usage() {
 }
 
 var (
-	debugFuseFlag = flag.Bool("debugFuse", false, "Tap into FUSE debugging information")
-	daemon        = flag.Bool("daemon", false, "An internal flag, do not use it")
-	fsSync        = flag.Bool("sync", false, "Sychronize the filesystem and exit")
-	help          = flag.Bool("help", false, "display program options")
-	readOnly      = flag.Bool("readOnly", true, "DEPRECATED, now the default behavior. Mount the filesystem in read-only mode")
-	readWrite     = flag.Bool("readWrite", false, "mount the filesystem in read-write mode (Experimental, not recommended), default is read-only")
-	uid           = flag.Int("uid", -1, "User id (uid)")
-	gid           = flag.Int("gid", -1, "User group id (gid)")
-	verbose       = flag.Int("verbose", 0, "Enable verbose debugging")
-	version       = flag.Bool("version", false, "Print the version and exit")
+	debugFuseFlag  = flag.Bool("debugFuse", false, "Tap into FUSE debugging information")
+	daemon         = flag.Bool("daemon", false, "An internal flag, do not use it")
+	fsSync         = flag.Bool("sync", false, "Sychronize the filesystem and exit")
+	help           = flag.Bool("help", false, "display program options")
+	readOnly       = flag.Bool("readOnly", true, "DEPRECATED, now the default behavior. Mount the filesystem in read-only mode")
+	appendFileMode = flag.Bool("appendFileMode", false, "Allow removing files and folders, creating files and appending to them. (Experimental, not recommended), default is read-only")
+	uid            = flag.Int("uid", -1, "User id (uid)")
+	gid            = flag.Int("gid", -1, "User group id (gid)")
+	verbose        = flag.Int("verbose", 0, "Enable verbose debugging")
+	version        = flag.Bool("version", false, "Print the version and exit")
 )
 
 func lookupProject(dxEnv *dxda.DXEnvironment, projectIdOrName string) (string, error) {
@@ -235,18 +235,18 @@ func parseCmdLineArgs() Config {
 		usage()
 		os.Exit(0)
 	}
-	// -readOnly and -readWrite flags are mutually exclusive
+	// -readOnly and -appendFileMode flags are mutually exclusive
 	readOnlyFlagSet := false
-	readWriteFlagSet := false
+	appendFileModeFlagSet := false
 	flag.Visit(func(f *flag.Flag) {
 		if f.Name == "readOnly" {
 			readOnlyFlagSet = true
-		} else if f.Name == "readWrite" {
-			readWriteFlagSet = true
+		} else if f.Name == "appendFileMode" {
+			appendFileModeFlagSet = true
 		}
 	})
-	if readWriteFlagSet && readOnlyFlagSet {
-		fmt.Printf("Cannot provide both -readOnly and -readWrite flags\n")
+	if appendFileModeFlagSet && readOnlyFlagSet {
+		fmt.Printf("Cannot provide both -readOnly and -appendFileMode flags\n")
 		usage()
 		os.Exit(2)
 	}
@@ -260,7 +260,7 @@ func parseCmdLineArgs() Config {
 
 	uid, gid := initUidGid()
 	options := dxfuse.Options{
-		ReadOnly:     !*readWrite,
+		ReadOnly:     !*appendFileMode,
 		Verbose:      *verbose > 0,
 		VerboseLevel: *verbose,
 		Uid:          uid,
@@ -371,8 +371,8 @@ func buildDaemonCommandLine(cfg Config, fullManifestPath string) []string {
 		args := []string{"-gid", strconv.FormatInt(int64(*gid), 10)}
 		daemonArgs = append(daemonArgs, args...)
 	}
-	if *readWrite {
-		daemonArgs = append(daemonArgs, "-readWrite")
+	if *appendFileMode {
+		daemonArgs = append(daemonArgs, "-appendFileMode")
 	}
 	if *uid != -1 {
 		args := []string{"-uid", strconv.FormatInt(int64(*uid), 10)}
