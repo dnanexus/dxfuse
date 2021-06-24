@@ -126,6 +126,10 @@ func fsDaemon(
 		logger.Printf("started the filesystem as root, allowing other users access")
 		mountOptions["allow_other"] = ""
 	}
+
+	if options.ReadOnly {
+		mountOptions["ro"] = ""
+	}
 	mountOptions["max_read"] = "1048576"
 
 	// capture debug output from the FUSE subsystem

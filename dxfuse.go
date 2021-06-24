@@ -749,10 +749,10 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	if !fsys.checkProjectPermissions(parentDir.ProjId, PERM_UPLOAD) {
 		return syscall.EPERM
 	}
-
+	var mode os.FileMode = fileWriteOnlyMode
 	// we now know that the parent directory exists, and the file does not.
 	// Create a remote file for appending data and then update the metadata db
-	file, err := fsys.mdb.CreateFile(ctx, oph, &parentDir, op.Name, op.Mode)
+	file, err := fsys.mdb.CreateFile(ctx, oph, &parentDir, op.Name, mode)
 	if err != nil {
 		return err
 	}
@@ -1575,6 +1575,11 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 		return nil
 	}
 
+	if len(fh.writeBuffer) == 0 && fh.lastPartId == 0 {
+		// Cannot upload an empty file via dxfuse
+		return nil
+	}
+
 	oph := fsys.opOpen()
 	defer fsys.opClose(oph)
 
@@ -1789,7 +1794,6 @@ func (fsys *Filesys) GetXattr(ctx context.Context, op *fuseops.GetXattrOp) error
 	defer fsys.mutex.Unlock()
 	oph := fsys.opOpen()
 	defer fsys.opClose(oph)
-	fsys.log("GetXattr %v", op)
 
 	if fsys.options.VerboseLevel > 1 {
 		fsys.log("GetXattr %v", op)

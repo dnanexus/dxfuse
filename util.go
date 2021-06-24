@@ -28,7 +28,7 @@ const (
 	MaxDirSize                = 255 * 1000
 	MaxNumFileHandles         = 1000 * 1000
 	NumRetriesDefault         = 10
-	Version                   = "v0.24.0"
+	Version                   = "v1.0.0"
 )
 const (
 	InodeInvalid = 0
@@ -40,7 +40,7 @@ const (
 	dirReadOnlyMode   = 0555 | os.ModeDir
 	dirReadWriteMode  = 0777 | os.ModeDir
 	fileReadOnlyMode  = 0444
-	fileReadWriteMode = 0644
+	fileWriteOnlyMode = 0222
 )
 const (
 	// flags for writing files to disk
