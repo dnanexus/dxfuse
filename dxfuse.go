@@ -1575,6 +1575,8 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 		return nil
 	}
 
+	// Avoid trying to upload an empty file when a fd is closed
+	// Frequently happens when a file is created, but not yet written to
 	if len(fh.writeBuffer) == 0 && fh.lastPartId == 0 {
 		// Cannot upload an empty file via dxfuse
 		return nil

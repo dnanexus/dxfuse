@@ -126,7 +126,7 @@ func fsDaemon(
 		logger.Printf("started the filesystem as root, allowing other users access")
 		mountOptions["allow_other"] = ""
 	}
-
+	// Pass read-only mount option if not in appendFileMode
 	if options.ReadOnly {
 		mountOptions["ro"] = ""
 	}
