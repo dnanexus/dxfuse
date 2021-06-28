@@ -1530,13 +1530,16 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 			// increasing buffer size for next part
 			nextCap := 96 * 1024 * 1024 * math.Pow(1.0003, float64(partId))
 			nextBufferCapacity := math.Round(nextCap)
-			fsys.log("Nextbuffercap: %v", nextBufferCapacity)
 			fh.writeBuffer = make([]byte, 0, int64(nextBufferCapacity))
 			fh.writeBufferOffset = 0
+			// Update the file attributes in the database (size, mtime)
+			fsys.mutex.Lock()
 			if err := fsys.mdb.UpdateFileAttrs(ctx, oph, fh.inode, fh.size, time.Now(), nil); err != nil {
 				fsys.log("database error in updating attributes for WriteFile %s", err.Error())
+				fsys.mutex.Unock()
 				return fuse.EIO
 			}
+			fsys.mutex.Unlock()
 		}
 		// all data copied into buffer slice, break
 		if bytesCopied == len(bytesToWrite) {
@@ -1546,15 +1549,6 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 		bytesToWrite = bytesToWrite[bytesCopied:]
 
 	}
-
-	// Try to efficiently calculate the size and mtime, instead
-	// of doing a filesystem call.
-
-	// Update the file attributes in the database (size, mtime)
-	// fsys.mutex.Lock()
-	// defer fsys.mutex.Unlock()
-
-	// fsys.log("done writing")
 	return nil
 }
 
