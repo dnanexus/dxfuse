@@ -11,8 +11,10 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/jacobsa/fuse"
@@ -155,6 +157,32 @@ func fsDaemon(
 	mfs, err := fuse.Mount(mountpoint, server, cfg)
 	if err != nil {
 		logger.Printf(err.Error())
+	}
+
+	// By default fuse will use 128kb read-ahead even though we ask for 1024kb
+	// If running as root on linux, raise read-ahead to 1024kb after mounting
+	if user.Uid == "0" && runtime.GOOS == "linux" {
+		logger.Printf("Setting kernel read-ahead for dxfuse to 1024kb")
+		mntInfo, err := os.Stat(mountpoint)
+		if err != nil {
+			logger.Printf(err.Error())
+		}
+		dxfuseDeviceNumber := mntInfo.Sys().(*syscall.Stat_t).Dev
+		readAheadFile := fmt.Sprintf("/sys/class/bdi/0:%d/read_ahead_kb", dxfuseDeviceNumber)
+		data, err := ioutil.ReadFile(readAheadFile)
+		if err != nil {
+			logger.Printf("Unable to get current read-ahead value")
+			logger.Printf(err.Error())
+		}
+		initialReadAhead, err := strconv.Atoi(strings.TrimSpace(string(data)))
+		if initialReadAhead < 1024 {
+			err = ioutil.WriteFile(readAheadFile, []byte("1024"), 0644)
+			if err != nil {
+				logger.Printf("Error raising read-ahead to 1024kb")
+				logger.Printf(err.Error())
+			}
+		}
+		logger.Printf("Raised kernel read-ahead from %dkb to 1024kb", initialReadAhead)
 	}
 
 	// Wait for it to be unmounted. This happens only after

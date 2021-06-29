@@ -1369,7 +1369,7 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 	if fh.accessMode == AM_RO_Remote {
 		// enable page cache for reads because file contents are immutable
 		op.KeepPageCache = true
-		op.UseDirectIO = true
+		op.UseDirectIO = false
 		// Create an entry in the prefetch table
 		fsys.pgs.CreateStreamEntry(fh.hid, file, *fh.url)
 	} else {
@@ -1536,7 +1536,7 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 			fsys.mutex.Lock()
 			if err := fsys.mdb.UpdateFileAttrs(ctx, oph, fh.inode, fh.size, time.Now(), nil); err != nil {
 				fsys.log("database error in updating attributes for WriteFile %s", err.Error())
-				fsys.mutex.Unock()
+				fsys.mutex.Unlock()
 				return fuse.EIO
 			}
 			fsys.mutex.Unlock()
