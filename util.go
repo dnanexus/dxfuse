@@ -22,7 +22,7 @@ const (
 	LogFile      = "dxfuse.log"
 )
 const (
-	HttpClientPoolSize        = 4
+	HttpClientPoolSize        = 8
 	FileWriteInactivityThresh = 5 * time.Minute
 	WritableFileSizeLimit     = 16 * MiB
 	MaxDirSize                = 255 * 1000

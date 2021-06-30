@@ -22,6 +22,7 @@ import (
 
 	// for the sqlite driver
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/shirou/gopsutil/process"
 )
 
 const (
@@ -106,6 +107,8 @@ type FileHandle struct {
 	url *DxDownloadURL
 
 	// For writeable files only
+	// Only flush from original FD
+	Tgid int32
 	// Used to indiciate the last part number written
 	// Incremented for each buffer that is uploaded to the cloud
 	// Used to determine next part and buffer size
@@ -295,6 +298,7 @@ func (fsys *Filesys) opClose(oph *OpHandle) {
 	if oph.err == nil {
 		err := oph.txn.Commit()
 		if err != nil {
+			fsys.log("Txn commit error: %v", err.Error())
 			log.Panic("could not commit transaction")
 		}
 	} else {
@@ -780,12 +784,17 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 		EntryExpiration:      tWindow,
 	}
 
+	p, err := process.NewProcess(int32(op.OpContext.Pid))
+	tgid, err := p.Tgid()
+	fsys.log("tgid: %v", tgid)
+
 	fh := FileHandle{
 		accessMode:        AM_AO_Remote,
 		inode:             file.Inode,
 		size:              file.Size,
 		url:               nil,
 		Id:                file.Id,
+		Tgid:              tgid,
 		lastPartId:        0,
 		nextWriteOffset:   0,
 		writeBuffer:       make([]byte, 0, 96*1024*1024),
@@ -1244,6 +1253,7 @@ func (fsys *Filesys) openRegularFile(
 			size:            f.Size,
 			Id:              f.Id,
 			url:             nil,
+			Tgid:            0,
 			lastPartId:      0,
 			nextWriteOffset: 0,
 			// 96MB slice capacity
@@ -1269,12 +1279,17 @@ func (fsys *Filesys) openRegularFile(
 	var u DxDownloadURL
 	json.Unmarshal(body, &u)
 
+	p, err := process.NewProcess(int32(op.OpContext.Pid))
+	tgid, err := p.Tgid()
+	fsys.log("tgid: %v", tgid)
+
 	fh := &FileHandle{
 		accessMode:        AM_RO_Remote,
 		inode:             f.Inode,
 		size:              f.Size,
 		url:               &u,
 		Id:                f.Id,
+		Tgid:              tgid,
 		lastPartId:        0,
 		nextWriteOffset:   0,
 		writeBuffer:       nil,
@@ -1351,6 +1366,7 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 				URL:     file.Symlink,
 				Headers: nil,
 			},
+			Tgid:              0,
 			lastPartId:        0,
 			nextWriteOffset:   0,
 			writeBuffer:       nil,
@@ -1569,12 +1585,26 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 		return nil
 	}
 
+	pid := op.OpContext.Pid
+	p, _ := process.NewProcess(int32(pid))
+	tgid, _ := p.Tgid()
+	if fh.Tgid != tgid {
+		fsys.log("Ignoring FlushFile: tgids don't match")
+		fsys.log("tgid: %v, fh.Tgid: %v", tgid, fh.Tgid)
+		return nil
+	}
+
 	// Avoid trying to upload an empty file when a fd is closed
 	// Frequently happens when a file is created, but not yet written to
 	if len(fh.writeBuffer) == 0 && fh.lastPartId == 0 {
 		// Cannot upload an empty file via dxfuse
 		return nil
 	}
+
+	// Update the file attributes in the database (size, mtime)
+	fsys.mutex.Lock()
+	fsys.log("Got the lock! ")
+	defer fsys.mutex.Unlock()
 
 	oph := fsys.opOpen()
 	defer fsys.opClose(oph)
@@ -1594,9 +1624,6 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	if fsys.options.Verbose {
 		fsys.log("Flush and closing inode %d, %s", op.Inode, fh.Id)
 	}
-	// Update the file attributes in the database (size, mtime)
-	fsys.mutex.Lock()
-	defer fsys.mutex.Unlock()
 
 	// close file and wait
 	fsys.ops.DxFileCloseAndWait(context.TODO(), oph.httpClient, file.ProjId, fh.Id)
