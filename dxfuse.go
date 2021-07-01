@@ -1574,9 +1574,6 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	}
 	fh, ok := fsys.fhTable[op.Handle]
 
-	fh.mutex.Lock()
-	defer fh.mutex.Unlock()
-
 	if !ok {
 		// File handle doesn't exist
 		return fuse.EINVAL
@@ -1588,6 +1585,10 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 		// This isn't a writeable file, there is no dirty data to flush
 		return nil
 	}
+
+	// Get fh mutex
+	fh.mutex.Lock()
+	defer fh.mutex.Unlock()
 
 	tgid, _ := GetTgid(op.OpContext.Pid)
 
