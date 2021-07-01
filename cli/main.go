@@ -180,11 +180,12 @@ func fsDaemon(
 			if err != nil {
 				logger.Printf("Error raising read-ahead to 1024kb")
 				logger.Printf(err.Error())
+			} else {
+				logger.Printf("Raised kernel read-ahead from %dkb to 1024kb", initialReadAhead)
 			}
 		}
-		logger.Printf("Raised kernel read-ahead from %dkb to 1024kb", initialReadAhead)
-	}
 
+	}
 	// Wait for it to be unmounted. This happens only after
 	// all requests have been served.
 	if err = mfs.Join(context.Background()); err != nil {
