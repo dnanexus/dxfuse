@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jacobsa/fuse/fuseops"
+	"github.com/shirou/gopsutil/process"
 )
 
 const (
@@ -330,4 +331,16 @@ func MakeFSBaseDir() string {
 		os.Mkdir(dxfuseBaseDir, 0700)
 	}
 	return dxfuseBaseDir
+}
+
+func GetTgid(pid uint32) (tgid int32, err error) {
+	p, err := process.NewProcess(int32(pid))
+	if err != nil {
+		return -1, err
+	}
+	tgid, err = p.Tgid()
+	if err != nil {
+		return -1, err
+	}
+	return tgid, nil
 }

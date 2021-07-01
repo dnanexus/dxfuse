@@ -22,7 +22,6 @@ import (
 
 	// for the sqlite driver
 	_ "github.com/mattn/go-sqlite3"
-	"github.com/shirou/gopsutil/process"
 )
 
 const (
@@ -784,9 +783,7 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 		EntryExpiration:      tWindow,
 	}
 
-	p, err := process.NewProcess(int32(op.OpContext.Pid))
-	tgid, err := p.Tgid()
-	fsys.log("tgid: %v", tgid)
+	tgid, err := GetTgid(op.OpContext.Pid)
 
 	fh := FileHandle{
 		accessMode:        AM_AO_Remote,
@@ -1246,6 +1243,8 @@ func (fsys *Filesys) openRegularFile(
 	op *fuseops.OpenFileOp,
 	f File) (*FileHandle, error) {
 
+	tgid, err := GetTgid(op.OpContext.Pid)
+
 	if f.dirtyData {
 		fh := &FileHandle{
 			accessMode:      AM_AO_Remote,
@@ -1253,7 +1252,7 @@ func (fsys *Filesys) openRegularFile(
 			size:            f.Size,
 			Id:              f.Id,
 			url:             nil,
-			Tgid:            0,
+			Tgid:            tgid,
 			lastPartId:      0,
 			nextWriteOffset: 0,
 			// 96MB slice capacity
@@ -1278,10 +1277,6 @@ func (fsys *Filesys) openRegularFile(
 	}
 	var u DxDownloadURL
 	json.Unmarshal(body, &u)
-
-	p, err := process.NewProcess(int32(op.OpContext.Pid))
-	tgid, err := p.Tgid()
-	fsys.log("tgid: %v", tgid)
 
 	fh := &FileHandle{
 		accessMode:        AM_RO_Remote,
@@ -1357,6 +1352,7 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 		// A symbolic link can use the remote URL address
 		// directly. There is no need to generate a preauthenticated
 		// URL.
+		tgid, _ := GetTgid(op.OpContext.Pid)
 		fh = &FileHandle{
 			accessMode: AM_RO_Remote,
 			inode:      file.Inode,
@@ -1366,7 +1362,7 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 				URL:     file.Symlink,
 				Headers: nil,
 			},
-			Tgid:              0,
+			Tgid:              tgid,
 			lastPartId:        0,
 			nextWriteOffset:   0,
 			writeBuffer:       nil,
@@ -1384,6 +1380,7 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 
 	if fh.accessMode == AM_RO_Remote {
 		// enable page cache for reads because file contents are immutable
+		// page cache enables shared read-only mmap access
 		op.KeepPageCache = true
 		op.UseDirectIO = false
 		// Create an entry in the prefetch table
@@ -1585,12 +1582,11 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 		return nil
 	}
 
-	pid := op.OpContext.Pid
-	p, _ := process.NewProcess(int32(pid))
-	tgid, _ := p.Tgid()
+	tgid, _ := GetTgid(op.OpContext.Pid)
+
 	if fh.Tgid != tgid {
-		fsys.log("Ignoring FlushFile: tgids don't match")
-		fsys.log("tgid: %v, fh.Tgid: %v", tgid, fh.Tgid)
+		fsys.log("Ignoring FlushFile: tgids does not match fh tgid")
+		fsys.log("tgid: %v, fh tgid: %v", tgid, fh.Tgid)
 		return nil
 	}
 
@@ -1602,8 +1598,10 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	}
 
 	// Update the file attributes in the database (size, mtime)
+	// TODO fix this locking and opOpen txn
+	// Do not want to open db txn until file has been uploaded and closed
+	// Blocks other flushfiles and even ReadFile
 	fsys.mutex.Lock()
-	fsys.log("Got the lock! ")
 	defer fsys.mutex.Unlock()
 
 	oph := fsys.opOpen()
