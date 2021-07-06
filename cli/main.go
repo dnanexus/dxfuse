@@ -40,7 +40,7 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "options:\n")
 	// Hide experimental options
 	flag.VisitAll(func(f *flag.Flag) {
-		if f.Name == "readOnly" || f.Name == "appendFiles" || f.Name == "daemon" {
+		if f.Name == "readOnly" || f.Name == "writeable" || f.Name == "daemon" {
 			return
 		}
 		name, usage := flag.UnquoteUsage(f)
@@ -57,7 +57,7 @@ var (
 	fsSync        = flag.Bool("sync", false, "Sychronize the filesystem and exit")
 	help          = flag.Bool("help", false, "display program options")
 	readOnly      = flag.Bool("readOnly", true, "DEPRECATED, now the default behavior. Mount the filesystem in read-only mode")
-	appendFiles   = flag.Bool("appendFiles", false, "Allow removing files and folders, creating files and appending to them. (Experimental, not recommended), default is read-only")
+	writeable     = flag.Bool("writeable", false, "Allow removing files and folders, creating files and appending to them. (Experimental, not recommended), default is read-only")
 	uid           = flag.Int("uid", -1, "User id (uid)")
 	gid           = flag.Int("gid", -1, "User group id (gid)")
 	verbose       = flag.Int("verbose", 0, "Enable verbose debugging")
@@ -128,7 +128,7 @@ func fsDaemon(
 		logger.Printf("started the filesystem as root, allowing other users access")
 		mountOptions["allow_other"] = ""
 	}
-	// Pass read-only mount option if not in appendFiles
+	// Pass read-only mount option if not in writeable
 	if options.ReadOnly {
 		mountOptions["ro"] = ""
 	}
@@ -264,18 +264,18 @@ func parseCmdLineArgs() Config {
 		usage()
 		os.Exit(0)
 	}
-	// -readOnly and -appendFiles flags are mutually exclusive
+	// -readOnly and -writeable flags are mutually exclusive
 	readOnlyFlagSet := false
-	appendFilesFlagSet := false
+	writeableFlagSet := false
 	flag.Visit(func(f *flag.Flag) {
 		if f.Name == "readOnly" {
 			readOnlyFlagSet = true
-		} else if f.Name == "appendFiles" {
-			appendFilesFlagSet = true
+		} else if f.Name == "writeable" {
+			writeableFlagSet = true
 		}
 	})
-	if appendFilesFlagSet && readOnlyFlagSet {
-		fmt.Printf("Cannot provide both -readOnly and -appendFiles flags\n")
+	if writeableFlagSet && readOnlyFlagSet {
+		fmt.Printf("Cannot provide both -readOnly and -writeable flags\n")
 		usage()
 		os.Exit(2)
 	}
@@ -289,7 +289,7 @@ func parseCmdLineArgs() Config {
 
 	uid, gid := initUidGid()
 	options := dxfuse.Options{
-		ReadOnly:     !*appendFiles,
+		ReadOnly:     !*writeable,
 		Verbose:      *verbose > 0,
 		VerboseLevel: *verbose,
 		Uid:          uid,
@@ -400,8 +400,8 @@ func buildDaemonCommandLine(cfg Config, fullManifestPath string) []string {
 		args := []string{"-gid", strconv.FormatInt(int64(*gid), 10)}
 		daemonArgs = append(daemonArgs, args...)
 	}
-	if *appendFiles {
-		daemonArgs = append(daemonArgs, "-appendFiles")
+	if *writeable {
+		daemonArgs = append(daemonArgs, "-writeable")
 	}
 	if *uid != -1 {
 		args := []string{"-uid", strconv.FormatInt(int64(*uid), 10)}
