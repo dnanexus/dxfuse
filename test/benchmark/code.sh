@@ -123,7 +123,7 @@ main() {
     # download with dxfuse
     # Start the dxfuse daemon in the background, and wait for it to initilize.
     echo "Mounting dxfuse"
-    flags="-readWrite"
+    flags="-writeable"
     if [[ $verbose != "" ]]; then
         flags="$flags -verbose 1"
     fi
