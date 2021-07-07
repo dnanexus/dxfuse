@@ -45,14 +45,6 @@ There are several limitations currently:
   done automatically by dnanexus.
 - Does not support hard links
 
-Updates to files are batched and asynchronously applied to the cloud
-object system. For example, if `foo.txt` is updated, the changes will
-not be immediately visible to another user looking at the platform
-object directly. Because platform files are immutable, even a minor
-modification requires rewriting the entire file, creating a new
-version. This is an inherent limitation, making file update
-inefficient.
-
 # Implementation
 
 The implementation uses an [sqlite](https://www.sqlite.org/index.html)

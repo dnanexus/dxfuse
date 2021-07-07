@@ -1582,6 +1582,7 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 		return nil
 	}
 	if fh.accessMode != AM_AO_Remote {
+		fsys.log("Ignoring flush of inode %d, file is empty", op.Inode)
 		// This isn't a writeable file, there is no dirty data to flush
 		return nil
 	}

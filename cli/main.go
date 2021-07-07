@@ -54,14 +54,14 @@ func usage() {
 var (
 	debugFuseFlag = flag.Bool("debugFuse", false, "Tap into FUSE debugging information")
 	daemon        = flag.Bool("daemon", false, "An internal flag, do not use it")
-	fsSync        = flag.Bool("sync", false, "Sychronize the filesystem and exit")
-	help          = flag.Bool("help", false, "display program options")
-	readOnly      = flag.Bool("readOnly", true, "DEPRECATED, now the default behavior. Mount the filesystem in read-only mode")
-	writeable     = flag.Bool("writeable", false, "Allow removing files and folders, creating files and appending to them. (Experimental, not recommended), default is read-only")
-	uid           = flag.Int("uid", -1, "User id (uid)")
-	gid           = flag.Int("gid", -1, "User group id (gid)")
-	verbose       = flag.Int("verbose", 0, "Enable verbose debugging")
-	version       = flag.Bool("version", false, "Print the version and exit")
+	// fsSync        = flag.Bool("sync", false, "Sychronize the filesystem and exit")
+	help      = flag.Bool("help", false, "display program options")
+	readOnly  = flag.Bool("readOnly", true, "DEPRECATED, now the default behavior. Mount the filesystem in read-only mode")
+	writeable = flag.Bool("writeable", false, "Allow removing files and folders, creating files and appending to them. (Experimental, not recommended), default is read-only")
+	uid       = flag.Int("uid", -1, "User id (uid)")
+	gid       = flag.Int("gid", -1, "User group id (gid)")
+	verbose   = flag.Int("verbose", 0, "Enable verbose debugging")
+	version   = flag.Bool("version", false, "Print the version and exit")
 )
 
 func lookupProject(dxEnv *dxda.DXEnvironment, projectIdOrName string) (string, error) {
@@ -255,11 +255,11 @@ func parseCmdLineArgs() Config {
 		fmt.Println(dxfuse.Version)
 		os.Exit(0)
 	}
-	if *fsSync {
-		cmdClient := dxfuse.NewCmdClient()
-		cmdClient.Sync()
-		os.Exit(0)
-	}
+	// if *fsSync {
+	// 	cmdClient := dxfuse.NewCmdClient()
+	// 	cmdClient.Sync()
+	// 	os.Exit(0)
+	// }
 	if *help {
 		usage()
 		os.Exit(0)
@@ -393,9 +393,9 @@ func buildDaemonCommandLine(cfg Config, fullManifestPath string) []string {
 	if *debugFuseFlag {
 		daemonArgs = append(daemonArgs, "-debugFuse")
 	}
-	if *fsSync {
-		daemonArgs = append(daemonArgs, "-sync")
-	}
+	// if *fsSync {
+	// 	daemonArgs = append(daemonArgs, "-sync")
+	// }
 	if *gid != -1 {
 		args := []string{"-gid", strconv.FormatInt(int64(*gid), 10)}
 		daemonArgs = append(daemonArgs, args...)
