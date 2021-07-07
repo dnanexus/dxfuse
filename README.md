@@ -53,7 +53,7 @@ modification requires rewriting the entire file, creating a new
 version. This is an inherent limitation, making file update
 inefficient.
 
-## Implementation
+# Implementation
 
 The implementation uses an [sqlite](https://www.sqlite.org/index.html)
 database, located on `/var/dxfuse/metadata.db`. It stores files and
@@ -92,21 +92,37 @@ download methods were (1) `dx cat`, and (2) `cat` from a dxfuse mount point.
 | mem3\_ssd1\_v2\_x32|		4|	2 | 705M|
 | mem3\_ssd1\_v2\_x32|		2|	1 | 285M|
 
-Creating new files, and uploading them to the platform is
-significantly slower when using dxfuse. This is mostly a FUSE problem,
-where IOs are handed over from user-space, to the kernel, and then to
-the dxfuse server in 128KB chunks. This is fine for small files, but
-becomes slow for large files. Here is a comparison between (1) `dx
-upload FILE`, and (2) `cp FILE to fuse, sync fuse`.
+# Writeable mode
 
-| instance type      | dx upload (seconds) | dxfuse upload (seconds) | file size |
-| ----               | ----                | ---                  |  ----     |
-| mem1\_ssd1\_v2\_x4 |	11 |	99 | 705M |
-| mem1_ssd1\_v2\_x4  |	5  |	24 | 285M |
-| mem1\_ssd1\_v2\_x16 |	10 |	67 | 705M |
-| mem1\_ssd1\_v2\_x16 |	5  |	17 | 285M |
-| mem3\_ssd1\_v2\_x32 |	9  |	34 | 705M |
-| mem3\_ssd1\_v2\_x32 |	6  |	12 | 285M |
+Creating new files and uploading them to the platform is allowed when dxfuse is mounted with the `-writeable` flag. Writing to files is **append only**, and any non-sequential writes will return `ENOTSUP`. Seeking or reading from is not permitted while a file is being appended to. 
+
+The `file-xxxx/close` DNAx operation is called only when the file descriptor is closed by the same process (or thread) which originally opened the file. 
+
+Empty files are created, but not closed, as dxfuse ignores the FUSE operation `FlushFile` for empty files, as this is sometimes triggered by applications after creating a file. 
+
+`-writeable` mode also enables the following operations: rename (mv), unlink (rm), mkdir, and rmdir. Rewriting of existing files is not permitted, nor is truncating existing files. 
+
+## Spark output
+
+dxfuse in `-writeable` mode supports output from the `file:///` protocol in spark. Note that since dxfuse does not close empty files, the `_SUCCESS` output file will remain in the open state when the spark task completes. 
+
+## Upload benchmarks
+
+Upload benchmarks are from an AWS m5n.xlarge instance running Ubuntu 18.04 with kernel 5.4.0-1048-aws. 
+`dx` and `dxfuse` benchmark commands were run like so. 
+
+`time dd if=/dev/zero bs=1M count=$SIZE | dx upload --wait -`
+
+`time dd if=/dev/zero bs=1M count=$SIZE of=MNT/project/$SIZE` 
+| dx upload --wait (seconds) | dxfuse upload(seconds) | file size |
+| ---                        |  ----                  | ----      |
+|	4.3 |	7.1 | 100M |
+|	4.8  |	9.9 | 200M |
+|	10.2 |	12 | 400M |
+|	7.5  |	18.2 | 800M |
+|	17.9  |	33.2 | 1600M |
+|	37.8  |	55.1 | 3200M |
+|	79.2  |	181 | 10000M |
 
 # Building
 
@@ -163,13 +179,6 @@ To stop the dxfuse process do:
 fusermount -u MOUNT-POINT
 ```
 
-There are situations where you want the background process to
-synchronously update all modified and newly created files. For example, before shutting down a machine,
-or unmounting the filesystem. This can be done by issuing the command:
-```
-$ dxfuse -sync
-```
-
 ## Extended attributes (xattrs)
 
 DNXa data objects have properties and tags, these are exposed as POSIX extended attributes. Xattrs can be read, written, and removed. The package we use here is `attr`, it can installed with `sudo apt-get install attr` on Linux. On OSX the `xattr` package comes packaged with the base operating system, and can be used to the same effect.
@@ -202,32 +211,25 @@ $ attr -r prop.family zebra.txt
 
 You cannot modify _base.*_ attributes, these are read-only. Currently, setting and deleting xattrs can be done only for files that are closed on the platform.
 
-## Mac OS (OSX)
+## macOS
 
 For OSX you will need to install [OSXFUSE](http://osxfuse.github.com/). Note that Your Milage May Vary (YMMV) on this platform, we are mostly focused on Linux.
+
+Feaures such as kernel read-ahead, pagecache, mmap, and PID tracking may not work on macOS.
+
+## mmap
+
+dxfuse supports shared read-only mmap for remote files. This is only possible with FUSE when the kernel pagecache and kernel readahead options are both enabled, which may have other side effects of increased memory usage (for pagecache) and more remoteread requests (for readahead).
+
+```
+>>> import mmap
+>>> fd = open('MNT/dxfuse_test_data/README.md', 'r')
+mmap.mmap(fd.fileno(), 0, flags=mmap.MAP_SHARED, prot=mmap.PROT_READ)
+<mmap.mmap object at 0x7f9cadd87770>
+```
 
 # Common problems
 
 If a project appears empty, or is missing files, it could be that the dnanexus token does not have permissions for it. Try to see if you can do `dx ls YOUR_PROJECT:`.
 
 There is no natural match for DNAnexus applets and workflows, so they are presented as block devices. They do not behave like block devices, but the shell colors them differently from files and directories.
-
-FUSE does not support memory mappings shared between processes ([explanation](https://github.com/jacobsa/fuse/issues/82)). This is the location in the [Linux kernel](https://elixir.bootlin.com/linux/v5.6/source/fs/fuse/file.c#L2306) where this is not allowed. For example, trying to memory-map (mmap) a file with python causes an error.
-
-```
->>> import mmap
->>> fd = open('/home/orodeh/MNT/dxfuse_test_data/README.md', 'r')
->>> mmap.mmap(fp.fileno(), 0, mmap.PROT_READ)
-Traceback (most recent call last):
-  File "<stdin>", line 1, in <module>
-  OSError: [Errno 19] No such device
-```
-
-If the mapping is private to a single process then it does work. For example:
-
-```
->>> import mmap
->>> fd = open('/home/orodeh/MNT/dxfuse_test_data/README.md', 'r')
->>> mmap.mmap(fd.fileno(), 0, prot=mmap.PROT_READ, flags=mmap.MAP_PRIVATE, offset=0)
->>> fd.readline()
-```
