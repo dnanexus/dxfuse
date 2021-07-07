@@ -219,7 +219,7 @@ Feaures such as kernel read-ahead, pagecache, mmap, and PID tracking may not wor
 
 ## mmap
 
-dxfuse supports shared read-only mmap for remote files. This is only possible with FUSE when the kernel pagecache and kernel readahead options are both enabled, which may have other side effects of increased memory usage (for pagecache) and more remoteread requests (for readahead).
+dxfuse supports shared read-only mmap for remote files. This is only possible with FUSE when both the kernel pagecache and kernel readahead options are both enabled for the FUSE mount, which may have other side effects of increased memory usage (pagecache) and more remote read requests (readahead).
 
 ```
 >>> import mmap
