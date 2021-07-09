@@ -88,33 +88,33 @@ download methods were (1) `dx cat`, and (2) `cat` from a dxfuse mount point.
 
 Creating new files and uploading them to the platform is allowed when dxfuse is mounted with the `-writeable` flag. Writing to files is **append only**, and any non-sequential writes will return `ENOTSUP`. Seeking or reading from is not permitted while a file is being appended to. 
 
-The `file-xxxx/close` DNAx operation is called only when the file descriptor is closed by the same process (or thread) which originally opened the file. 
+The `file-xxxx/close` DNAx operation is called only when all open file descriptors are closed and the fuse `ReleaseFileHandle` operation is triggered by the kernel. 
 
-Empty files are created, but not closed, as dxfuse ignores the FUSE operation `FlushFile` for empty files, as this is sometimes triggered by applications after creating a file. 
+Closing an open file descriptor will triger the fuse `FlushFile` operation, which will upload the current write buffer of the file regardless of whether it is full. This allows creation of empty files via dxfuse. Applications such as `dd` which immediately duplicate and close file descriptors may generate dnax files starting with an empty part due to this behavior. 
 
 `-writeable` mode also enables the following operations: rename (mv), unlink (rm), mkdir, and rmdir. Rewriting of existing files is not permitted, nor is truncating existing files. 
 
 ## Spark output
 
-dxfuse in `-writeable` mode supports output from the `file:///` protocol in spark. Note that since dxfuse does not close empty files, the `_SUCCESS` output file will remain in the open state when the spark task completes. 
+dxfuse in `-writeable` mode supports output from the `file:///` protocol in spark. 
 
 ## Upload benchmarks
 
 Upload benchmarks are from an AWS m5n.xlarge instance running Ubuntu 18.04 with kernel 5.4.0-1048-aws. 
 `dx` and `dxfuse` benchmark commands were run like so. 
 
-`time dd if=/dev/zero bs=1M count=$SIZE | dx upload --wait -`
+`time dd if=/dev/zero bs=1M count=$SIZE | dx upload -`
 
 `time dd if=/dev/zero bs=1M count=$SIZE of=MNT/project/$SIZE` 
 | dx upload --wait (seconds) | dxfuse upload(seconds) | file size |
 | ---                        |  ----                  | ----      |
-|	4.3 |	7.1 | 100M |
-|	4.8  |	9.9 | 200M |
-|	10.2 |	12 | 400M |
-|	7.5  |	18.2 | 800M |
-|	17.9  |	33.2 | 1600M |
-|	37.8  |	55.1 | 3200M |
-|	79.2  |	181 | 10000M |
+|	1.5 |	2.8 | 100M |
+|	1.8  |	4 | 200M |
+|	3 |	6.8 | 400M |
+|	7.5  |	11.5 | 800M |
+|	9.6  |	29 | 1600M |
+|	20 |	54 | 3200M |
+|	79  |	168 | 10000M |
 
 # Building
 

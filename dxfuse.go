@@ -1641,15 +1641,12 @@ func (fsys *Filesys) SyncFile(ctx context.Context, op *fuseops.SyncFileOp) error
 
 func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseFileHandleOp) error {
 	fsys.mutex.Lock()
-	defer fsys.mutex.Unlock()
-
 	fh, ok := fsys.fhTable[op.Handle]
 	if !ok {
 		fsys.mutex.Unlock()
 		// File handle doesn't exist
 		return nil
 	}
-
 	// release the file handle itself
 	delete(fsys.fhTable, op.Handle)
 	fsys.mutex.Unlock()
@@ -1663,6 +1660,11 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 
 	case AM_AO_Remote:
 		// close file and wait
+		fsys.mutex.Lock()
+		oph := fsys.opOpenNoHttpClient()
+		file, _, _ := fsys.lookupFileByInode(ctx, oph, fh.inode)
+		fsys.opClose(oph)
+		fsys.mutex.Unlock()
 		httpClient := <-fsys.httpClientPool
 		fsys.ops.DxFileCloseAndWait(context.TODO(), httpClient, file.ProjId, fh.Id)
 		fsys.httpClientPool <- httpClient
