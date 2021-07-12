@@ -93,13 +93,13 @@ Creating new files and uploading them to the platform is allowed when dxfuse is 
 `-writeable` mode also enables the following operations: rename (mv), unlink (rm), mkdir, and rmdir. Rewriting of existing files is not permitted, nor is truncating existing files. 
 
 
-## File closing
+## File upload and closing
 
-The `file-xxxx/close` DNAx operation is called only when all open file descriptors for a file are closed and the fuse `ReleaseFileHandle` operation is triggered by the kernel. 
+Closing an open file descriptor will triger the fuse `FlushFile` operation, which will upload the current write buffer of the file, as long as the buffer is >= 5MiB in size. For larger files parts are uploaded in 96 MiB chunks. 
 
-Closing an open file descriptor will triger the fuse `FlushFile` operation, which will upload the current write buffer of the file regardless of whether it is full. This allows creation of empty files via dxfuse. 
+The last part upload and `file-xxxx/close` DNAx operation is called only when all open file descriptors for a file are closed and the fuse `ReleaseFileHandle` operation is triggered by the kernel. This could be problematic since part upload and closing occurs after the application has already finished writing and is no longer waiting on dxfuse. 
 
-Applications such as `dd` which duplicate file descriptors like following syscall access pattern below may generate dnax files starting with an empty part due to this behavior. `FlushFile` is triggered by `close(3)` before any data has been written.
+Applications such as `dd` which duplicate file descriptors like following syscall access pattern are handled, as the `FlushFile` is triggered by `close(3)` is ignored before any data has been written.
 ```
 openat(AT_FDCWD, "MNT/project/ddfile", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
 dup2(3, 1)                              = 1

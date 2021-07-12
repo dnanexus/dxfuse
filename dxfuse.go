@@ -1597,6 +1597,12 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 		fsys.log("tgid: %v, fh tgid: %v", tgid, fh.Tgid)
 		return nil
 	}
+	// Do not upload parts smaller than 5MiB
+	// Only allowed for last part in file, which is handled by ReleaseFileHandle
+	if len(fh.writeBuffer) < 5242880 {
+		fsys.log("Ignoring FlushFile: part size smaller than 5MiB")
+		return nil
+	}
 
 	// upload current buffer and increase part ID
 	fh.lastPartId++
@@ -1666,8 +1672,20 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 		fsys.opClose(oph)
 		fsys.mutex.Unlock()
 		httpClient := <-fsys.httpClientPool
-		fsys.ops.DxFileCloseAndWait(context.TODO(), httpClient, file.ProjId, fh.Id)
+		// Upload last part
+		if len(fh.writeBuffer) > 0 {
+			fh.lastPartId++
+			partId := fh.lastPartId
+			err := fsys.ops.DxFileUploadPart(context.TODO(), httpClient, fh.Id, partId, fh.writeBuffer)
+			if err != nil {
+				return fsys.translateError(err)
+			}
+		}
+		err := fsys.ops.DxFileCloseAndWait(context.TODO(), httpClient, file.ProjId, fh.Id)
 		fsys.httpClientPool <- httpClient
+		if err != nil {
+			fsys.log("Error closing %s: ", fh.Id, err.Error())
+		}
 
 		mtime := time.Now()
 		var mode os.FileMode = fileReadOnlyMode

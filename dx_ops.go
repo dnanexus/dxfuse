@@ -319,7 +319,6 @@ func (ops *DxOps) DxFileUploadPart(
 		return err
 	}
 
-	ops.log("DxFileUploadPart /UPLOAD: start")
 	replyJs, err := dxda.DxAPI(
 		ctx,
 		httpClient,
@@ -327,7 +326,6 @@ func (ops *DxOps) DxFileUploadPart(
 		&ops.dxEnv,
 		fmt.Sprintf("%s/upload", fileId),
 		string(reqJson))
-	ops.log("DxFileUploadPart /UPLOAD: end")
 	if err != nil {
 		ops.log("DxFileUploadPart: error in dxapi call [%s/upload] %v",
 			fileId, err.Error())
