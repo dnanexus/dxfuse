@@ -1684,7 +1684,7 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 		err := fsys.ops.DxFileCloseAndWait(context.TODO(), httpClient, file.ProjId, fh.Id)
 		fsys.httpClientPool <- httpClient
 		if err != nil {
-			fsys.log("Error closing %s: ", fh.Id, err.Error())
+			fsys.log("Error closing %s: %s", fh.Id, err.Error())
 		}
 
 		mtime := time.Now()
