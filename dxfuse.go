@@ -55,6 +55,9 @@ type Filesys struct {
 	// prefetch state for all files
 	pgs *PrefetchGlobalState
 
+	// parallel part uploader
+	uploader *FileUploader
+
 	// sync daemon
 	sybx *SyncDbDx
 
@@ -118,6 +121,8 @@ type FileHandle struct {
 	writeBufferOffset int
 	// Lock for writing
 	mutex *sync.Mutex
+	// waitgroup for parallel part uploads
+	wg sync.WaitGroup
 }
 
 type DirHandle struct {
@@ -188,6 +193,8 @@ func NewDxfuse(
 		// we don't need the file upload module
 		return fsys, nil
 	}
+
+	fsys.uploader = NewFileUploader(options.VerboseLevel, options, dxEnv)
 
 	projId2Desc := make(map[string]DxDescribePrj)
 	for _, d := range manifest.Directories {
@@ -1532,13 +1539,14 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 			// increment part id
 			fh.lastPartId++
 			partId := fh.lastPartId
-			httpClient := <-fsys.httpClientPool
-			// upload buffer
-			err := fsys.ops.DxFileUploadPart(context.TODO(), httpClient, fh.Id, partId, fh.writeBuffer)
-			fsys.httpClientPool <- httpClient
-			if err != nil {
-				return fsys.translateError(err)
+			uploadReq := UploadRequest{
+				fh:          fh,
+				fileId:      fh.Id,
+				writeBuffer: fh.writeBuffer,
+				partId:      partId,
 			}
+			fh.wg.Add(1)
+			fsys.uploader.uploadQueue <- uploadReq
 			fh.writeBuffer = fh.writeBuffer[:0]
 			// increasing buffer size for next part
 			nextCap := 96 * 1024 * 1024 * math.Pow(1.0003, float64(partId))
@@ -1597,18 +1605,12 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 		fsys.log("tgid: %v, fh tgid: %v", tgid, fh.Tgid)
 		return nil
 	}
-	// Do not upload parts smaller than 5MiB
-	// Only allowed for last part in file, which is handled by ReleaseFileHandle
-	if len(fh.writeBuffer) < 5242880 {
-		fsys.log("Ignoring FlushFile: part size smaller than 5MiB")
-		return nil
-	}
 
 	// upload current buffer and increase part ID
 	fh.lastPartId++
 	partId := fh.lastPartId
 	httpClient := <-fsys.httpClientPool
-	err := fsys.ops.DxFileUploadPart(context.TODO(), httpClient, fh.Id, int(partId), fh.writeBuffer)
+	err := fsys.ops.DxFileCloseAndWait(context.TODO(), httpClient, file.ProjId, fh.Id)
 	fsys.httpClientPool <- httpClient
 	if err != nil {
 		return fsys.translateError(err)
@@ -1671,18 +1673,9 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 		file, _, _ := fsys.lookupFileByInode(ctx, oph, fh.inode)
 		fsys.opClose(oph)
 		fsys.mutex.Unlock()
-		httpClient := <-fsys.httpClientPool
-		// Upload last part
-		if len(fh.writeBuffer) > 0 {
-			fh.lastPartId++
-			partId := fh.lastPartId
-			err := fsys.ops.DxFileUploadPart(context.TODO(), httpClient, fh.Id, partId, fh.writeBuffer)
-			if err != nil {
-				return fsys.translateError(err)
-			}
-		}
+
+		fh.wg.Wait()
 		err := fsys.ops.DxFileCloseAndWait(context.TODO(), httpClient, file.ProjId, fh.Id)
-		fsys.httpClientPool <- httpClient
 		if err != nil {
 			fsys.log("Error closing %s: %s", fh.Id, err.Error())
 		}
