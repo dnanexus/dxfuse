@@ -1630,11 +1630,11 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 
 	// close file
 	httpClient := <-fsys.httpClientPool
-	go fsys.ops.DxFileCloseAndWait(context.TODO(), httpClient, file.ProjId, fh.Id)
+	err := fsys.ops.DxFileCloseAndWait(context.TODO(), httpClient, file.ProjId, fh.Id)
 	fsys.httpClientPool <- httpClient
-	//if err != nil {
-	//	return fsys.translateError(err)
-	//}
+	if err != nil {
+		return fsys.translateError(err)
+	}
 	// Update the file attributes in the database (size, mtime)
 	mtime := time.Now()
 	var mode os.FileMode = fileReadOnlyMode

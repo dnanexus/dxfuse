@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	fileCloseWaitTime    = 5 * time.Second
+	fileCloseWaitTime    = 2 * time.Second
 	fileCloseMaxWaitTime = 10 * time.Minute
 )
 
@@ -247,6 +247,7 @@ func (ops *DxOps) DxFileCloseAndWait(
 	// wait for file to achieve closed state
 	start := time.Now()
 	deadline := start.Add(fileCloseMaxWaitTime)
+	time.Sleep(1)
 	for true {
 		fDesc, err := DxDescribe(ctx, httpClient, &ops.dxEnv, projectId, fid)
 		if err != nil {
