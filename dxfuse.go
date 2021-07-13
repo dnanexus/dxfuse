@@ -1606,35 +1606,52 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 		return nil
 	}
 
-	// upload current buffer and increase part ID
+	// upload last part
 	fh.lastPartId++
 	partId := fh.lastPartId
-	httpClient := <-fsys.httpClientPool
-	err := fsys.ops.DxFileCloseAndWait(context.TODO(), httpClient, file.ProjId, fh.Id)
-	fsys.httpClientPool <- httpClient
-	if err != nil {
-		return fsys.translateError(err)
+	uploadReq := UploadRequest{
+		fh:          fh,
+		fileId:      fh.Id,
+		writeBuffer: fh.writeBuffer,
+		partId:      partId,
 	}
-	// zero out buffer
+	fh.wg.Add(1)
+	fsys.uploader.uploadQueue <- uploadReq
 	fh.writeBuffer = fh.writeBuffer[:0]
-	fh.writeBufferOffset = 0
-	// increasing buffer size for next part
-	nextCap := 96 * 1024 * 1024 * math.Pow(1.0003, float64(partId))
-	nextBufferCapacity := math.Round(nextCap)
-	fh.writeBuffer = make([]byte, 0, int64(nextBufferCapacity))
-	fh.writeBufferOffset = 0
 
-	// Update the file attributes in the database (size, mtime)
+	fh.wg.Wait()
+
+	// get project-id
 	fsys.mutex.Lock()
 	oph := fsys.opOpenNoHttpClient()
-	if err := fsys.mdb.UpdateFileAttrs(ctx, oph, fh.inode, fh.size, time.Now(), nil); err != nil {
-		fsys.log("database error in updating attributes for WriteFile %s", err.Error())
-		fsys.mutex.Unlock()
-		fsys.opClose(oph)
-		return fuse.EIO
-	}
+	file, _, _ := fsys.lookupFileByInode(ctx, oph, int64(op.Inode))
 	fsys.opClose(oph)
 	fsys.mutex.Unlock()
+
+	// close file
+	httpClient := <-fsys.httpClientPool
+	go fsys.ops.DxFileCloseAndWait(context.TODO(), httpClient, file.ProjId, fh.Id)
+	fsys.httpClientPool <- httpClient
+	//if err != nil {
+	//	return fsys.translateError(err)
+	//}
+	// Update the file attributes in the database (size, mtime)
+	mtime := time.Now()
+	var mode os.FileMode = fileReadOnlyMode
+	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
+	oph = fsys.opOpenNoHttpClient()
+	defer fsys.opClose(oph)
+
+	if err := fsys.mdb.UpdateFileAttrs(ctx, oph, fh.inode, fh.size, mtime, &mode); err != nil {
+		fsys.log("database error in updating attributes for FlushFile %s", err.Error())
+		return fuse.EIO
+	}
+	// update to remote read-only
+	if err := fsys.mdb.UpdateClosedFileMetadata(ctx, oph, fh.inode); err != nil {
+		fsys.log("database error in updating attributes for closed FlushFile %s", err.Error())
+		return fuse.EIO
+	}
 
 	return nil
 }
@@ -1667,35 +1684,6 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 		return nil
 
 	case AM_AO_Remote:
-		// close file and wait
-		fsys.mutex.Lock()
-		oph := fsys.opOpenNoHttpClient()
-		file, _, _ := fsys.lookupFileByInode(ctx, oph, fh.inode)
-		fsys.opClose(oph)
-		fsys.mutex.Unlock()
-
-		fh.wg.Wait()
-		err := fsys.ops.DxFileCloseAndWait(context.TODO(), httpClient, file.ProjId, fh.Id)
-		if err != nil {
-			fsys.log("Error closing %s: %s", fh.Id, err.Error())
-		}
-
-		mtime := time.Now()
-		var mode os.FileMode = fileReadOnlyMode
-		fsys.mutex.Lock()
-		defer fsys.mutex.Unlock()
-		oph = fsys.opOpenNoHttpClient()
-		defer fsys.opClose(oph)
-
-		if err := fsys.mdb.UpdateFileAttrs(ctx, oph, fh.inode, fh.size, mtime, &mode); err != nil {
-			fsys.log("database error in updating attributes for FlushFile %s", err.Error())
-			return fuse.EIO
-		}
-		// update to remote read-only
-		if err := fsys.mdb.UpdateClosedFileMetadata(ctx, oph, fh.inode); err != nil {
-			fsys.log("database error in updating attributes for closed FlushFile %s", err.Error())
-			return fuse.EIO
-		}
 		return nil
 
 	default:
