@@ -97,16 +97,29 @@ Creating new files and uploading them to the platform is allowed when dxfuse is 
 
 Closing an open file descriptor will triger the fuse `FlushFile` operation, which will upload the current write buffer of the file, as long as the buffer is >= 5MiB in size. For larger files parts are uploaded in 96 MiB chunks. 
 
-The last part upload and `file-xxxx/close` DNAx operation is called only when all open file descriptors for a file are closed and the fuse `ReleaseFileHandle` operation is triggered by the kernel. This could be problematic since part upload and closing occurs after the application has already finished writing and is no longer waiting on dxfuse. 
+The last part upload and `file-xxxx/close` DNAx operation is called only when a file descriptor is closed and the `FlushFile` operation is triggered by the kernel.
 
-Applications such as `dd` which duplicate file descriptors like following syscall access pattern are handled, as the `FlushFile` is triggered by `close(3)` is ignored before any data has been written.
+### File descriptor duplication and empty files
+
+Applications which immediately duplicate the file descriptor after opening are supported, but writing and then subsequently duplicating is not supported, as this triggers the `FlushFile` fuse operation. The below syscall access pattern is handled, as the `FlushFile` op triggered by `close(3)` is ignored because no data has been written to the file yet.
 ```
-openat(AT_FDCWD, "MNT/project/ddfile", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
+# Supported
+openat(AT_FDCWD, "MNT/project/writefile", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
 dup2(3, 1)                              = 1
 close(3)                                = 0
 read(0, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"..., 1024) = 1024
 write(1, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"..., 1024) = 1024
 ```
+```
+# Not supported
+openat(AT_FDCWD, "MNT/project/writefile", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
+read(0, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"..., 1024) = 1024
+write(3, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"..., 1024) = 1024
+dup2(3, 1)                              = 1
+close(3)                                = 0
+```
+
+Ignoring the `FlushFile` op creates an edge case for empty files. For empty files the empty part upload and `file-xxxx/close` are not called until the `ReleaseFileHandle` fuse op is triggered by the kernel. This is only triggered when all open file descriptors have been closed. The downside of this behavior is that the application which is writing does not wait for this operation to return as it does for regular files closed via `FlushFile`. 
 
 ## Spark output
 
@@ -115,20 +128,20 @@ dxfuse in `-writeable` mode supports output from the `file:///` protocol in spar
 ## Upload benchmarks
 
 Upload benchmarks are from an AWS m5n.xlarge instance running Ubuntu 18.04 with kernel 5.4.0-1048-aws. 
-`dx` and `dxfuse` benchmark commands were run like so. 
+`dx` and `dxfuse` benchmark commands were run like so. These benchmarks are not exact because they include the wait time until the uploaded file is transitioned to the `closed` state. 
 
 `time dd if=/dev/zero bs=1M count=$SIZE | dx upload -`
 
 `time dd if=/dev/zero bs=1M count=$SIZE of=MNT/project/$SIZE` 
 | dx upload --wait (seconds) | dxfuse upload(seconds) | file size |
 | ---                        |  ----                  | ----      |
-|	1.5 |	2.8 | 100M |
-|	1.8  |	4 | 200M |
-|	3 |	6.8 | 400M |
-|	7.5  |	11.5 | 800M |
-|	9.6  |	29 | 1600M |
-|	20 |	54 | 3200M |
-|	79  |	168 | 10000M |
+|	4.4 |	5.6| 100M |
+|	9  |	6.1 | 200M |
+|	8.8 |	6.7 | 400M |
+|	8.8 |	12.8 | 800M |
+|	18 |	19 | 1600M |
+|	32 |	24 | 3200M |
+|	79  |	65 | 10000M |
 
 # Building
 

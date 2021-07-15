@@ -23,11 +23,12 @@ const (
 	LogFile      = "dxfuse.log"
 )
 const (
-	HttpClientPoolSize = 8
-	MaxDirSize         = 255 * 1000
-	MaxNumFileHandles  = 1000 * 1000
-	NumRetriesDefault  = 10
-	Version            = "v1.0.0"
+	HttpClientPoolSize        = 8
+	FileWriteInactivityThresh = 5 * time.Minute
+	MaxDirSize                = 255 * 1000
+	MaxNumFileHandles         = 1000 * 1000
+	NumRetriesDefault         = 10
+	Version                   = "v1.0.0"
 )
 const (
 	InodeInvalid = 0
