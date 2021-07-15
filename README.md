@@ -86,18 +86,16 @@ download methods were (1) `dx cat`, and (2) `cat` from a dxfuse mount point.
 
 # Writeable mode
 
-Creating new files and uploading them to the platform is allowed when dxfuse is mounted with the `-writeable` flag. Writing to files is **append only**, and any non-sequential writes will return `ENOTSUP`. Seeking or reading from is not permitted while a file is being appended to. 
+Creating new files and uploading them to the platform is allowed when dxfuse is mounted with the `-writeable` flag. Writing to files is **append only**, and any non-sequential writes will return `ENOTSUP`. Seeking or reading from is not permitted while a file is being written.
 
 ## Supported operations
 
 `-writeable` mode also enables the following operations: rename (mv), unlink (rm), mkdir, and rmdir. Rewriting of existing files is not permitted, nor is truncating existing files. 
 
-
 ## File upload and closing
 
-Closing an open file descriptor will triger the fuse `FlushFile` operation, which will upload the current write buffer of the file, as long as the buffer is >= 5MiB in size. For larger files parts are uploaded in 96 MiB chunks. 
-
-The last part upload and `file-xxxx/close` DNAx operation is called only when a file descriptor is closed and the `FlushFile` operation is triggered by the kernel.
+Each file open for writing is allocated a 96MiB write buffer, which is uploaded as a file part when full. Currently dxfuse will upload up to 4 parts in parallel. 
+The last part upload and `file-xxxx/close` DNAx operation is called only when a file descriptor is closed and the `FlushFile` fuse operation is triggered.
 
 ### File descriptor duplication and empty files
 
@@ -117,9 +115,11 @@ read(0, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"..., 1
 write(3, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"..., 1024) = 1024
 dup2(3, 1)                              = 1
 close(3)                                = 0
+# File has already been closed flushed and closed by the above close(3) 
+write(1, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"..., 1024) = 1024
 ```
 
-Ignoring the `FlushFile` op creates an edge case for empty files. For empty files the empty part upload and `file-xxxx/close` are not called until the `ReleaseFileHandle` fuse op is triggered by the kernel. This is only triggered when all open file descriptors have been closed. The downside of this behavior is that the application which is writing does not wait for this operation to return as it does for regular files closed via `FlushFile`. 
+Ignoring the `FlushFile` op creates an edge case for creating empty files. For empty files the empty part upload and `file-xxxx/close` are not called until the `ReleaseFileHandle` fuse op is triggered by the kernel. This is only triggered when all open file descriptors have been closed. The downside of this behavior is that the application which is writing does not wait for this operation to return as it does for regular files closed via `FlushFile`. 
 
 ## Spark output
 
