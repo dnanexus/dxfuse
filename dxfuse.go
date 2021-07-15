@@ -123,6 +123,8 @@ type FileHandle struct {
 	mutex *sync.Mutex
 	// waitgroup for parallel part uploads
 	wg sync.WaitGroup
+	// parallel uploader will report any errors here, should be checked on the next write
+	writeError error
 }
 
 type DirHandle struct {
@@ -189,13 +191,6 @@ func NewDxfuse(
 		fsys.httpClientPool <- httpClient
 	}()
 
-	if options.ReadOnly {
-		// we don't need the file upload module
-		return fsys, nil
-	}
-
-	fsys.uploader = NewFileUploader(options.VerboseLevel, options, dxEnv)
-
 	projId2Desc := make(map[string]DxDescribePrj)
 	for _, d := range manifest.Directories {
 		pDesc, err := DxDescribeProject(context.TODO(), httpClient, &fsys.dxEnv, d.ProjId)
@@ -206,6 +201,13 @@ func NewDxfuse(
 		projId2Desc[pDesc.Id] = *pDesc
 	}
 	fsys.projId2Desc = projId2Desc
+
+	if options.ReadOnly {
+		// we don't need the file upload module
+		return fsys, nil
+	}
+
+	fsys.uploader = NewFileUploader(options.VerboseLevel, options, dxEnv)
 
 	// initialize sync daemon
 	//fsys.sybx = NewSyncDbDx(options, dxEnv, projId2Desc, mdb, fsys.mutex)
@@ -248,6 +250,10 @@ func (fsys *Filesys) Shutdown() {
 
 	// close the command server, this frees up the port
 	fsys.cmdSrv.Close()
+
+	if fsys.uploader != nil {
+		fsys.uploader.Shutdown()
+	}
 
 	// Stop the synchronization daemon. Do not complete
 	// outstanding operations.
@@ -1503,6 +1509,10 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 	fh.mutex.Lock()
 	defer fh.mutex.Unlock()
 
+	if fh.writeError != nil {
+		return fsys.translateError(fh.writeError)
+	}
+
 	if op.Offset != fh.nextWriteOffset {
 		fsys.log("ERROR: Only sequential writes are supported")
 		fsys.log("%v", fh.writeBufferOffset)
@@ -1606,6 +1616,16 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 		return nil
 	}
 
+	// Return previous write error
+	if fh.writeError != nil {
+		return fsys.translateError(fh.writeError)
+	}
+
+	// Empty files are handled by ReleaseFileHandle
+	if len(fh.writeBuffer) == 0 {
+		return nil
+	}
+
 	// upload last part
 	fh.lastPartId++
 	partId := fh.lastPartId
@@ -1684,6 +1704,48 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 		return nil
 
 	case AM_AO_Remote:
+		// Special case for empty files which are not uploaded during FlushFile since their size is 0
+		if fh.size == 0 && len(fh.writeBuffer) == 0 && fh.lastPartId == 0 {
+			fh.lastPartId++
+			partId := fh.lastPartId
+			httpClient := <-fsys.httpClientPool
+			err := fsys.ops.DxFileUploadPart(context.TODO(), httpClient, fh.Id, partId, fh.writeBuffer)
+			fsys.httpClientPool <- httpClient
+			if err != nil {
+
+			}
+			// get project-id
+			fsys.mutex.Lock()
+			oph := fsys.opOpenNoHttpClient()
+			file, _, _ := fsys.lookupFileByInode(ctx, oph, int64(fh.inode))
+			fsys.opClose(oph)
+			fsys.mutex.Unlock()
+
+			httpClient = <-fsys.httpClientPool
+			err = fsys.ops.DxFileCloseAndWait(context.TODO(), httpClient, file.ProjId, fh.Id)
+			fsys.httpClientPool <- httpClient
+			if err != nil {
+				return fsys.translateError(err)
+			}
+			// Update the file attributes in the database (size, mtime)
+			mtime := time.Now()
+			var mode os.FileMode = fileReadOnlyMode
+			fsys.mutex.Lock()
+			defer fsys.mutex.Unlock()
+			oph = fsys.opOpenNoHttpClient()
+			defer fsys.opClose(oph)
+
+			if err := fsys.mdb.UpdateFileAttrs(ctx, oph, fh.inode, fh.size, mtime, &mode); err != nil {
+				fsys.log("database error in updating attributes for FlushFile %s", err.Error())
+				return fuse.EIO
+			}
+			// update to remote read-only
+			if err := fsys.mdb.UpdateClosedFileMetadata(ctx, oph, fh.inode); err != nil {
+				fsys.log("database error in updating attributes for closed FlushFile %s", err.Error())
+				return fuse.EIO
+			}
+
+		}
 		return nil
 
 	default:

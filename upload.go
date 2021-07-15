@@ -28,6 +28,11 @@ type FileUploader struct {
 	ops *DxOps
 }
 
+// write a log message, and add a header
+func (uploader *FileUploader) log(a string, args ...interface{}) {
+	LogMsg("uploader", a, args...)
+}
+
 func NewFileUploader(verboseLevel int, options Options, dxEnv dxda.DXEnvironment) *FileUploader {
 
 	uploader := &FileUploader{
@@ -44,6 +49,12 @@ func NewFileUploader(verboseLevel int, options Options, dxEnv dxda.DXEnvironment
 	return uploader
 }
 
+func (uploader *FileUploader) Shutdown() {
+	// Close channel and wait for goroutines to complete
+	close(uploader.uploadQueue)
+	uploader.wg.Wait()
+}
+
 func (uploader *FileUploader) uploadRoutine() {
 	// reuse this http client
 	httpClient := dxda.NewHttpClient()
@@ -53,7 +64,11 @@ func (uploader *FileUploader) uploadRoutine() {
 			uploader.wg.Done()
 			return
 		}
-		uploader.ops.DxFileUploadPart(context.TODO(), httpClient, uploadReq.fileId, uploadReq.partId, uploadReq.writeBuffer)
+		err := uploader.ops.DxFileUploadPart(context.TODO(), httpClient, uploadReq.fileId, uploadReq.partId, uploadReq.writeBuffer)
+		if err != nil {
+			uploader.log("Erorr uploading %s, part %d, %s", uploadReq.fileId, uploadReq.partId, err.Error())
+			uploadReq.fh.writeError = err
+		}
 		uploadReq.fh.wg.Done()
 	}
 }
