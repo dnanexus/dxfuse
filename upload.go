@@ -44,7 +44,7 @@ func NewFileUploader(verboseLevel int, options Options, dxEnv dxda.DXEnvironment
 
 	uploader.wg.Add(maxUploadRoutines)
 	for i := 0; i < maxUploadRoutines; i++ {
-		go uploader.uploadRoutine()
+		go uploader.uploadWorker()
 	}
 	return uploader
 }
@@ -55,7 +55,7 @@ func (uploader *FileUploader) Shutdown() {
 	uploader.wg.Wait()
 }
 
-func (uploader *FileUploader) uploadRoutine() {
+func (uploader *FileUploader) uploadWorker() {
 	// reuse this http client
 	httpClient := dxda.NewHttpClient()
 	for true {
@@ -65,9 +65,8 @@ func (uploader *FileUploader) uploadRoutine() {
 			return
 		}
 		err := uploader.ops.DxFileUploadPart(context.TODO(), httpClient, uploadReq.fileId, uploadReq.partId, uploadReq.writeBuffer)
-		uploadReq.fh.mutex.Lock()
-		defer uploadReq.fh.mutex.Unlock()
 		if err != nil {
+			// Record upload error in FileHandle
 			uploader.log("Erorr uploading %s, part %d, %s", uploadReq.fileId, uploadReq.partId, err.Error())
 			uploadReq.fh.writeError = err
 		}
