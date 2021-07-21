@@ -821,9 +821,8 @@ func (mdb *MetadataDb) CreateDir(
 	ctime int64,
 	mtime int64,
 	mode os.FileMode,
-	dirPath string,
-	parents bool) (int64, error) {
-	dnode, err := mdb.createEmptyDir(oph, projId, projFolder, ctime, mtime, mode, dirPath, parents)
+	dirPath string) (int64, error) {
+	dnode, err := mdb.createEmptyDir(oph, projId, projFolder, ctime, mtime, mode, dirPath, false)
 	if err != nil {
 		mdb.log("error in create dir")
 		return 0, oph.RecordError(err)

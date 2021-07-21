@@ -608,8 +608,7 @@ func (fsys *Filesys) MkDir(ctx context.Context, op *fuseops.MkDirOp) error {
 		nowSeconds,
 		nowSeconds,
 		mode,
-		parentDir.FullPath+"/"+op.Name,
-		true)
+		parentDir.FullPath+"/"+op.Name)
 	if err != nil {
 		fsys.log("database error in MkDir")
 		return fuse.EIO

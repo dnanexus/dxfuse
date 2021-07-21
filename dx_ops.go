@@ -61,7 +61,7 @@ func (ops *DxOps) DxFolderNew(
 	var request RequestFolderNew
 	request.ProjId = projId
 	request.Folder = folder
-	request.Parents = false
+	request.Parents = true
 
 	payload, err := json.Marshal(request)
 	if err != nil {
