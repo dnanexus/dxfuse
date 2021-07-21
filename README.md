@@ -88,9 +88,15 @@ download methods were (1) `dx cat`, and (2) `cat` from a dxfuse mount point.
 
 Creating new files and uploading them to the platform is allowed when dxfuse is mounted with the `-writeable` flag. Writing to files is **append only**, and any non-sequential writes will return `ENOTSUP`. Seeking or reading from is not permitted while a file is being written.
 
+**NOTE `dxfuse -writeable` mode was primarly designed and written to support spark file output**
+
 ## Supported operations
 
 `-writeable` mode also enables the following operations: rename (mv), unlink (rm), mkdir, and rmdir. Rewriting of existing files is not permitted, nor is truncating existing files. 
+
+### mkdir behavior
+
+All `mkdir` operations via dxfuse are treated as `mkdir -p`. This is because dxfuse does not present the realtime state of the project. Folders can be created outside of dxfuse (or in another dxfuse process), and therefore not be visible to the current running dxfuse. A subsequent `mkdir` --> `project-xxxx/newFolder` returns a 422 error, even though it could not see the folder. This design is due to spark behavior where multiple worker nodes sometimes attempt to create the same output directory. 
 
 ## File upload and closing
 

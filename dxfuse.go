@@ -547,6 +547,8 @@ func (fsys *Filesys) ForgetInode(ctx context.Context, op *fuseops.ForgetInodeOp)
 	return nil
 }
 
+// All mkdir operations are treated as "mkdir -p"
+// dxfuse does not represent the latest view of the project, as folders created after dxfuse launch are not shown
 func (fsys *Filesys) MkDir(ctx context.Context, op *fuseops.MkDirOp) error {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
@@ -606,7 +608,8 @@ func (fsys *Filesys) MkDir(ctx context.Context, op *fuseops.MkDirOp) error {
 		nowSeconds,
 		nowSeconds,
 		mode,
-		parentDir.FullPath+"/"+op.Name)
+		parentDir.FullPath+"/"+op.Name,
+		true)
 	if err != nil {
 		fsys.log("database error in MkDir")
 		return fuse.EIO
