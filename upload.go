@@ -65,6 +65,8 @@ func (uploader *FileUploader) uploadRoutine() {
 			return
 		}
 		err := uploader.ops.DxFileUploadPart(context.TODO(), httpClient, uploadReq.fileId, uploadReq.partId, uploadReq.writeBuffer)
+		uploadReq.fh.mutex.Lock()
+		defer uploadReq.fh.mutex.Unlock()
 		if err != nil {
 			uploader.log("Erorr uploading %s, part %d, %s", uploadReq.fileId, uploadReq.partId, err.Error())
 			uploadReq.fh.writeError = err
