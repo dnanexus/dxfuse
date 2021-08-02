@@ -288,7 +288,7 @@ func NewPrefetchGlobalState(verboseLevel int, dxEnv dxda.DXEnvironment) *Prefetc
 
 func (pgs *PrefetchGlobalState) resetPfm(pfm *PrefetchFileMetadata) {
 	if pgs.verbose {
-		pfm.log("access is not sequential, reseting stream state inode=%d", pfm.inode)
+		pfm.log("access is not sequential, resetting stream state inode=%d", pfm.inode)
 	}
 	pfm.cancelIOs()
 	pfm.hiUserAccessOfs = 0
