@@ -1616,14 +1616,17 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 		fsys.log("tgid: %v, fh tgid: %v", tgid, fh.Tgid)
 		return nil
 	}
-
+	// Wait for any current part uploads to finish
+	fh.wg.Wait()
 	// Return previous write error
+
 	if fh.writeError != nil {
 		return fsys.translateError(fh.writeError)
 	}
 
 	// Empty files are handled by ReleaseFileHandle
-	if len(fh.writeBuffer) == 0 {
+	if len(fh.writeBuffer) == 0 && fh.size == 0 {
+		fsys.log("Ignoring FlushFile: file is empty")
 		return nil
 	}
 
@@ -1641,6 +1644,10 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	fh.writeBuffer = fh.writeBuffer[:0]
 
 	fh.wg.Wait()
+	// Check if there was an error uploading the last part
+	if fh.writeError != nil {
+		return fsys.translateError(fh.writeError)
+	}
 
 	// get project-id
 	fsys.mutex.Lock()

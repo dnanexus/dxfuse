@@ -67,7 +67,7 @@ func (uploader *FileUploader) uploadWorker() {
 		err := uploader.ops.DxFileUploadPart(context.TODO(), httpClient, uploadReq.fileId, uploadReq.partId, uploadReq.writeBuffer)
 		if err != nil {
 			// Record upload error in FileHandle
-			uploader.log("Erorr uploading %s, part %d, %s", uploadReq.fileId, uploadReq.partId, err.Error())
+			uploader.log("Error uploading %s, part %d, %s", uploadReq.fileId, uploadReq.partId, err.Error())
 			uploadReq.fh.writeError = err
 		}
 		uploadReq.fh.wg.Done()
