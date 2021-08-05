@@ -100,7 +100,7 @@ All `mkdir` operations via dxfuse are treated as `mkdir -p`. This is because dxf
 
 ## File upload and closing
 
-Each file open for writing is allocated a 96MiB write buffer, which is uploaded as a file part when full. Currently dxfuse will upload up to 4 parts in parallel. 
+Each file open for writing is allocated a 96MiB write buffer in memory, which is uploaded as a file part when full. Currently dxfuse will upload up to 4 parts in parallel. 
 The last part upload and `file-xxxx/close` DNAx operation is called only when a file descriptor is closed and the `FlushFile` fuse operation is triggered.
 
 ### File descriptor duplication and empty files
@@ -115,7 +115,7 @@ close(3)                                = 0
 read(0, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"..., 1024) = 1024
 write(1, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"..., 1024) = 1024
 ```
-
+The example below closes the file descriptor after writing, which closes the dnanexus file, causing subsequent writes to fail.
 ```
 # Not supported
 openat(AT_FDCWD, "MNT/project/writefile", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
@@ -125,7 +125,7 @@ dup2(3, 1)                              = 1
 # Triggers a FlushFile --> file-xxxx/close by dxfuse since the file size is greater than 0
 close(3)                                = 0
 # Returns EPERM since the file has been closed already
-write(1, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"..., 1024) = 1024
+write(1, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"..., 1024) = -1
 ```
 
 Ignoring the `FlushFile` op creates an edge case for creating empty files. For empty files the empty part upload and `file-xxxx/close` are not called until the `ReleaseFileHandle` fuse op is triggered by the kernel. This is only triggered when all open file descriptors have been closed. The downside of this behavior is that the application which is writing does not wait for this operation to return as it does for regular files closed via `FlushFile`. 
