@@ -412,7 +412,7 @@ function fs_test_cases {
 
     # Start the dxfuse daemon in the background, and wait for it to initilize.
     echo "Mounting dxfuse"
-    flags="-writeable"
+    flags="-limitedWrite"
     if [[ $verbose != "" ]]; then
         flags="$flags -verbose 2"
     fi

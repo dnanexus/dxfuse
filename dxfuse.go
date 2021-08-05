@@ -1514,6 +1514,11 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 		return fsys.translateError(fh.writeError)
 	}
 
+	// Possible case of file being flushed by one fd, but another open file descriptor still attempting to write
+	if fh.accessMode != AM_AO_Remote {
+		return syscall.EPERM
+	}
+
 	if op.Offset != fh.nextWriteOffset {
 		fsys.log("ERROR: Only sequential writes are supported")
 		fsys.log("%v", fh.writeBufferOffset)
@@ -1663,6 +1668,10 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	if err != nil {
 		return fsys.translateError(err)
 	}
+
+	// Update fh to be remote in case of subsequent write attempts
+	fh.accessMode = AM_RO_Remote
+
 	// Update the file attributes in the database (size, mtime)
 	mtime := time.Now()
 	var mode os.FileMode = fileReadOnlyMode
@@ -1714,6 +1723,7 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 	case AM_AO_Remote:
 		// Special case for empty files which are not uploaded during FlushFile since their size is 0
 		if fh.size == 0 && len(fh.writeBuffer) == 0 && fh.lastPartId == 0 {
+			fsys.log("Upload and close empty file")
 			fh.lastPartId++
 			partId := fh.lastPartId
 			httpClient := <-fsys.httpClientPool

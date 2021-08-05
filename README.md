@@ -84,19 +84,19 @@ download methods were (1) `dx cat`, and (2) `cat` from a dxfuse mount point.
 | mem3\_ssd1\_v2\_x32|		4|	2 | 705M|
 | mem3\_ssd1\_v2\_x32|		2|	1 | 285M|
 
-# Writeable mode
+# Writeable mode (with limitations)
 
-Creating new files and uploading them to the platform is allowed when dxfuse is mounted with the `-writeable` flag. Writing to files is **append only**, and any non-sequential writes will return `ENOTSUP`. Seeking or reading from is not permitted while a file is being written.
+Creating new files and uploading them to the platform is allowed when dxfuse is mounted with the `-limitedWrite` flag. Writing to files is **append only**, and any non-sequential writes will return `ENOTSUP`. Seeking or reading from is not permitted while a file is being written.
 
-**NOTE `dxfuse -writeable` mode was primarly designed and written to support spark file output**
+**NOTE `dxfuse -limitedWrite` mode was primarly designed and written to support spark file output**
 
 ## Supported operations
 
-`-writeable` mode also enables the following operations: rename (mv), unlink (rm), mkdir, and rmdir. Rewriting of existing files is not permitted, nor is truncating existing files. 
+`-limitedWrite` mode also enables the following operations: rename (mv), unlink (rm), mkdir (see below), and rmdir. Rewriting existing files is not permitted, nor is truncating existing files. 
 
 ### mkdir behavior
 
-All `mkdir` operations via dxfuse are treated as `mkdir -p`. This is because dxfuse does not present the realtime state of the project. Folders can be created outside of dxfuse (or in another dxfuse process), and therefore not be visible to the current running dxfuse. A subsequent `mkdir` --> `project-xxxx/newFolder` returns a 422 error, even though it could not see the folder. This design is due to spark behavior where multiple worker nodes sometimes attempt to create the same output directory. 
+All `mkdir` operations via dxfuse are treated as `mkdir -p`. This is because dxfuse does not present the realtime state of the project. Folders can be created outside of dxfuse (or in another dxfuse process), and therefore not be visible to the current running dxfuse. A subsequent `mkdir` --> `project-xxxx/newFolder` would return a 422 error, because dxfuse did not know the directory already exists. This design is due to spark behavior where multiple worker nodes sometimes attempt to create the same output directory. 
 
 ## File upload and closing
 
@@ -105,24 +105,26 @@ The last part upload and `file-xxxx/close` DNAx operation is called only when a 
 
 ### File descriptor duplication and empty files
 
-Applications which immediately duplicate the file descriptor after opening are supported, but writing and then subsequently duplicating is not supported, as this triggers the `FlushFile` fuse operation. The below syscall access pattern is handled, as the `FlushFile` op triggered by `close(3)` is ignored because no data has been written to the file yet.
+Applications which immediately duplicate a file descriptor after opening are supported, but writing and then subsequently duplicating is not supported, as this triggers the `FlushFile` fuse operation. See the below syscall access pattern which is supported, as the `FlushFile` op triggered by `close(3)` is ignored because no data has been written to the file yet.
 ```
 # Supported
 openat(AT_FDCWD, "MNT/project/writefile", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
 dup2(3, 1)                              = 1
-# Ignored by dxfuse since file is empty
+# Triggers a FlushFile ignored by dxfuse since the file is empty
 close(3)                                = 0
 read(0, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"..., 1024) = 1024
 write(1, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"..., 1024) = 1024
 ```
+
 ```
 # Not supported
 openat(AT_FDCWD, "MNT/project/writefile", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
 read(0, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"..., 1024) = 1024
 write(3, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"..., 1024) = 1024
 dup2(3, 1)                              = 1
+# Triggers a FlushFile --> file-xxxx/close by dxfuse since the file size is greater than 0
 close(3)                                = 0
-# File has already been closed flushed and closed by the above close(3) 
+# Returns EPERM since the file has been closed already
 write(1, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"..., 1024) = 1024
 ```
 
@@ -130,7 +132,7 @@ Ignoring the `FlushFile` op creates an edge case for creating empty files. For e
 
 ## Spark output
 
-dxfuse in `-writeable` mode supports output from the `file:///` protocol in spark. 
+dxfuse in `-limitedWrite` mode supports output from the `file:///` protocol in spark. 
 
 ## Upload benchmarks
 
