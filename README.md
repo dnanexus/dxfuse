@@ -86,13 +86,13 @@ download methods were (1) `dx cat`, and (2) `cat` from a dxfuse mount point.
 
 # Writeable mode (with limitations)
 
-Creating new files and uploading them to the platform is allowed when dxfuse is mounted with the `-limitedWrite` flag. Writing to files is **append only**, and any non-sequential writes will return `ENOTSUP`. Seeking or reading from is not permitted while a file is being written.
+Creating and writing to files is allowed when dxfuse is mounted with the `-limitedWrite` flag. Writing to files is **append only**. Any non-sequential writes will return `ENOTSUP`. Seeking or reading from is not permitted while a file is being written.
 
-**NOTE `dxfuse -limitedWrite` mode was primarly designed and written to support spark file output**
+**NOTE `dxfuse -limitedWrite` mode was primarly designed to support spark file output**
 
 ## Supported operations
 
-`-limitedWrite` mode also enables the following operations: rename (mv), unlink (rm), mkdir (see below), and rmdir. Rewriting existing files is not permitted, nor is truncating existing files. 
+`-limitedWrite` mode also enables the following operations: rename (mv), unlink (rm), mkdir (see below), and rmdir (empty folders only). Rewriting existing files is not permitted, nor is truncating existing files. 
 
 ### mkdir behavior
 
