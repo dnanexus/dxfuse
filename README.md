@@ -2,11 +2,9 @@
 
 A filesystem that allows users access to the DNAnexus storage system.
 
-[![Build Status](https://travis-ci.org/dnanexus/dxfuse.svg?branch=master)](https://travis-ci.org/dnanexus/dxfuse)
-
 **NOTE: This project is in beta . It's used on DNAnexus cloud workers, and may also be run on a Linux or macOS machine with a network connection and a DNAnexus account.**
 
-The code uses the [FUSE](https://bazil.org/fuse/)
+The code uses the [FUSE](https://github.com/jacobsa/fuse)
 library, implemented in [golang](https://golang.org). The DNAnexus
 storage system is not POSIX compilant. It holds not just files and
 directories, but also records, databases, applets, and workflows. It
@@ -45,7 +43,7 @@ There are several limitations currently:
 - Limits directories to 255,000 elements
 - Updates to the project emanating from other machines are not reflected locally
 - Does not support hard links
-  limitedWrite mode has additional limitations described in the [Limited Write Mode](#limited-write-mode) section
+- limitedWrite mode has additional limitations described in the [Limited Write Mode](#limited-write-mode) section
 
 # Download benchmarks
 
@@ -261,7 +259,7 @@ Remove the `family` property:
 $ attr -r prop.family zebra.txt
 ```
 
-You cannot modify _base.*_ attributes, these are read-only. Currently, setting and deleting xattrs can be done only for files that are closed on the platform.
+You cannot modify _base.*_ attributes, these are read-only. Setting and deleting xattrs can be done only for files that are closed on the platform.
 
 ## macOS
 
