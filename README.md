@@ -105,14 +105,23 @@ All `mkdir` operations via dxfuse are treated as `mkdir -p`. This is because dxf
 
 ### rename behavior
 
-Rename does not allow removing the target file or directory because DNAnexus API does not support this functionality.
-XXX moved here from limitations.  Still relevant and correct?
+Rename does not allow removing the target file or directory because DNAnexus API does not support this functionality.  Removal of target file or directory must be done as a separate operation before calling the rename (mv) operation.
+
+```
+$ ls -lht MNT/file*
+-r--r--r-- 1 root root 6 Aug 20 21:23 file1
+-r--r--r-- 1 root root 6 Aug 20 21:23 file
+$ mv MNT/file MNT/file1
+mv: cannot move 'file' to 'file1': Operation not permitted
+
+# Supported via 2 distinct operations:
+$ rm MNT/file1
+$ mv MNT/file MNT/file1
+```
 
 ## File upload and closing
 
-Each dxfuse file open for writing is allocated a 96MiB write buffer in memory, which is uploaded as a DNAnexus file part when full. dxfuse will upload up to 4 parts in parallel.
-
-XXX 4 parts per file or 4 parts across all files backed by dxfuse?
+Each dxfuse file open for writing is allocated a 96MiB write buffer in memory, which is uploaded as a DNAnexus file part when full. dxfuse will upload up to 4 parts in parallel across all files being uploaded.
 
 The upload of the last DNAnexus file part and the call of `file-xxxx/close` DNAnexus API operation are performed by dxfuse only when the OS process that created the OS file descriptor closes the OS file descriptor, triggering `FlushFile` fuse operation.
 
@@ -141,7 +150,7 @@ close(3)                                = 0
 write(1, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"..., 1024) = -1
 ```
 
-Ignoring the `FlushFile` op for empty files creates an edge case for creating empty files in dxfuse-mounted folders. For empty files, the empty part upload and `file-xxxx/close` are not called until the `ReleaseFileHandle` fuse operatioin is triggered by the kernel when the last open file descriptor for a given file has been closed. The downside of this behavior is that the dxfuse client application creating the empty file is unable to catch errors that may happen during `file-xxxxx/close` API call as it does for non-empty files closed via `FlushFile` fuse operation triggered by application's call to `close(3)`.
+Ignoring the `FlushFile` op for empty files creates an edge case for creating empty files in dxfuse-mounted folders. For empty files, the empty part upload and `file-xxxx/close` are not called until the `ReleaseFileHandle` fuse operation is triggered by the kernel when the last open file descriptor for a given file has been closed. The downside of this behavior is that the dxfuse client application creating the empty file is unable to catch errors that may happen during `file-xxxxx/close` API call as it does for non-empty files closed via `FlushFile` fuse operation triggered by application's call to `close(3)`.
 
 ### File closing error checking
 
@@ -153,7 +162,7 @@ as DNAnexus files left in open state are eventually removed by the abandoned upl
 Upload benchmarks are from an AWS m5n.xlarge instance running Ubuntu 18.04 with kernel 5.4.0-1048-aws.
 `dx` and `dxfuse` benchmark commands were run like so. These benchmarks are not exact because they include the wait time until the uploaded file is transitioned to the `closed` state.
 
-`time dd if=/dev/zero bs=1M count=$SIZE | dx upload -`
+`time dd if=/dev/zero bs=1M count=$SIZE | dx upload --wait -`
 
 `time dd if=/dev/zero bs=1M count=$SIZE of=MNT/project/$SIZE`
 | dx upload --wait (seconds) | dxfuse upload(seconds) | file size |
