@@ -153,7 +153,7 @@ Ignoring the `FlushFile` op for empty files creates an edge case for creating em
 ### File closing error checking
 
 dxfuse clients should check errors from `close(3)` call to make sure the corresponding DNAnexus file has been transitioned out of the `open` state,
-as DNAnexus files left in open state are eventually removed by the abandoned upload daemon.
+as DNAnexus files left in open state are eventually removed by the DNAnexus cleanup daemon.
 
 ## Upload benchmarks
 
