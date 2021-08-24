@@ -7,6 +7,12 @@
   }, {
     "proj_id": "project-FbZ25gj04J9B8FJ3Gb5fVP41",
     "file_id": "file-FbZ26VQ04J93KB4BFX2V8PxG",
-    "parent": "/"
+    "parent":"/",
+    "state":"live",
+    "size":33,
+    "mtime":1567105863645,
+    "ctime":1567105862000,
+    "archivalState":"live",
+    "fname":"B.txt"
   }]
 }
