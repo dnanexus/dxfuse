@@ -263,7 +263,7 @@ You cannot modify _base.*_ attributes, these are read-only. Setting and deleting
 
 ## macOS
 
-For OSX you will need to install [OSXFUSE](http://osxfuse.github.com/). Note that Your Milage May Vary (YMMV) on this platform, we are mostly focused on Linux.
+For OSX you will need to install [macFUSE](https://osxfuse.github.io/). Note that Your Milage May Vary (YMMV) on this platform, we are mostly focused on Linux.
 
 Feaures such as kernel read-ahead, pagecache, mmap, and PID tracking may not work on macOS.
 
