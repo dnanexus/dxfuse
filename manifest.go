@@ -45,6 +45,19 @@ type Manifest struct {
 	Directories []ManifestDir  `json:"directories"`
 }
 
+func missingDescribe(file *ManifestFile) bool {
+	if file.State == "" ||
+		file.ArchivalState == "" ||
+		file.Fname == "" ||
+		file.Size == 0 ||
+		file.CtimeSeconds == 0 ||
+		file.MtimeSeconds == 0 {
+		return true
+	} else {
+		return false
+	}
+}
+
 func validateDirName(p string) error {
 	dirNameLen := len(p)
 	switch dirNameLen {
@@ -297,12 +310,7 @@ func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnviron
 	// Map of all the files that are missing details grouped by project-id
 	fileIdsPerProject := make(map[string][]string)
 	for _, fl := range m.Files {
-		if fl.State == "" ||
-			fl.ArchivalState == "" ||
-			fl.Fname == "" ||
-			fl.Size == 0 ||
-			fl.CtimeSeconds == 0 ||
-			fl.MtimeSeconds == 0 {
+		if missingDescribe(&fl) {
 			fileIdsPerProject[fl.ProjId] = append(fileIdsPerProject[fl.ProjId], fl.FileId)
 		}
 	}
@@ -339,7 +347,7 @@ func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnviron
 			fl.Size = fDesc.Size
 			fl.CtimeSeconds = fDesc.CtimeSeconds
 			fl.MtimeSeconds = fDesc.MtimeSeconds
-		} else {
+		} else if missingDescribe(fl) {
 			return fmt.Errorf("File %s was not described", fl.FileId)
 		}
 	}
