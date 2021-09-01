@@ -132,8 +132,8 @@ To mount a dnanexus project `mammals` in local directory `/home/jonas/foo` do:
 dxfuse /home/jonas/foo mammals
 ```
 
-Note that dxfuse will hide the content of the mount point (e.g. `/home/jonas/foo` directory in the example above) 
-untill dxfuse process is stopped.
+Note that dxfuse will hide any existing content of the mount point (e.g. `/home/jonas/foo` directory in the example above) 
+until the dxfuse process is stopped.
 
 The bootstrap process has some asynchrony, so it could take it a
 second two to start up. It spawns a separate process for the filesystem
