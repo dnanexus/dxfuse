@@ -339,11 +339,8 @@ func (ops *DxOps) DxFileUploadPart(
 	}
 
 	// bulk data upload
-	ops.log("DxFileUploadPart PUT: start")
 	_, err = dxda.DxHttpRequest(ctx, httpClient, 10, "PUT", reply.Url, reply.Headers, data)
-	ops.log("DxFileUploadPart PUT: end")
 	if err != nil {
-
 		ops.log("DxFileUploadPart: failure in data upload %s", err.Error())
 		return err
 	}
