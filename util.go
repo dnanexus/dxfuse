@@ -29,7 +29,7 @@ const (
 	MaxDirSize                = 255 * 1000
 	MaxNumFileHandles         = 1000 * 1000
 	NumRetriesDefault         = 10
-	Version                   = "v0.24.3"
+	Version                   = "v0.25.0"
 )
 const (
 	InodeInvalid = 0
@@ -102,6 +102,7 @@ type Dir struct {
 func (d Dir) GetAttrs() (a fuseops.InodeAttributes) {
 	a.Size = 4096
 	a.Nlink = 1
+	a.Atime = d.Mtime
 	a.Mtime = d.Mtime
 	a.Ctime = d.Ctime
 	a.Mode = os.ModeDir | d.Mode
@@ -171,6 +172,7 @@ type File struct {
 func (f File) GetAttrs() (a fuseops.InodeAttributes) {
 	a.Size = uint64(f.Size)
 	a.Nlink = 1
+	a.Atime = f.Mtime
 	a.Mtime = f.Mtime
 	a.Ctime = f.Ctime
 	a.Mode = f.Mode
