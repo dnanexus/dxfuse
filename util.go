@@ -171,6 +171,7 @@ type File struct {
 func (f File) GetAttrs() (a fuseops.InodeAttributes) {
 	a.Size = uint64(f.Size)
 	a.Nlink = 1
+	a.Atime = f.Mtime
 	a.Mtime = f.Mtime
 	a.Ctime = f.Ctime
 	a.Mode = f.Mode
