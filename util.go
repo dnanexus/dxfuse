@@ -102,6 +102,7 @@ type Dir struct {
 func (d Dir) GetAttrs() (a fuseops.InodeAttributes) {
 	a.Size = 4096
 	a.Nlink = 1
+	a.Atime = d.Mtime
 	a.Mtime = d.Mtime
 	a.Ctime = d.Ctime
 	a.Mode = os.ModeDir | d.Mode
