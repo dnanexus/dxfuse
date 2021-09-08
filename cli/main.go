@@ -121,6 +121,7 @@ func fsDaemon(
 
 	logger.Printf("starting fsDaemon")
 	mountOptions := make(map[string]string)
+	mountOptions["noatime"] = ""
 
 	user := getUser()
 	if user.Uid == "0" {

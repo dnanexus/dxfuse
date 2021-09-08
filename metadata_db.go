@@ -622,14 +622,12 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 	}
 
 	// Extract information for all the subdirectories
-	sqlStmt := fmt.Sprintf(`
- 		        SELECT directories.inode, directories.proj_id, namespace.name, directories.ctime, directories.mtime, directories.mode
+	sqlStmt := `SELECT directories.inode, directories.proj_id, namespace.name, directories.ctime, directories.mtime, directories.mode
                         FROM directories
                         JOIN namespace
                         ON directories.inode = namespace.inode
-			WHERE namespace.parent = '%s' AND namespace.obj_type = '%d';
-			`, dirFullName, nsDirType)
-	rows, err := oph.txn.Query(sqlStmt)
+			WHERE namespace.parent = $1 AND namespace.obj_type = $2`
+	rows, err := oph.txn.Query(sqlStmt, dirFullName, nsDirType)
 	if err != nil {
 		mdb.log("Error in directories query, err=%s", err.Error())
 		return nil, nil, oph.RecordError(err)
@@ -658,14 +656,13 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 	rows.Close()
 
 	// Extract information for all the files
-	sqlStmt = fmt.Sprintf(`
- 		        SELECT dos.kind, dos.id, dos.proj_id, dos.state, dos.archival_state, dos.inode, dos.size, dos.ctime, dos.mtime, dos.mode, dos.tags, dos.properties, dos.symlink, dos.dirty_data, dos.dirty_metadata, namespace.name
+
+	sqlStmt = `SELECT dos.kind, dos.id, dos.proj_id, dos.state, dos.archival_state, dos.inode, dos.size, dos.ctime, dos.mtime, dos.mode, dos.tags, dos.properties, dos.symlink, dos.dirty_data, dos.dirty_metadata, namespace.name
                         FROM data_objects as dos
                         JOIN namespace
                         ON dos.inode = namespace.inode
-			WHERE namespace.parent = '%s' AND namespace.obj_type = '%d';
-			`, dirFullName, nsDataObjType)
-	rows, err = oph.txn.Query(sqlStmt)
+			WHERE namespace.parent = $1 AND namespace.obj_type = $2`
+	rows, err = oph.txn.Query(sqlStmt, dirFullName, nsDataObjType)
 	if err != nil {
 		mdb.log("Error in data object query, err=%s", err.Error())
 		return nil, nil, oph.RecordError(err)
@@ -787,11 +784,8 @@ func (mdb *MetadataDb) createEmptyDir(
 			projId, projFolder, dirPath, populated)
 	}
 
-	sqlStmt := fmt.Sprintf(`
- 		        INSERT INTO namespace
-			VALUES ('%s', '%s', '%d', '%d');`,
-		parentDir, basename, nsDirType, inode)
-	if _, err := oph.txn.Exec(sqlStmt); err != nil {
+	sqlStmt := "INSERT INTO namespace VALUES ($1, $2, $3, $4)"
+	if _, err := oph.txn.Exec(sqlStmt, parentDir, basename, nsDirType, inode); err != nil {
 		mdb.log("createEmptyDir: error inserting into namespace table %s/%s, err=%s",
 			parentDir, basename, err.Error())
 		return 0, oph.RecordError(err)
@@ -799,14 +793,10 @@ func (mdb *MetadataDb) createEmptyDir(
 
 	// Create an entry for the subdirectory
 	mode = mode | os.ModeDir
-	sqlStmt = fmt.Sprintf(`
-                       INSERT INTO directories
-                       VALUES ('%d', '%s', '%s', '%d', '%d', '%d', '%d');`,
-		inode, projId, projFolder, boolToInt(populated), ctime, mtime, int(mode))
-	if _, err := oph.txn.Exec(sqlStmt); err != nil {
+	sqlStmt = "INSERT INTO directories VALUES ($1, $2, $3, $4, $5, $6, $7)"
+	if _, err := oph.txn.Exec(sqlStmt, inode, projId, projFolder, boolToInt(populated), ctime, mtime, int(mode)); err != nil {
 		mdb.log(err.Error())
-		mdb.log("createEmptyDir: error inserting into directories table %d",
-			inode)
+		mdb.log("createEmptyDir: error inserting into directories table %d", inode)
 		return 0, oph.RecordError(err)
 	}
 	return inode, nil

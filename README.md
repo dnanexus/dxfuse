@@ -193,10 +193,13 @@ chmod u+rw /dev/fuse
 In theory, it should be possible to use `suid` to achive this instead, but that does
 not currently work.
 
-To mount a dnanexus project `mammals` on local directory `/home/jonas/foo` do:
+To mount a dnanexus project `mammals` in local directory `/home/jonas/foo` do:
 ```
 dxfuse /home/jonas/foo mammals
 ```
+
+Note that dxfuse will hide any existing content of the mount point (e.g. `/home/jonas/foo` directory in the example above) 
+until the dxfuse process is stopped.
 
 The bootstrap process has some asynchrony, so it could take it a
 second two to start up. It spawns a separate process for the filesystem
