@@ -24,8 +24,6 @@ function teardown {
     fi
     teardown_complete=1
 
-    echo "syncing filesystem"
-    sync
 
     echo "unmounting dxfuse"
     cd $HOME
@@ -37,7 +35,7 @@ function teardown {
 
     if [[ $DX_JOB_ID != "" && $verbose != "" ]]; then
         mkdir -p out/filesystem_log
-        cp /var/log/dxfuse.log out/filesystem_log/
+        cp /root/.dxfuse/dxfuse.log out/filesystem_log/
         dx-upload-all-outputs
     fi
 }
@@ -61,8 +59,6 @@ function check_file_write_content {
     echo $content > $write_dir/A.txt
     ls -l $write_dir/A.txt
 
-    echo "synchronizing the filesystem"
-    $dxfuse -sync
 
     echo "file is closed"
     dx ls -l $projName:/$target_dir/A.txt
@@ -82,8 +78,6 @@ function check_file_write_content {
     touch $write_dir/B.txt
     ls -l $write_dir/B.txt
 
-    echo "synchronizing the filesystem"
-    $dxfuse -sync
 
     echo "file is closed"
     dx ls -l $projName:/$target_dir/B.txt
@@ -261,9 +255,8 @@ function mkdir_existing {
 function file_create_existing {
     local write_dir=$1
     cd $write_dir
-
+    rm -f hello.txt
     echo "happy days" > hello.txt
-    chmod 444 hello.txt
 
     set +e
     (echo "nothing much" > hello.txt) >& /tmp/cmd_results.txt
@@ -280,7 +273,7 @@ function file_create_existing {
         cat /tmp/cmd_results.txt
 
         echo "===== log ======="
-        cat /var/log/dxfuse.log
+        cat /root/.dxfuse/dxfuse.log
         exit 1
     fi
 
@@ -556,7 +549,9 @@ main() {
     if [[ $verbose != "" ]]; then
         flags="$flags -verbose 2"
     fi
+    set -x
     $dxfuse $flags $mountpoint dxfuse_test_data dxfuse_test_read_only ArchivedStuff
+    set +x
 
     echo "can write to a small file"
     check_file_write_content $mountpoint/$projName $target_dir

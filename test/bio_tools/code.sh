@@ -37,10 +37,10 @@ main() {
     $dxfuse $flags $mountpoint $projName
 
     # we get bam from the resources
-    sudo apt-get install g++ -y
+    sudo apt-get install -y g++
 
     # install samtools
-    sudo apt-get install samtools
+    sudo apt-get install -y samtools
 
     # install sambamba
     # sudo apt-get install sambamba

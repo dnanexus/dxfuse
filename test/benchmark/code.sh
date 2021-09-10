@@ -97,8 +97,6 @@ function measure_and_compare_upload {
         echo "copy into dxfuse filesystem"
         start=`date +%s`
         cp /tmp/X $top_dir/$out_dir/$fname.2
-        echo "start dxfuse sync"
-        dxfuse -sync
         end=`date +%s`
         runtime2=$((end-start))
 
