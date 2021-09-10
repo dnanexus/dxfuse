@@ -7,6 +7,7 @@ on:
   pull_request:
     branches:
       - master
+  workflow_dispatch:
 
 jobs:
   test:
@@ -16,7 +17,7 @@ jobs:
       - uses: actions/checkout@v2
       - uses: actions/setup-go@v2
         with:
-          go-version: '^1.15.7'
+          go-version: '1.16.6'
 
       - name: Install & build
         run: |
@@ -26,16 +27,14 @@ jobs:
           sudo apt-get install -y apt-utils make \
           wget git build-essential apt-transport-https \
           openssl libssl-dev zip unzip libffi-dev \
-          python python-pip python-dev
+          python3 python3-pip python3-dev
 
           # Install printing with colors python package
-          pip install setuptools wheel
+          python3 -m pip install setuptools wheel
           wget https://raw.githubusercontent.com/dnanexus/dx-toolkit/master/src/python/requirements.txt
-          pip install -r requirements.txt
+          python3 -m pip install -r requirements.txt
 
-          # I used python2 because this installing dxpy causes a segmentation fault on pip3.
-          # I have no idea why.
-          pip install dxpy
+          python3 -m pip install dxpy
 
           go build -o dxfuse cli/main.go
 
@@ -63,7 +62,7 @@ jobs:
       - uses: actions/checkout@v2
       - uses: actions/setup-go@v2
         with:
-          go-version: '^1.15.7'
+          go-version: '1.16.6'
       - name: Install & build
         run: |
           set -x
