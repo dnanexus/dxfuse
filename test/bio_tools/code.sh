@@ -24,7 +24,7 @@ main() {
         source environment >& /dev/null
         dxfuse="dxfuse"
     fi
-
+    set -x
     # clean and make fresh directories
     mkdir -p $mountpoint
 
@@ -36,14 +36,11 @@ main() {
     fi
     $dxfuse $flags $mountpoint $projName
 
-    # we get bam from the resources
-    sudo apt-get install -y g++
+    #sudo apt-get install -y g++
 
     # install samtools
-    sudo apt-get install -y samtools
+    #sudo apt-get install -y samtools
 
-    # install sambamba
-    # sudo apt-get install sambamba
     # we get sambamba from the resources directory
     cd $mountpoint/$projName/reference_data/bam
 

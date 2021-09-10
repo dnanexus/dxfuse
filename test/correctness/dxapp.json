@@ -26,6 +26,11 @@
     "execDepends" : [
       {"name" : "tree", "package_manager" : "apt"}
     ],
+    "systemRequirements": {
+      "*":{
+        "instanceType": "mem2_hdd2_v2_x4"
+      }
+    },
     "timeoutPolicy" : {
       "*" : {
         "hours" : 1

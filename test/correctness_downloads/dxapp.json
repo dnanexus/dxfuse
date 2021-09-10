@@ -18,6 +18,11 @@
     }
   ],
   "runSpec": {
+    "systemRequirements": {
+      "*":{
+        "instanceType": "mem2_hdd2_v2_x4"
+      }
+    },
     "interpreter": "bash",
     "file": "code.sh",
     "distribution": "Ubuntu",

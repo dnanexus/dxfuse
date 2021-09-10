@@ -28,6 +28,11 @@
     }
   ],
   "runSpec": {
+    "systemRequirements": {
+      "*":{
+        "instanceType": "mem3_hdd2_v2_x8"
+      }
+    },
     "timeoutPolicy" : {
       "*" : {
         "hours" : 2
