@@ -4,7 +4,7 @@
 # global variables
 mountpoint=${HOME}/MNT
 projName="dxfuse_test_data"
-dxfuse="$GOPATH/bin/dxfuse"
+dxfuse="../../dxfuse"
 teardown_complete=0
 
 ######################################################################
@@ -108,6 +108,7 @@ function check_whale {
 }
 
 function check_new {
+    set -x
     local base_dir=$1
     local test_dir=$mountpoint/$projName/$base_dir
     local f=$test_dir/Mountains.txt
@@ -115,6 +116,7 @@ function check_new {
 
     xattr -w prop.family geography $f
     xattr -w tag.high X $f
+    sleep 120
 
     local family=$(xattr -p prop.family $f)
     local expected="geography"
@@ -134,8 +136,6 @@ function check_new {
         exit 1
     fi
 
-    echo "synchronizing filesystem"
-    $dxfuse -sync
 
     props=$(dx describe $dnaxF --json | jq -cMS .properties | tr '[]' ' ')
     echo "props on platform: $props"
@@ -186,7 +186,7 @@ function xattr_test {
     mkdir -p $mountpoint
 
     # generate random alphanumeric strings
-    base_dir=$(cat /dev/urandom | env LC_CTYPE=C LC_ALL=C tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+    base_dir=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null| base64 | tr -dc 'a-zA-Z0-9'|fold -w 12|head -n1)
     base_dir="base_$base_dir"
     writeable_dirs=($base_dir)
     for d in ${writeable_dirs[@]}; do
@@ -202,7 +202,7 @@ function xattr_test {
     if [[ $verbose != "" ]]; then
         flags="$flags verbose 2"
     fi
-    $dxfuse $flags $mountpoint $projName
+    $dxfuse $flags -debugFuse -verbose 2 $mountpoint $projName
     sleep 1
 
     tree $mountpoint/$projName/$base_dir

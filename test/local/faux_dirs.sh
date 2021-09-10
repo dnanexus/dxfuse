@@ -2,7 +2,7 @@
 ## constants
 
 projName="dxfuse_test_data"
-dxfuse="$GOPATH/bin/dxfuse"
+dxfuse="../../dxfuse"
 dxDirOnProject="mini"
 baseDir=$HOME/dxfuse_test
 mountpoint=${baseDir}/MNT
@@ -104,7 +104,7 @@ function faux_dirs {
     mkdir -p $mountpoint
 
     # generate random alphanumeric strings
-    faux_dir=$(cat /dev/urandom | env LC_CTYPE=C LC_ALL=C tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+    faux_dir=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null| base64 | tr -dc 'a-zA-Z0-9'|fold -w 12|head -n1)
     faux_dir="faux_$faux_dir"
     writeable_dirs=($faux_dir)
     for d in ${writeable_dirs[@]}; do

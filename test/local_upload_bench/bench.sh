@@ -3,7 +3,7 @@
 
 CRNT_DIR=$(dirname "${BASH_SOURCE[0]}" )
 projName="dxfuse_test_data"
-dxfuse="$GOPATH/bin/dxfuse"
+dxfuse="../../dxfuse"
 baseDir=$HOME/dxfuse_test
 mountpoint=${baseDir}/MNT
 
@@ -44,14 +44,7 @@ function upload_one_file {
     cp $large_file $mountpoint/$projName/
     end=`date +%s`
     runtime_cp=$((end-start))
-
-    echo "start dxfuse sync"
-    start=`date +%s`
-    $dxfuse -sync
-    end=`date +%s`
-    runtime_sync=$((end-start))
-
-    echo "runtime = ($runtime_cp, $runtime_sync) seconds"
+    echo "runtime = ($runtime_cp) seconds"
 }
 
 function local_upload_benchmark {

@@ -60,8 +60,7 @@ function check_file_write_content {
     ls -l $write_dir/A.txt
 
 
-    echo "file is closed"
-    dx ls -l $projName:/$target_dir/A.txt
+    dx wait $projName:/$target_dir/A.txt
 
     # compare the data
     local content2=$(dx cat $projName:/$target_dir/A.txt)
@@ -73,14 +72,11 @@ function check_file_write_content {
         echo "found: $content2"
     fi
 
-
     # create an empty file
     touch $write_dir/B.txt
     ls -l $write_dir/B.txt
 
-
-    echo "file is closed"
-    dx ls -l $projName:/$target_dir/B.txt
+    dx wait $projName:/$target_dir/B.txt
 
     # compare the data
     local content3=$(dx cat $projName:/$target_dir/B.txt)

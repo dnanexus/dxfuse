@@ -2,7 +2,7 @@
 ## constants
 
 projName="dxfuse_test_data"
-dxfuse="$GOPATH/bin/dxfuse"
+dxfuse="../../dxfuse"
 dxDirOnProject="mini"
 baseDir=$HOME/dxfuse_test
 mountpoint=${baseDir}/MNT
@@ -108,11 +108,6 @@ function create_remove_dir {
     echo "catch 22" > $write_dir/E/Z.txt
 
     tree $write_dir
-
-    if [[ $flag == "yes" ]]; then
-        echo "synchronizing the filesystem"
-        $dxfuse -sync
-    fi
 
     echo "removing directory recursively"
     rm -rf $write_dir
@@ -397,9 +392,9 @@ function fs_test_cases {
     mkdir -p $mountpoint
 
     # generate random alphanumeric strings
-    base_dir=$(cat /dev/urandom | env LC_CTYPE=C LC_ALL=C tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+    base_dir=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null| base64 | tr -dc 'a-zA-Z0-9'|fold -w 12|head -n1)
     base_dir="base_$base_dir"
-    expr_dir=$(cat /dev/urandom | env LC_CTYPE=C LC_ALL=C tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+    expr_dir=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null| base64 | tr -dc 'a-zA-Z0-9'|fold -w 12|head -n1)
     expr_dir="expr_$expr_dir"
     writeable_dirs=($base_dir $expr_dir)
     for d in ${writeable_dirs[@]}; do

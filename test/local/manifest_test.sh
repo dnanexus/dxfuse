@@ -6,7 +6,7 @@ CRNT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
 mountpoint=${HOME}/MNT
 projName="dxfuse_test_data"
-dxfuse="$GOPATH/bin/dxfuse"
+dxfuse="../../dxfuse"
 teardown_complete=0
 
 ######################################################################

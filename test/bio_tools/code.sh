@@ -36,12 +36,6 @@ main() {
     fi
     $dxfuse $flags $mountpoint $projName
 
-    #sudo apt-get install -y g++
-
-    # install samtools
-    #sudo apt-get install -y samtools
-
-    # we get sambamba from the resources directory
     cd $mountpoint/$projName/reference_data/bam
 
     start=`date +%s`
@@ -58,6 +52,7 @@ main() {
     num_lines=$(samtools view SRR10270774_markdup.A.bam | wc -l)
     dx-jobutil-add-output --class=int num_lines $num_lines
 
+    # sambamba is included in the applet's resources
     echo "sambamba"
     start=`date +%s`
     sambamba flagstat SRR10270774_markdup.A.bam -p > ~/sambamba_info.txt
@@ -66,7 +61,7 @@ main() {
     dx-jobutil-add-output --class=string runtime_sambamba "$runtime seconds"
 
 #    echo "samtools split"
-    #    samtools split --threads 1 -u SJAML030069_D1.RNA-Seq.unaccounted_reads.bam -f '%*_%!.%.' > ~/SJAML030069_D1.RNA-Seq.bam
+#    samtools split --threads 1 -u SJAML030069_D1.RNA-Seq.unaccounted_reads.bam -f '%*_%!.%.' > ~/SJAML030069_D1.RNA-Seq.bam
 #    start=`date +%s`
 #    samtools split --threads 1 -u SRR10270774_markdup.A.bam -f '%*_%!.%.' > ~/filter_A.bam
 #    end=`date +%s`

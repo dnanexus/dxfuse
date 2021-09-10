@@ -24,6 +24,3 @@ faux_dirs
 
 source $CRNT_DIR/file_overwrite.sh
 file_overwrite
-
-source $CRNT_DIR/sync_concurrency_test.sh
-sync_concurrency_test

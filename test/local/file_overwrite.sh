@@ -2,7 +2,7 @@
 ## constants
 
 projName="dxfuse_test_data"
-dxfuse="$GOPATH/bin/dxfuse"
+dxfuse="../../dxfuse"
 baseDir=$HOME/dxfuse_test
 mountpoint=${baseDir}/MNT
 
@@ -52,11 +52,8 @@ function check_file_write_content {
     echo $line1 > $write_dir/A.txt
     ls -l $write_dir/A.txt
 
-    echo "synchronizing the filesystem"
-    $dxfuse -sync
 
-    echo "file is closed"
-    dx ls -l $projName:/$target_dir/A.txt
+    dx wait $projName:/$target_dir/A.txt
 
     # compare the data
     local content=$(dx cat $projName:/$target_dir/A.txt)
@@ -95,7 +92,7 @@ function file_overwrite {
     mkdir -p $mountpoint
 
     # generate random alphanumeric strings
-    base_dir=$(cat /dev/urandom | env LC_CTYPE=C LC_ALL=C tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+    base_dir=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null| base64 | tr -dc 'a-zA-Z0-9'|fold -w 12|head -n1)
     base_dir="base_$base_dir"
     writeable_dirs=($base_dir)
     for d in ${writeable_dirs[@]}; do
