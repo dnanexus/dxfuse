@@ -3,7 +3,7 @@
 
 CRNT_DIR=$(dirname "${BASH_SOURCE[0]}" )
 projName="dxfuse_test_data"
-dxfuse="../../dxfuse"
+dxfuse="$CRNT_DIR/../../dxfuse"
 baseDir=$HOME/dxfuse_test
 mountpoint=${baseDir}/MNT
 

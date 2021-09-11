@@ -1,8 +1,8 @@
 ######################################################################
 ## constants
-
+CRNT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 projName="dxfuse_test_data"
-dxfuse="../../dxfuse"
+dxfuse="$CRNT_DIR/../../dxfuse"
 dxDirOnProject="mini"
 baseDir=$HOME/dxfuse_test
 mountpoint=${baseDir}/MNT

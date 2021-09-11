@@ -1,8 +1,8 @@
 ######################################################################
 ## constants
-
+CRNT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 projName="dxfuse_test_data"
-dxfuse="../../dxfuse"
+dxfuse="$CRNT_DIR/../../dxfuse"
 baseDir=$HOME/dxfuse_test
 mountpoint=${baseDir}/MNT
 
@@ -66,15 +66,20 @@ function check_file_write_content {
     fi
 }
 
-function check_overwrite {
+function check_overwrite_fails {
     local top_dir=$1
     local target_dir=$2
     local write_dir=$top_dir/$target_dir
 
     echo "write_dir = $write_dir"
-
+    set +e
     echo $line2 >> $write_dir/A.txt
-
+    rc=$?
+    set -e
+    if [[ $rc == 0 ]]; then
+        echo "Error, appending to remote file should fail"
+        exit 1
+    fi
     cat $write_dir/A.txt
 }
 
@@ -118,8 +123,8 @@ function file_overwrite {
     # now we are ready for an overwrite experiment
     $dxfuse $flags $mountpoint dxfuse_test_data
 
-    echo "overwriting a file"
-    check_overwrite $mountpoint/$projName $base_dir
+    echo "Rewriting a file is not allowed"
+    check_overwrite_fails $mountpoint/$projName $base_dir
 
     teardown
 }
