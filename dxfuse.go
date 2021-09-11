@@ -1506,17 +1506,16 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 		// invalid file handle. It doesn't exist in the table
 		return fuse.EINVAL
 	}
+	// Possible case of file being flushed by one fd, but another open file descriptor still attempting to write
+	if fh.accessMode != AM_AO_Remote {
+		return syscall.EPERM
+	}
 	// One write at a time per fh so that sequential offsets work properly
 	fh.mutex.Lock()
 	defer fh.mutex.Unlock()
 
 	if fh.writeError != nil {
 		return fsys.translateError(fh.writeError)
-	}
-
-	// Possible case of file being flushed by one fd, but another open file descriptor still attempting to write
-	if fh.accessMode != AM_AO_Remote {
-		return syscall.EPERM
 	}
 
 	if op.Offset != fh.nextWriteOffset {
@@ -1624,7 +1623,6 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	// Wait for any current part uploads to finish
 	fh.wg.Wait()
 	// Return previous write error
-
 	if fh.writeError != nil {
 		return fsys.translateError(fh.writeError)
 	}
