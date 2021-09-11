@@ -116,7 +116,6 @@ function check_new {
 
     xattr -w prop.family geography $f
     xattr -w tag.high X $f
-    sleep 120
 
     local family=$(xattr -p prop.family $f)
     local expected="geography"

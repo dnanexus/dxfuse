@@ -1867,12 +1867,30 @@ func (fsys *Filesys) RemoveXattr(ctx context.Context, op *fuseops.RemoveXattrOp)
 		var tags []string
 		for _, tag := range file.Tags {
 			if tag != attrName {
-				tags = append(tags, attrName)
+				tags = append(tags, tag)
 			}
 		}
 		file.Tags = tags
+		var tagToRemove []string
+		tagToRemove = append(tagToRemove, attrName)
+		err = fsys.ops.DxRemoveTags(ctx, oph.httpClient, file.ProjId, file.Id, tagToRemove)
+		if err != nil {
+			fsys.log("Error in removing tag (%s) on  %s",
+				attrName, file.Id)
+			oph.RecordError(err)
+			return fsys.translateError(err)
+		}
 	case XATTR_PROP:
 		delete(file.Properties, attrName)
+		propToRemove := make(map[string](*string))
+		propToRemove[attrName] = nil
+		err = fsys.ops.DxSetProperties(ctx, oph.httpClient, file.ProjId, file.Id, propToRemove)
+		if err != nil {
+			fsys.log("Error in removing property (%s) on  %s",
+				attrName, file.Id)
+			oph.RecordError(err)
+			return fsys.translateError(err)
+		}
 	default:
 		log.Panicf("sanity: invalid namespace %s", namespace)
 	}
@@ -2104,6 +2122,15 @@ func (fsys *Filesys) SetXattr(ctx context.Context, op *fuseops.SetXattrOp) error
 	case XATTR_TAG:
 		if !attrExists {
 			file.Tags = append(file.Tags, attrName)
+			var tagToAdd []string
+			tagToAdd = append(tagToAdd, attrName)
+			err = fsys.ops.DxAddTags(ctx, oph.httpClient, file.ProjId, file.Id, tagToAdd)
+			if err != nil {
+				fsys.log("Error in setting tag (%s) on  %s",
+					attrName, file.Id)
+				oph.RecordError(err)
+				return fsys.translateError(err)
+			}
 		} else {
 			// The tag is already set. There is no need
 			// to tag again.
@@ -2111,7 +2138,17 @@ func (fsys *Filesys) SetXattr(ctx context.Context, op *fuseops.SetXattrOp) error
 	case XATTR_PROP:
 		// The key may already exist, in which case we are updating
 		// the value.
-		file.Properties[attrName] = string(op.Value)
+		prop := string(op.Value)
+		file.Properties[attrName] = prop
+		propToAdd := make(map[string](*string))
+		propToAdd[attrName] = &prop
+		err = fsys.ops.DxSetProperties(ctx, oph.httpClient, file.ProjId, file.Id, propToAdd)
+		if err != nil {
+			fsys.log("Error in setting property (%s=%s) on  %s",
+				attrName, prop, file.Id)
+			oph.RecordError(err)
+			return fsys.translateError(err)
+		}
 	default:
 		log.Panicf("sanity: invalid namespace %s", namespace)
 	}
