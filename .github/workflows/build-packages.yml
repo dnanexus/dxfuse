@@ -15,7 +15,6 @@ jobs:
     env:
         GOOS: linux
         GOARCH: amd64
-        CGO_ENABLED: 1
     steps:
       - uses: actions/checkout@v2
       - uses: actions/setup-go@v2
@@ -46,7 +45,6 @@ jobs:
     env:
         GOOS: darwin
         GOARCH: amd64
-        CGO_ENABLED: 1
     steps:
       - uses: actions/checkout@v2
       - uses: actions/setup-go@v2

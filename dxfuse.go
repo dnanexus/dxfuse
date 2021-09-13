@@ -21,7 +21,7 @@ import (
 	"github.com/jacobsa/fuse/fuseutil"
 
 	// for the sqlite driver
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 const (
