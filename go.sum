@@ -7,8 +7,8 @@ github.com/andybalholm/cascadia v1.1.0/go.mod h1:GsXiBklL0woXo1j/WYWtSYYC4ouU9Pq
 github.com/davecgh/go-spew v1.1.0 h1:ZDRjVQ15GmhC3fiQ8ni8+OwkZQO4DARzQgrnXU1Liz8=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/detailyang/go-fallocate v0.0.0-20180908115635-432fa640bd2e/go.mod h1:3ZQK6DMPSz/QZ73jlWxBtUhNA8xZx7LzUFSq/OfP8vk=
-github.com/dnanexus/dxda v0.5.5 h1:ZWTNCqHbjzvk/eJq3BqLY399mt5cHZJ+/yeBAuNIjKs=
-github.com/dnanexus/dxda v0.5.5/go.mod h1:Nllx9MZtLqeTGA7crgn/MtU0j5XlZ6zb+akPgRdd1ag=
+github.com/dnanexus/dxda v0.5.7 h1:AqXGALnUTiXzyP7JyDJuZ/Pd0MbNfOQ+y77pWcdthLI=
+github.com/dnanexus/dxda v0.5.7/go.mod h1:UeYZ7DMtJGGQ13owVEeAbUSFWXkCj97xZEzoBebZP68=
 github.com/dustin/go-humanize v1.0.0 h1:VSnTsYCnlFHaM2/igO1h6X3HA71jcobQuxemgkq4zYo=
 github.com/dustin/go-humanize v1.0.0/go.mod h1:HtrtbFcZ19U5GC7JDqmcUSB87Iq5E25KnS6fMYU6eOk=
 github.com/go-gl/glfw/v3.3/glfw v0.0.0-20200222043503-6f7a984d4dc4/go.mod h1:tQ2UAYgL5IevRw8kRxooKSPJfGvJ9fJQFa0TUsXzTg8=
