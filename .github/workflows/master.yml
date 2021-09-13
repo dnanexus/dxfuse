@@ -10,8 +10,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  test:
-    name: Build and test linux
+  applet-test:
+    name: Applet dxfuse tests
     runs-on: ubuntu-20.04
     steps:
       - uses: actions/checkout@v2
@@ -28,7 +28,6 @@ jobs:
           wget git build-essential apt-transport-https \
           openssl libssl-dev zip unzip libffi-dev \
           python3 python3-pip python3-dev
-
           # Install printing with colors python package
           python3 -m pip install setuptools wheel
           wget https://raw.githubusercontent.com/dnanexus/dx-toolkit/master/src/python/requirements.txt
@@ -38,7 +37,7 @@ jobs:
 
           go build -o dxfuse cli/main.go
 
-      - name: Login to dnanexus
+      - name: Applet dxfuse tests
         env:
           DX_TOKEN : ${{ secrets.DX_TOKEN }}
         run: |
@@ -46,14 +45,49 @@ jobs:
           export PATH="$PATH:$HOME/.local/bin"
           dx login --staging --token $DX_TOKEN --noprojects
           dx select dxfuse_test_data
-
-      - name: Run the tests
-        run: |
-          export PATH="$PATH:$HOME/.local/bin"
           # Build test applets with new dxfuse executable
           make -C ./test aws
           # Run correctness tests
           ./scripts/run_tests.py --test correct --size large --verbose
+
+  local-test:
+    name: Local dxfuse tests
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-go@v2
+        with:
+          go-version: '1.16.6'
+
+      - name: Install & build
+        run: |
+          set -x
+          pwd
+          sudo apt-get update
+          sudo apt-get install -y apt-utils xattr attr make \
+          wget git build-essential apt-transport-https \
+          openssl libssl-dev zip unzip libffi-dev \
+          python3 python3-pip python3-dev
+          # Install printing with colors python package
+          python3 -m pip install setuptools wheel
+          wget https://raw.githubusercontent.com/dnanexus/dx-toolkit/master/src/python/requirements.txt
+          python3 -m pip install -r requirements.txt
+
+          python3 -m pip install dxpy
+
+          go build -o dxfuse cli/main.go
+
+      - name: Local dxfuse tests
+        env:
+          DX_TOKEN : ${{ secrets.DX_TOKEN }}
+        run: |
+          # The CLI binaries are installed in .local
+          export PATH="$PATH:$HOME/.local/bin"
+          dx login --staging --token $DX_TOKEN --noprojects
+          dx select dxfuse_test_data
+          # Run correctness tests
+          sudo PATH=$PATH -E ./scripts/run_tests.py --test local
+
   macos:
     name: Macos build
     runs-on: macos-10.15
