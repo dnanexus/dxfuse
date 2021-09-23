@@ -163,7 +163,6 @@ func fsDaemon(
 	// By default fuse will use 128kb read-ahead even though we ask for 1024kb
 	// If running as root on linux, raise read-ahead to 1024kb after mounting
 	if user.Uid == "0" && runtime.GOOS == "linux" {
-		logger.Printf("Setting kernel read-ahead for dxfuse to 1024kb")
 		mntInfo, err := os.Stat(mountpoint)
 		if err != nil {
 			logger.Printf(err.Error())

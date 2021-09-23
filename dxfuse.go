@@ -1092,11 +1092,12 @@ func (fsys *Filesys) Unlink(ctx context.Context, op *fuseops.UnlinkOp) error {
 	objectIds := make([]string, 1)
 	objectIds[0] = fileToRemove.Id
 	if err := fsys.ops.DxRemoveObjects(ctx, oph.httpClient, parentDir.ProjId, objectIds); err != nil {
-		fsys.log("Error in removing file (%s:%s/%s) on dnanexus: %s",
+		fsys.log("Error in removing %s:%s%s on dnanexus: %s",
 			parentDir.ProjId, parentDir.ProjFolder, op.Name,
 			err.Error())
 		return fsys.translateError(err)
 	}
+	fsys.log("Removed %s, %s:%s%s", op.Name, parentDir.ProjId, parentDir.ProjFolder, op.Name)
 
 	return nil
 }
@@ -1577,8 +1578,6 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 			fsys.opClose(oph)
 			fsys.mutex.Unlock()
 			fh.writeBuffer = fsys.uploader.AllocateWriteBuffer(partId, false)
-			fsys.log("allocated wb for %s", fh.Id)
-
 		}
 		// all data copied into buffer slice, break
 		if bytesCopied == len(bytesToWrite) {
@@ -1729,7 +1728,9 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 	case AM_AO_Remote:
 		// Special case for empty files which are not uploaded during FlushFile since their size is 0
 		if fh.size == 0 && len(fh.writeBuffer) == 0 && fh.lastPartId == 0 {
-			fsys.log("Upload and close empty file")
+			if fsys.ops.options.Verbose {
+				fsys.log("Upload and close empty %s", fh.Id)
+			}
 			fh.lastPartId++
 			partId := fh.lastPartId
 			httpClient := <-fsys.httpClientPool

@@ -1251,7 +1251,7 @@ func (mdb *MetadataDb) CreateFile(
 	mode os.FileMode) (File, error) {
 	if mdb.options.Verbose {
 		mdb.log("CreateFile %s/%s projpath=%s%s",
-			dir.FullPath, fname, dir.ProjFolder, dir.ProjId)
+			dir.FullPath, fname, dir.ProjId, dir.ProjFolder)
 	}
 
 	// Create remote file
@@ -1292,6 +1292,8 @@ func (mdb *MetadataDb) CreateFile(
 		mdb.log("CreateFile error creating data object")
 		return File{}, err
 	}
+	mdb.log("Created file %s/%s %s:%s",
+		dir.FullPath, fname, dir.ProjId, fileId)
 
 	// 3. return a File structure
 	return File{

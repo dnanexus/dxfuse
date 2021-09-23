@@ -256,6 +256,7 @@ func (ops *DxOps) DxFileCloseAndWait(
 		switch fDesc.State {
 		case "closed":
 			// done. File is closed.
+			ops.log("Closed %s:%s", projectId, fid)
 			return nil
 		case "closing":
 			// not done yet.
