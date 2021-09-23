@@ -2,6 +2,8 @@ package dxfuse
 
 import (
 	"context"
+	"math"
+	"runtime"
 	"sync"
 
 	"github.com/dnanexus/dxda"
@@ -11,6 +13,21 @@ const (
 	// Upload up to 4 parts concurrently
 	maxUploadRoutines = 4
 )
+
+// TODO replace this with a more reasonble buffer pool for managing memory use
+func (uploader *FileUploader) AllocateWriteBuffer(partId int, block bool) []byte {
+	if partId < 1 {
+		partId = 1
+	}
+	// Wait for available buffer
+	if block {
+		uploader.writeBufferChan <- struct{}{}
+	}
+	writeBufferCapacity := math.Min(InitialPartSize*math.Pow(1.1, float64(partId)), MaxPartSize)
+	writeBufferCapacity = math.Round(writeBufferCapacity)
+	writeBuffer := make([]byte, 0, int64(writeBufferCapacity))
+	return writeBuffer
+}
 
 type UploadRequest struct {
 	fh          *FileHandle
@@ -24,6 +41,8 @@ type FileUploader struct {
 	uploadQueue       chan UploadRequest
 	wg                sync.WaitGroup
 	numUploadRoutines int
+	// Max write buffers being written to reduce memory consumption
+	writeBufferChan chan struct{}
 	// API to dx
 	ops *DxOps
 }
@@ -34,10 +53,15 @@ func (uploader *FileUploader) log(a string, args ...interface{}) {
 }
 
 func NewFileUploader(verboseLevel int, options Options, dxEnv dxda.DXEnvironment) *FileUploader {
-
+	concurrentWriteBufferLimit := 15
+	if runtime.NumCPU()*3 > concurrentWriteBufferLimit {
+		concurrentWriteBufferLimit = runtime.NumCPU() * 3
+	}
 	uploader := &FileUploader{
-		verbose:           verboseLevel >= 1,
-		uploadQueue:       make(chan UploadRequest),
+		verbose:     verboseLevel >= 1,
+		uploadQueue: make(chan UploadRequest),
+		// Limit of 15 concurrent file handle write buffers
+		writeBufferChan:   make(chan struct{}, concurrentWriteBufferLimit),
 		numUploadRoutines: maxUploadRoutines,
 		ops:               NewDxOps(dxEnv, options),
 	}
@@ -52,6 +76,7 @@ func NewFileUploader(verboseLevel int, options Options, dxEnv dxda.DXEnvironment
 func (uploader *FileUploader) Shutdown() {
 	// Close channel and wait for goroutines to complete
 	close(uploader.uploadQueue)
+	close(uploader.writeBufferChan)
 	uploader.wg.Wait()
 }
 

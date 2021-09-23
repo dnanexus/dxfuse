@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -808,7 +807,7 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 		Tgid:              tgid,
 		lastPartId:        0,
 		nextWriteOffset:   0,
-		writeBuffer:       make([]byte, 0, 96*1024*1024),
+		writeBuffer:       nil,
 		writeBufferOffset: 0,
 		mutex:             &sync.Mutex{},
 	}
@@ -1269,8 +1268,8 @@ func (fsys *Filesys) openRegularFile(
 			Tgid:            tgid,
 			lastPartId:      0,
 			nextWriteOffset: 0,
-			// 96MB slice capacity
-			writeBuffer:       make([]byte, 0, 96*1024*1024),
+			// 16MB slice capacity
+			writeBuffer:       nil,
 			writeBufferOffset: 0,
 			mutex:             &sync.Mutex{},
 		}
@@ -1520,9 +1519,12 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 
 	if op.Offset != fh.nextWriteOffset {
 		fsys.log("ERROR: Only sequential writes are supported")
-		fsys.log("%v", fh.writeBufferOffset)
 		fsys.log("op.Offest: %d, fh.nextWriteOffest: %d", op.Offset, fh.nextWriteOffset)
 		return syscall.ENOTSUP
+	}
+	if fh.writeBuffer == nil {
+		// Allocate write buffer
+		fh.writeBuffer = fsys.uploader.AllocateWriteBuffer(fh.lastPartId, true)
 	}
 
 	bytesToWrite := op.Data
@@ -1562,11 +1564,7 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 			}
 			fh.wg.Add(1)
 			fsys.uploader.uploadQueue <- uploadReq
-			fh.writeBuffer = fh.writeBuffer[:0]
-			// increasing buffer size for next part
-			nextCap := 96 * 1024 * 1024 * math.Pow(1.0003, float64(partId))
-			nextBufferCapacity := math.Round(nextCap)
-			fh.writeBuffer = make([]byte, 0, int64(nextBufferCapacity))
+			fh.writeBuffer = nil
 			fh.writeBufferOffset = 0
 			// Update the file attributes in the database (size, mtime)
 			fsys.mutex.Lock()
@@ -1579,6 +1577,9 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 			}
 			fsys.opClose(oph)
 			fsys.mutex.Unlock()
+			fh.writeBuffer = fsys.uploader.AllocateWriteBuffer(partId, false)
+			fsys.log("allocated wb for %s", fh.Id)
+
 		}
 		// all data copied into buffer slice, break
 		if bytesCopied == len(bytesToWrite) {
@@ -1595,12 +1596,15 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	if fsys.options.Verbose {
 		fsys.log("Flush inode %d", op.Inode)
 	}
+	fsys.mutex.Lock()
 	fh, ok := fsys.fhTable[op.Handle]
-
 	if !ok {
-		// File handle doesn't exist
+		// invalid file handle. It doesn't exist in the table
+		fsys.mutex.Unlock()
 		return fuse.EINVAL
 	}
+	fsys.mutex.Unlock()
+
 	if fh == nil {
 		return nil
 	}
@@ -1644,7 +1648,8 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	}
 	fh.wg.Add(1)
 	fsys.uploader.uploadQueue <- uploadReq
-	fh.writeBuffer = fh.writeBuffer[:0]
+	fh.writeBuffer = nil
+	<-fsys.uploader.writeBufferChan
 
 	fh.wg.Wait()
 	// Check if there was an error uploading the last part
