@@ -260,9 +260,9 @@ func NewPrefetchGlobalState(verboseLevel int, dxEnv dxda.DXEnvironment) *Prefetc
 	totalMemoryBytes := 2 * maxNumEntriesInTable * prefetchMaxIoSize
 	totalMemoryBytes += int64(maxNumChunksReadAhead) * prefetchMaxIoSize
 
-	log.Printf("maximal memory usage: %dMiB", totalMemoryBytes/MiB)
-	log.Printf("number of prefetch worker threads: %d", numPrefetchThreads)
-	log.Printf("maximal number of read-ahead chunks: %d", maxNumChunksReadAhead)
+	log.Printf("Maximum prefetch memory usage: %dMiB", totalMemoryBytes/MiB)
+	log.Printf("Number of prefetch worker threads: %d", numPrefetchThreads)
+	log.Printf("Maximum number of read-ahead chunks: %d", maxNumChunksReadAhead)
 
 	pgs := &PrefetchGlobalState{
 		verbose:               verboseLevel >= 1,

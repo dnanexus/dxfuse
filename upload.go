@@ -41,7 +41,7 @@ type FileUploader struct {
 	uploadQueue       chan UploadRequest
 	wg                sync.WaitGroup
 	numUploadRoutines int
-	// Max write buffers being written to reduce memory consumption
+	// Max concurrent write buffers to reduce memory consumption
 	writeBufferChan chan struct{}
 	// API to dx
 	ops *DxOps
@@ -58,9 +58,8 @@ func NewFileUploader(verboseLevel int, options Options, dxEnv dxda.DXEnvironment
 		concurrentWriteBufferLimit = runtime.NumCPU() * 3
 	}
 	uploader := &FileUploader{
-		verbose:     verboseLevel >= 1,
-		uploadQueue: make(chan UploadRequest),
-		// Limit of 15 concurrent file handle write buffers
+		verbose:           verboseLevel >= 1,
+		uploadQueue:       make(chan UploadRequest),
 		writeBufferChan:   make(chan struct{}, concurrentWriteBufferLimit),
 		numUploadRoutines: maxUploadRoutines,
 		ops:               NewDxOps(dxEnv, options),

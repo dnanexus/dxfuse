@@ -1260,15 +1260,14 @@ func (fsys *Filesys) openRegularFile(
 
 	if f.dirtyData {
 		fh := &FileHandle{
-			accessMode:      AM_AO_Remote,
-			inode:           f.Inode,
-			size:            f.Size,
-			Id:              f.Id,
-			url:             nil,
-			Tgid:            tgid,
-			lastPartId:      0,
-			nextWriteOffset: 0,
-			// 16MB slice capacity
+			accessMode:        AM_AO_Remote,
+			inode:             f.Inode,
+			size:              f.Size,
+			Id:                f.Id,
+			url:               nil,
+			Tgid:              tgid,
+			lastPartId:        0,
+			nextWriteOffset:   0,
 			writeBuffer:       nil,
 			writeBufferOffset: 0,
 			mutex:             &sync.Mutex{},
@@ -1609,8 +1608,10 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 		return nil
 	}
 	if fh.accessMode != AM_AO_Remote {
-		// This isn't a writeable file, there is no dirty data to flush
-		fsys.log("Ignoring flush of inode %d, file is not writeable", op.Inode)
+		// This isn't a writeable file
+		if fsys.ops.options.VerboseLevel > 1 {
+			fsys.log("Ignoring flush of inode %d, file is not writeable", op.Inode)
+		}
 		return nil
 	}
 
@@ -1633,7 +1634,9 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 
 	// Empty files are handled by ReleaseFileHandle
 	if len(fh.writeBuffer) == 0 && fh.size == 0 {
-		fsys.log("Ignoring FlushFile: file is empty")
+		if fsys.ops.options.VerboseLevel > 1 {
+			fsys.log("Ignoring FlushFile: file is empty")
+		}
 		return nil
 	}
 

@@ -30,7 +30,7 @@ const (
 	NumRetriesDefault         = 10
 	InitialPartSize           = 16 * MiB
 	MaxPartSize               = 700 * MiB
-	Version                   = "v1.0.0-rc.2"
+	Version                   = "v1.0.0-rc.3"
 )
 const (
 	InodeInvalid = 0
