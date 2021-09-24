@@ -157,7 +157,7 @@ as DNAnexus files left in open state are eventually removed by the DNAnexus clea
 
 ## Upload benchmarks
 
-Upload benchmarks are from an AWS m5n.xlarge instance running Ubuntu 18.04 with kernel 5.4.0-1048-aws.
+Upload benchmarks are from an Ubuntu 20.04 DNAnexus worker mem2_ssd1_v2_x32 (AWS m5d.8xlarge) instance running kernel 5.4.0-1055-aws.
 `dx` and `dxfuse` benchmark commands were run like so. These benchmarks are not exact because they include the wait time until the uploaded file is transitioned to the `closed` state.
 
 `time dd if=/dev/zero bs=1M count=$SIZE | dx upload --wait -`
@@ -165,13 +165,14 @@ Upload benchmarks are from an AWS m5n.xlarge instance running Ubuntu 18.04 with 
 `time dd if=/dev/zero bs=1M count=$SIZE of=MNT/project/$SIZE`
 | dx upload --wait (seconds) | dxfuse upload(seconds) | file size |
 | ---                        |  ----                  | ----      |
-|	4.4 |	5.6| 100M |
-|	9  |	6.1 | 200M |
-|	8.8 |	6.7 | 400M |
-|	8.8 |	12.8 | 800M |
-|	18 |	19 | 1600M |
-|	32 |	24 | 3200M |
-|	79  |	65 | 10000M |
+|	4.4 |	3.5 | 100MiB |
+|	4.8  |	4.2 | 200MiB |
+|	5.9 |	4.8 | 400MiB |
+|	5.9 |	6.8 | 800MiB |
+|	7 |	10 | 1GiB |
+|	22.5 |	19.2 | 2GiB |
+|	37.8  |	87 | 10GiB |
+|	254  |	495 | 100GiB |
 
 
 # Building

@@ -35,7 +35,7 @@ function teardown {
 
     if [[ $DX_JOB_ID != "" && $verbose != "" ]]; then
         mkdir -p out/filesystem_log
-        cp /root/.dxfuse/dxfuse.log out/filesystem_log/
+        cp /root/.dxfuse/dxfuse.log out/filesystem_log/dxfuse_correctness.log
         dx-upload-all-outputs
     fi
 }
@@ -547,7 +547,6 @@ main() {
     fi
     set -x
     $dxfuse $flags $mountpoint dxfuse_test_data dxfuse_test_read_only ArchivedStuff
-    set +x
 
     echo "can write to a small file"
     check_file_write_content $mountpoint/$projName $target_dir

@@ -26,6 +26,8 @@ function teardown {
     cd $HOME
     fusermount -u $mountpoint
 
+    cat /root/.dxfuse/dxfuse.log
+
     for d in ${writeable_dirs[@]}; do
         dx rm -r $projName:/$d >& /dev/null || true
     done

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -137,6 +138,11 @@ func NewDxfuse(
 	options Options) (*Filesys, error) {
 
 	// initialize a pool of http-clients.
+	HttpClientPoolSize := MinHttpClientPoolSize
+	if runtime.NumCPU()*3 > HttpClientPoolSize {
+		HttpClientPoolSize = runtime.NumCPU() * 3
+	}
+
 	httpIoPool := make(chan *http.Client, HttpClientPoolSize)
 	for i := 0; i < HttpClientPoolSize; i++ {
 		httpIoPool <- dxda.NewHttpClient()
@@ -155,6 +161,9 @@ func NewDxfuse(
 		dhTable:        make(map[fuseops.HandleID]*DirHandle),
 		tmpFileCounter: 0,
 		shutdownCalled: false,
+	}
+	if options.Verbose {
+		fsys.log("Http client pool size: %d", HttpClientPoolSize)
 	}
 
 	// Create a fresh SQL database
@@ -207,7 +216,6 @@ func NewDxfuse(
 	}
 
 	fsys.uploader = NewFileUploader(options.VerboseLevel, options, dxEnv)
-
 	// initialize sync daemon
 	//fsys.sybx = NewSyncDbDx(options, dxEnv, projId2Desc, mdb, fsys.mutex)
 
@@ -595,6 +603,7 @@ func (fsys *Filesys) MkDir(ctx context.Context, op *fuseops.MkDirOp) error {
 		oph.RecordError(err)
 		return fsys.translateError(err)
 	}
+	fsys.log("Mkdir %s:%s", parentDir.ProjId, folderFullPath)
 
 	// Add the directory to the database
 	now := time.Now()

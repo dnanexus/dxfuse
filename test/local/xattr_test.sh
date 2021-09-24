@@ -20,6 +20,7 @@ function teardown {
     rm -f cmd_results.txt
 
     echo "unmounting dxfuse"
+    cat /root/.dxfuse/dxfuse.log
     cd $HOME
     fusermount -u $mountpoint
 
@@ -195,7 +196,7 @@ function xattr_test {
     dx mkdir $projName:/$base_dir
 
     setup $base_dir
-
+    set -x
     # Start the dxfuse daemon in the background, and wait for it to initilize.
     echo "Mounting dxfuse"
     flags="-limitedWrite"

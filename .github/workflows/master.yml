@@ -12,6 +12,7 @@ on:
 jobs:
   applet-test:
     name: Applet dxfuse tests
+    needs: local-test
     runs-on: ubuntu-20.04
     steps:
       - uses: actions/checkout@v2
