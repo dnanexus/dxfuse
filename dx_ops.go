@@ -247,7 +247,7 @@ func (ops *DxOps) DxFileCloseAndWait(
 	// wait for file to achieve closed state
 	start := time.Now()
 	deadline := start.Add(fileCloseMaxWaitTime)
-	time.Sleep(1)
+	time.Sleep(400 * time.Millisecond)
 	for true {
 		fDesc, err := DxDescribe(ctx, httpClient, &ops.dxEnv, projectId, fid)
 		if err != nil {

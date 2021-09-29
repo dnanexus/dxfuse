@@ -23,7 +23,7 @@ func (uploader *FileUploader) AllocateWriteBuffer(partId int, block bool) []byte
 	if block {
 		uploader.writeBufferChan <- struct{}{}
 	}
-	writeBufferCapacity := math.Min(InitialPartSize*math.Pow(1.1, float64(partId)), MaxPartSize)
+	writeBufferCapacity := math.Min(InitialUploadPartSize*math.Pow(1.1, float64(partId)), MaxUploadPartSize)
 	writeBufferCapacity = math.Round(writeBufferCapacity)
 	writeBuffer := make([]byte, 0, int64(writeBufferCapacity))
 	return writeBuffer

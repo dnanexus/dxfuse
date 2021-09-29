@@ -23,13 +23,13 @@ const (
 	LogFile      = "dxfuse.log"
 )
 const (
-	MinHttpClientPoolSize     = 15
+	MinHttpClientPoolSize     = 30
 	FileWriteInactivityThresh = 5 * time.Minute
 	MaxDirSize                = 255 * 1000
 	MaxNumFileHandles         = 1000 * 1000
 	NumRetriesDefault         = 10
-	InitialPartSize           = 16 * MiB
-	MaxPartSize               = 700 * MiB
+	InitialUploadPartSize     = 16 * MiB
+	MaxUploadPartSize         = 700 * MiB
 	Version                   = "v1.0.0-rc.3"
 )
 const (
