@@ -493,6 +493,8 @@ func main() {
 	logFile := dxfuse.MakeFSBaseDir() + "/" + dxfuse.LogFile
 	fmt.Printf("The log file is located at %s\n", logFile)
 
+	dxda.UserAgent = fmt.Sprintf("dxfuse/%s (%s)", dxfuse.Version, runtime.GOOS)
+
 	if *daemon {
 		// This will be true -only- in the child sub-process
 		startDaemon(cfg, logFile)
