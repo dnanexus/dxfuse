@@ -97,6 +97,9 @@ function measure_and_compare_upload {
         end=`date +%s`
         runtime2=$((end-start))
 
+        echo "sanity check, compare data"
+        diff /tmp/X $top_dir/$out_dir/$fname.2
+
         echo "$sizeDesc,dx-upload,$runtime1,dxfuse,$runtime2"  >> $result_file
     done
 }
