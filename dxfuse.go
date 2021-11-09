@@ -167,7 +167,7 @@ func NewDxfuse(
 	}
 
 	// Create a fresh SQL database
-	databaseFile := dxfuseBaseDir + "/" + DatabaseFile
+	databaseFile := filepath.Join(dxfuseBaseDir, DatabaseFile)
 	fsys.log("Removing old version of the database (%s)", databaseFile)
 	if err := os.RemoveAll(databaseFile); err != nil {
 		fsys.log("error removing old database %s", err.Error())
@@ -595,7 +595,7 @@ func (fsys *Filesys) MkDir(ctx context.Context, op *fuseops.MkDirOp) error {
 	mode := dirReadWriteMode
 
 	// create the directory on dnanexus
-	folderFullPath := parentDir.ProjFolder + "/" + op.Name
+	folderFullPath := filepath.Join(parentDir.ProjFolder, op.Name)
 	err = fsys.ops.DxFolderNew(ctx, oph.httpClient, parentDir.ProjId, folderFullPath)
 	if err != nil {
 		fsys.log("Error in creating directory (%s:%s) on dnanexus: %s",
@@ -615,7 +615,7 @@ func (fsys *Filesys) MkDir(ctx context.Context, op *fuseops.MkDirOp) error {
 		nowSeconds,
 		nowSeconds,
 		mode,
-		parentDir.FullPath+"/"+op.Name)
+		filepath.Join(parentDir.FullPath, op.Name))
 	if err != nil {
 		fsys.log("database error in MkDir")
 		return fuse.EIO
@@ -695,7 +695,7 @@ func (fsys *Filesys) RmDir(ctx context.Context, op *fuseops.RmDirOp) error {
 	}
 	if !childDir.faux {
 		// The directory exists and is empty, we can remove it.
-		folderFullPath := parentDir.ProjFolder + "/" + op.Name
+		folderFullPath := filepath.Join(parentDir.ProjFolder, op.Name)
 		err = fsys.ops.DxFolderRemove(ctx, oph.httpClient, parentDir.ProjId, folderFullPath)
 		if err != nil {
 			fsys.log("Error in removing directory (%s:%s) on dnanexus: %s",
@@ -999,7 +999,7 @@ a rename. You will need to issue a separate remove operation prior to rename.
 		return syscall.EPERM
 	}
 
-	oldDir := filepath.Clean(oldParentDir.FullPath + "/" + op.OldName)
+	oldDir := filepath.Clean(filepath.Join(oldParentDir.FullPath, op.OldName))
 	if oldDir == "/" {
 		fsys.log("can not move the root directory")
 		return syscall.EPERM
