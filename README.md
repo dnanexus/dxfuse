@@ -88,7 +88,7 @@ the risk of network choppiness.
 
 # Limited Write Mode
 
-`dxfuse -limitedWrite` mode is primarly designed to support spark file output over the `file:///` protocol.
+`dxfuse -limitedWrite` mode was primarly designed to support spark file output over the `file:///` protocol.
 
 Creating and writing to files is allowed when dxfuse is mounted with the `-limitedWrite` flag.
 Writing to files is **append only**. Any non-sequential writes will return `ENOTSUP`. Seeking or reading operations are not permitted while a file is being written.
@@ -150,10 +150,15 @@ write(1, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"..., 
 
 Ignoring the `FlushFile` op for empty files creates an edge case for creating empty files in dxfuse-mounted folders. For empty files, the empty part upload and `file-xxxx/close` are not called until the `ReleaseFileHandle` fuse operation is triggered by the kernel when the last open file descriptor for a given file has been closed. The downside of this behavior is that the dxfuse client application creating the empty file is unable to catch errors that may happen during `file-xxxxx/close` API call as it does for non-empty files closed via `FlushFile` fuse operation triggered by application's call to `close(3)`.
 
+
 ### File closing error checking
 
 dxfuse clients should check errors from `close(3)` call to make sure the corresponding DNAnexus file has been transitioned out of the `open` state,
 as DNAnexus files left in open state are eventually removed by the DNAnexus cleanup daemon.
+
+### Spark output artifacts
+
+Spark output through dxfuse uses the spark `file://` protocol. Due to this each output produced by spark will have a corresponding `.crc` file. These files can be removed. 
 
 ## Upload benchmarks
 
