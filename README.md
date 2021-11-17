@@ -119,7 +119,7 @@ $ mv MNT/file MNT/file1
 
 ## File upload and closing
 
-Each dxfuse file open for writing is allocated a 96MiB write buffer in memory, which is uploaded as a DNAnexus file part when full. dxfuse will upload up to 4 parts in parallel across all files being uploaded.
+Each dxfuse file open for writing is allocated a 16MiB write buffer in memory, which is uploaded as a DNAnexus file part when full. This buffer increases in size for each part `1.1^n * 16MiB` up to a maximum 700MiB. dxfuse uploads up to 4 parts in parallel across all files being uploaded.
 
 The upload of the last DNAnexus file part and the call of `file-xxxx/close` DNAnexus API operation are performed by dxfuse only when the OS process that created the OS file descriptor closes the OS file descriptor, triggering `FlushFile` fuse operation.
 
