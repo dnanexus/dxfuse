@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	fileCloseWaitTime    = 5 * time.Second
+	fileCloseWaitTime    = 2 * time.Second
 	fileCloseMaxWaitTime = 10 * time.Minute
 )
 
@@ -61,7 +61,7 @@ func (ops *DxOps) DxFolderNew(
 	var request RequestFolderNew
 	request.ProjId = projId
 	request.Folder = folder
-	request.Parents = false
+	request.Parents = true
 
 	payload, err := json.Marshal(request)
 	if err != nil {
@@ -247,6 +247,7 @@ func (ops *DxOps) DxFileCloseAndWait(
 	// wait for file to achieve closed state
 	start := time.Now()
 	deadline := start.Add(fileCloseMaxWaitTime)
+	time.Sleep(400 * time.Millisecond)
 	for true {
 		fDesc, err := DxDescribe(ctx, httpClient, &ops.dxEnv, projectId, fid)
 		if err != nil {
@@ -255,6 +256,7 @@ func (ops *DxOps) DxFileCloseAndWait(
 		switch fDesc.State {
 		case "closed":
 			// done. File is closed.
+			ops.log("Closed %s:%s", projectId, fid)
 			return nil
 		case "closing":
 			// not done yet.
@@ -319,36 +321,29 @@ func (ops *DxOps) DxFileUploadPart(
 		return err
 	}
 
-	for i := 0; i < NumRetriesDefault; i++ {
-		replyJs, err := dxda.DxAPI(
-			ctx,
-			httpClient,
-			NumRetriesDefault,
-			&ops.dxEnv,
-			fmt.Sprintf("%s/upload", fileId),
-			string(reqJson))
-		if err != nil {
-			ops.log("DxFileUploadPart: error in dxapi call [%s/upload] %v",
-				fileId, err.Error())
-			return err
-		}
+	replyJs, err := dxda.DxAPI(
+		ctx,
+		httpClient,
+		NumRetriesDefault,
+		&ops.dxEnv,
+		fmt.Sprintf("%s/upload", fileId),
+		string(reqJson))
+	if err != nil {
+		ops.log("DxFileUploadPart: error in dxapi call [%s/upload] %v",
+			fileId, err.Error())
+		return err
+	}
 
-		var reply ReplyUploadChunk
-		if err = json.Unmarshal(replyJs, &reply); err != nil {
-			return err
-		}
+	var reply ReplyUploadChunk
+	if err = json.Unmarshal(replyJs, &reply); err != nil {
+		return err
+	}
 
-		// bulk data upload
-		_, err = dxda.DxHttpRequest(ctx, httpClient, 1, "PUT", reply.Url, reply.Headers, data)
-		if err != nil {
-			if ops.isRetryableUploadError(err) {
-				// This is a retryable error, try again
-				ops.log("Retrying part upload, timeout expired")
-				continue
-			}
-			ops.log("DxFileUploadPart: failure in data upload %s", err.Error())
-			return err
-		}
+	// bulk data upload
+	_, err = dxda.DxHttpRequest(ctx, httpClient, 10, "PUT", reply.Url, reply.Headers, data)
+	if err != nil {
+		ops.log("DxFileUploadPart: failure in data upload %s", err.Error())
+		return err
 	}
 	return nil
 }

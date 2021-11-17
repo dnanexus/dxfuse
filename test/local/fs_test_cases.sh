@@ -1,8 +1,8 @@
 ######################################################################
 ## constants
-
+CRNT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 projName="dxfuse_test_data"
-dxfuse="$GOPATH/bin/dxfuse"
+dxfuse="$CRNT_DIR/../../dxfuse"
 dxDirOnProject="mini"
 baseDir=$HOME/dxfuse_test
 mountpoint=${baseDir}/MNT
@@ -25,6 +25,8 @@ function teardown {
     echo "unmounting dxfuse"
     cd $HOME
     fusermount -u $mountpoint
+
+    cat /root/.dxfuse/dxfuse.log
 
     for d in ${writeable_dirs[@]}; do
         dx rm -r $projName:/$d >& /dev/null || true
@@ -109,11 +111,6 @@ function create_remove_dir {
 
     tree $write_dir
 
-    if [[ $flag == "yes" ]]; then
-        echo "synchronizing the filesystem"
-        $dxfuse -sync
-    fi
-
     echo "removing directory recursively"
     rm -rf $write_dir
 }
@@ -181,7 +178,6 @@ function file_create_existing {
     cd $write_dir
 
     echo "happy days" > hello.txt
-    chmod 444 hello.txt
 
     set +e
     (echo "nothing much" > hello.txt) >& /tmp/cmd_results.txt
@@ -398,9 +394,9 @@ function fs_test_cases {
     mkdir -p $mountpoint
 
     # generate random alphanumeric strings
-    base_dir=$(cat /dev/urandom | env LC_CTYPE=C LC_ALL=C tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+    base_dir=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null| base64 | tr -dc 'a-zA-Z0-9'|fold -w 12|head -n1)
     base_dir="base_$base_dir"
-    expr_dir=$(cat /dev/urandom | env LC_CTYPE=C LC_ALL=C tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+    expr_dir=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null| base64 | tr -dc 'a-zA-Z0-9'|fold -w 12|head -n1)
     expr_dir="expr_$expr_dir"
     writeable_dirs=($base_dir $expr_dir)
     for d in ${writeable_dirs[@]}; do
@@ -412,7 +408,7 @@ function fs_test_cases {
 
     # Start the dxfuse daemon in the background, and wait for it to initilize.
     echo "Mounting dxfuse"
-    flags="-readWrite"
+    flags="-limitedWrite"
     if [[ $verbose != "" ]]; then
         flags="$flags -verbose 2"
     fi

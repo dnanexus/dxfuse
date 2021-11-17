@@ -28,6 +28,7 @@ function measure_and_compare {
     local top_dir=$1
     local data_dir=$2
     local output_file=$3
+    set -x
 
     echo "Discover the benchmark files"
     files=$(ls $top_dir/$data_dir)
@@ -66,6 +67,7 @@ function measure_and_compare_upload {
     local data_dir=$2
     local out_dir=$3
     local result_file=$4
+    set -x
 
     echo "Discover the benchmark files"
     files=$(ls $top_dir/$data_dir)
@@ -75,11 +77,6 @@ function measure_and_compare_upload {
 
     for fname in $files; do
         fileSize=$(ls -l $top_dir/$data_dir/$fname | cut -d ' ' -f 5)
-        if [[ $fileSize -gt $((1 * 1024 * 1024 * 1024)) ]]; then
-            # limit file size to 1GiB
-            echo "skipping $fname, it is too large"
-            continue
-        fi
 
         sizeDesc=$(ls -lh $top_dir/$data_dir/$fname | cut -d ' ' -f 5)
         echo "size($fname) = $sizeDesc"
@@ -97,10 +94,11 @@ function measure_and_compare_upload {
         echo "copy into dxfuse filesystem"
         start=`date +%s`
         cp /tmp/X $top_dir/$out_dir/$fname.2
-        echo "start dxfuse sync"
-        dxfuse -sync
         end=`date +%s`
         runtime2=$((end-start))
+
+        echo "sanity check, compare data"
+        diff /tmp/X $top_dir/$out_dir/$fname.2
 
         echo "$sizeDesc,dx-upload,$runtime1,dxfuse,$runtime2"  >> $result_file
     done
@@ -112,10 +110,11 @@ main() {
     source environment
 
     mkdir -p $mountpoint
+    set -x
 
     # create an output directory for uploads
     # generate a random alphanumeric string
-    out_dir=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+    out_dir=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null| base64 | tr -dc 'a-zA-Z0-9'|fold -w 12|head -n1)
     out_dir="out_$out_dir"
     writeable_dirs=($out_dir)
     dx mkdir $DX_PROJECT_CONTEXT_ID:/$out_dir
@@ -123,7 +122,7 @@ main() {
     # download with dxfuse
     # Start the dxfuse daemon in the background, and wait for it to initilize.
     echo "Mounting dxfuse"
-    flags="-readWrite"
+    flags="-limitedWrite"
     if [[ $verbose != "" ]]; then
         flags="$flags -verbose 1"
     fi

@@ -1,8 +1,8 @@
 ######################################################################
 ## constants
-
+CRNT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 projName="dxfuse_test_data"
-dxfuse="$GOPATH/bin/dxfuse"
+dxfuse="$CRNT_DIR/../../dxfuse"
 baseDir=$HOME/dxfuse_test
 mountpoint=${baseDir}/MNT
 
@@ -49,11 +49,7 @@ function check_file_write_content {
     echo $content > $write_dir/A.txt
     ls -l $write_dir/A.txt
 
-    echo "synchronizing the filesystem"
-    $dxfuse -sync
-
-    echo "file is closed"
-    dx ls -l $projName:/$target_dir/A.txt
+    dx wait $projName:/$target_dir/A.txt
 
     # compare the data
     local content2=$(dx cat $projName:/$target_dir/A.txt)
@@ -70,11 +66,7 @@ function check_file_write_content {
     touch $write_dir/B.txt
     ls -l $write_dir/B.txt
 
-    echo "synchronizing the filesystem"
-    $dxfuse -sync
-
-    echo "file is closed"
-    dx ls -l $projName:/$target_dir/B.txt
+    dx wait $projName:/$target_dir/B.txt
 
     # compare the data
     local content3=$(dx cat $projName:/$target_dir/B.txt)
@@ -99,8 +91,6 @@ function write_files {
     echo "copying large files"
     cp $src_dir/*  $write_dir/
 
-    echo "synchronizing the filesystem"
-    $dxfuse -sync
 
     # compare resulting files
     echo "comparing files"
@@ -141,7 +131,7 @@ function file_write_slow {
     mkdir -p $mountpoint
 
     # generate random alphanumeric strings
-    base_dir=$(cat /dev/urandom | env LC_CTYPE=C LC_ALL=C tr -dc 'a-zA-Z0-9' | fold -w 12 | head -n 1)
+    base_dir=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null| base64 | tr -dc 'a-zA-Z0-9'|fold -w 12|head -n1)
     base_dir="base_$base_dir"
     writeable_dirs=($base_dir)
     for d in ${writeable_dirs[@]}; do
@@ -155,7 +145,7 @@ function file_write_slow {
 
     # Start the dxfuse daemon in the background, and wait for it to initilize.
     echo "Mounting dxfuse"
-    flags="-readWrite"
+    flags="-limitedWrite"
     if [[ $verbose != "" ]]; then
         flags="$flags -verbose 2"
     fi

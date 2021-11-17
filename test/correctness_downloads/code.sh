@@ -25,16 +25,13 @@ function teardown {
     fi
     teardown_complete=1
 
-    echo "syncing filesystem"
-    sync
-
     echo "unmounting dxfuse"
     cd $HOME
     fusermount -u $mountpoint
 
     if [[ $verbose != "" ]]; then
         mkdir -p out/filesystem_log
-        cp /var/log/dxfuse.log out/filesystem_log/
+        cp /root/.dxfuse/dxfuse.log out/filesystem_log/
         dx-upload-all-outputs
     fi
 }

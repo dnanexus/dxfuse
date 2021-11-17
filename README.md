@@ -1,12 +1,10 @@
-# dxfuse: a FUSE filesystem for dnanexus
+# dxfuse: a FUSE filesystem for DNAnexus
 
 A filesystem that allows users access to the DNAnexus storage system.
 
-[![Build Status](https://travis-ci.org/dnanexus/dxfuse.svg?branch=master)](https://travis-ci.org/dnanexus/dxfuse)
+**NOTE: This project is in beta . It's used on DNAnexus cloud workers, and may also be run on a Linux or macOS machine with a network connection and a DNAnexus account.**
 
-**NOTE: This is a project in its beta stage. We are using it on cloud workers, however, it may be run from any machine with a network connection and a DNAx account.**
-
-The code uses the [FUSE](https://bazil.org/fuse/)
+The code uses the [FUSE](https://github.com/jacobsa/fuse)
 library, implemented in [golang](https://golang.org). The DNAnexus
 storage system is not POSIX compilant. It holds not just files and
 directories, but also records, databases, applets, and workflows. It
@@ -33,6 +31,9 @@ underscore. As a rule, directories are not moved, nor are their
 characters modified. However, if a directory name contains a slash, it
 is dropped, and a warning is emitted to the log.
 
+dxfuse provides a read-only view of the DNAnexus storage unless launched with an optional `-limitedWrite` flag.
+limitedWrite mode allows writing data in append-only fashion that enables support of spark file outputs.
+
 dxfuse approximates a normal POSIX filesystem, but does not always have the same semantics. For example:
 1. Metadata like last access time are not supported
 2. Directories have approximate create/modify times. This is because DNAx does not keep such attributes for directories.
@@ -41,36 +42,13 @@ There are several limitations currently:
 - Primarily intended for Linux, but can be used on OSX
 - Limits directories to 255,000 elements
 - Updates to the project emanating from other machines are not reflected locally
-- Rename does not allow removing the target file or directory. This is because this cannot be
-  done automatically by dnanexus.
 - Does not support hard links
+- limitedWrite mode has additional limitations described in the [Limited Write Mode](#limited-write-mode) section
 
-Updates to files are batched and asynchronously applied to the cloud
-object system. For example, if `foo.txt` is updated, the changes will
-not be immediately visible to another user looking at the platform
-object directly. Because platform files are immutable, even a minor
-modification requires rewriting the entire file, creating a new
-version. This is an inherent limitation, making file update
-inefficient.
+# Download benchmarks
 
-## Implementation
-
-The implementation uses an [sqlite](https://www.sqlite.org/index.html)
-database, located on `/var/dxfuse/metadata.db`. It stores files and
-directories in tables, indexed to speed up common queries.
-
-Load on the DNAx API servers and the cloud object system is carefully controlled. Bulk calls
-are used to describe data objects, and the number of parallel IO requests is bounded.
-
-dxfuse operations can sometimes be slow, for example, if the server is
-slow to respond, or has been temporarily shut down (503 mode). This
-may cause the filesystem to lose its interactive feel. Running it on a
-cloud worker reduces network latency significantly, and is the way it
-is used in the product. Running on a local, non cloud machine, runs
-the risk of network choppiness.
-
-Bandwidth when streaming a file is close to the dx-toolkit, but may be a
-little bit lower. The following table shows performance across several
+Streaming a file from DNAnexus using dxfuse performs similiarly to dx-toolkit.
+The following table shows performance across several
 instance types. The benchmark was *how many seconds does it take to
 download a file of size X?* The lower the number, the better. The two
 download methods were (1) `dx cat`, and (2) `cat` from a dxfuse mount point.
@@ -92,21 +70,115 @@ download methods were (1) `dx cat`, and (2) `cat` from a dxfuse mount point.
 | mem3\_ssd1\_v2\_x32|		4|	2 | 705M|
 | mem3\_ssd1\_v2\_x32|		2|	1 | 285M|
 
-Creating new files, and uploading them to the platform is
-significantly slower when using dxfuse. This is mostly a FUSE problem,
-where IOs are handed over from user-space, to the kernel, and then to
-the dxfuse server in 128KB chunks. This is fine for small files, but
-becomes slow for large files. Here is a comparison between (1) `dx
-upload FILE`, and (2) `cp FILE to fuse, sync fuse`.
+# Implementation overview
 
-| instance type      | dx upload (seconds) | dxfuse upload (seconds) | file size |
-| ----               | ----                | ---                  |  ----     |
-| mem1\_ssd1\_v2\_x4 |	11 |	99 | 705M |
-| mem1_ssd1\_v2\_x4  |	5  |	24 | 285M |
-| mem1\_ssd1\_v2\_x16 |	10 |	67 | 705M |
-| mem1\_ssd1\_v2\_x16 |	5  |	17 | 285M |
-| mem3\_ssd1\_v2\_x32 |	9  |	34 | 705M |
-| mem3\_ssd1\_v2\_x32 |	6  |	12 | 285M |
+The implementation uses a [sqlite](https://www.sqlite.org/index.html)
+database, located on `/var/dxfuse/metadata.db`. It stores files and
+directories in tables, indexed to speed up common queries.
+
+Load on the DNAnexus API servers and the cloud object system is carefully controlled. Bulk calls
+are used to describe data objects, and the number of parallel IO requests is bounded.
+
+dxfuse operations can sometimes be slow, for example, if the server is
+slow to respond, or has been temporarily shut down (503 mode). This
+may cause the filesystem to lose its interactive feel. Running it on a
+cloud worker reduces network latency significantly, and is the way it
+is used in the product. Running on a local, non cloud machine, runs
+the risk of network choppiness.
+
+# Limited Write Mode
+
+`dxfuse -limitedWrite` mode was primarly designed to support spark file output over the `file:///` protocol.
+
+Creating and writing to files is allowed when dxfuse is mounted with the `-limitedWrite` flag.
+Writing to files is **append only**. Any non-sequential writes will return `ENOTSUP`. Seeking or reading operations are not permitted while a file is being written.
+
+## Supported operations
+
+`-limitedWrite` mode enables the following operations: rename (mv, see [below](#rename-behavior)), unlink (rm), mkdir (see [below](#mkdir-behavior)), and rmdir (empty folders only). Rewriting existing files is not permitted, nor is truncating existing files.
+
+### mkdir behavior
+
+All `mkdir` operations via dxfuse are treated as `mkdir -p`. This is because dxfuse does not present the realtime state of the project. Folders can be created outside of dxfuse (or in another dxfuse process), and therefore not be visible to the current running dxfuse. A subsequent `mkdir` --> `project-xxxx/newFolder` would return a 422 error, because dxfuse did not know the directory already exists. This design is due to spark behavior where multiple worker nodes sometimes attempt to create the same output directory.
+
+### rename behavior
+
+Rename does not allow removing the target file or directory because DNAnexus API does not support this functionality.  Removal of target file or directory must be done as a separate operation before calling the rename (mv) operation.
+
+```
+$ ls -lht MNT/file*
+-r--r--r-- 1 root root 6 Aug 20 21:23 file1
+-r--r--r-- 1 root root 6 Aug 20 21:23 file
+$ mv MNT/file MNT/file1
+mv: cannot move 'file' to 'file1': Operation not permitted
+
+# Supported via 2 distinct operations:
+$ rm MNT/file1
+$ mv MNT/file MNT/file1
+```
+
+## File upload and closing
+
+Each dxfuse file open for writing is allocated a 96MiB write buffer in memory, which is uploaded as a DNAnexus file part when full. dxfuse will upload up to 4 parts in parallel across all files being uploaded.
+
+The upload of the last DNAnexus file part and the call of `file-xxxx/close` DNAnexus API operation are performed by dxfuse only when the OS process that created the OS file descriptor closes the OS file descriptor, triggering `FlushFile` fuse operation.
+
+### File descriptor duplication and empty files
+
+Applications which immediately duplicate a file descriptor after opening it are supported, but writing and the subsequent file descriptor duplication  is not supported, as this triggers the `FlushFile` fuse operation. See the below supported syscall access pattern, where `FlushFile` op triggered by `close(3)` is ignored for an empty open file.
+```
+# Supported access pattern
+openat(AT_FDCWD, "MNT/project/writefile", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
+dup2(3, 1)                              = 1
+# Triggers a FlushFile ignored by dxfuse since the file is empty
+close(3)                                = 0
+read(0, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"..., 1024) = 1024
+write(1, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"..., 1024) = 1024
+```
+The example below closes the file descriptor after writing, which closes the dnanexus file, causing subsequent writes to fail.
+```
+# Unsupported access pattern
+openat(AT_FDCWD, "MNT/project/writefile", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
+read(0, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"..., 1024) = 1024
+write(3, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"..., 1024) = 1024
+dup2(3, 1)                              = 1
+# Triggers a FlushFile --> file-xxxx/close by dxfuse since the file size is greater than 0
+close(3)                                = 0
+# Returns EPERM error since the file has been closed already
+write(1, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"..., 1024) = -1
+```
+
+Ignoring the `FlushFile` op for empty files creates an edge case for creating empty files in dxfuse-mounted folders. For empty files, the empty part upload and `file-xxxx/close` are not called until the `ReleaseFileHandle` fuse operation is triggered by the kernel when the last open file descriptor for a given file has been closed. The downside of this behavior is that the dxfuse client application creating the empty file is unable to catch errors that may happen during `file-xxxxx/close` API call as it does for non-empty files closed via `FlushFile` fuse operation triggered by application's call to `close(3)`.
+
+
+### File closing error checking
+
+dxfuse clients should check errors from `close(3)` call to make sure the corresponding DNAnexus file has been transitioned out of the `open` state,
+as DNAnexus files left in open state are eventually removed by the DNAnexus cleanup daemon.
+
+### Spark output artifacts
+
+Spark output through dxfuse uses the spark `file://` protocol. Due to this each output produced by spark will have a corresponding `.crc` file. These files can be removed. 
+
+## Upload benchmarks
+
+Upload benchmarks are from an Ubuntu 20.04 DNAnexus worker mem2_ssd1_v2_x32 (AWS m5d.8xlarge) instance running kernel 5.4.0-1055-aws.
+`dx` and `dxfuse` benchmark commands were run like so. These benchmarks are not exact because they include the wait time until the uploaded file is transitioned to the `closed` state.
+
+`time dd if=/dev/zero bs=1M count=$SIZE | dx upload --wait -`
+
+`time dd if=/dev/zero bs=1M count=$SIZE of=MNT/project/$SIZE`
+| dx upload --wait (seconds) | dxfuse upload(seconds) | file size |
+| ---                        |  ----                  | ----      |
+|	4.4 |	3.5 | 100MiB |
+|	4.8  |	4.2 | 200MiB |
+|	5.9 |	4.8 | 400MiB |
+|	5.9 |	6.8 | 800MiB |
+|	7 |	10 | 1GiB |
+|	22.5 |	19.2 | 2GiB |
+|	37.8  |	87 | 10GiB |
+|	254  |	495 | 100GiB |
+
 
 # Building
 
@@ -166,13 +238,6 @@ To stop the dxfuse process do:
 fusermount -u MOUNT-POINT
 ```
 
-There are situations where you want the background process to
-synchronously update all modified and newly created files. For example, before shutting down a machine,
-or unmounting the filesystem. This can be done by issuing the command:
-```
-$ dxfuse -sync
-```
-
 ## Extended attributes (xattrs)
 
 DNXa data objects have properties and tags, these are exposed as POSIX extended attributes. Xattrs can be read, written, and removed. The package we use here is `attr`, it can installed with `sudo apt-get install attr` on Linux. On OSX the `xattr` package comes packaged with the base operating system, and can be used to the same effect.
@@ -203,34 +268,27 @@ Remove the `family` property:
 $ attr -r prop.family zebra.txt
 ```
 
-You cannot modify _base.*_ attributes, these are read-only. Currently, setting and deleting xattrs can be done only for files that are closed on the platform.
+You cannot modify _base.*_ attributes, these are read-only. Setting and deleting xattrs can be done only for files that are closed on the platform.
 
-## Mac OS (OSX)
+## macOS
 
-For OSX you will need to install [OSXFUSE](http://osxfuse.github.com/). Note that Your Milage May Vary (YMMV) on this platform, we are mostly focused on Linux.
+For OSX you will need to install [macFUSE](https://osxfuse.github.io/). Note that Your Milage May Vary (YMMV) on this platform, we are mostly focused on Linux.
+
+Feaures such as kernel read-ahead, pagecache, mmap, and PID tracking may not work on macOS.
+
+## mmap
+
+dxfuse supports shared read-only mmap for remote files. This is only possible with FUSE when both the kernel pagecache and kernel readahead options are both enabled for the FUSE mount, which may have other side effects of increased memory usage (pagecache) and more remote read requests (readahead).
+
+```
+>>> import mmap
+>>> fd = open('MNT/dxfuse_test_data/README.md', 'r')
+mmap.mmap(fd.fileno(), 0, flags=mmap.MAP_SHARED, prot=mmap.PROT_READ)
+<mmap.mmap object at 0x7f9cadd87770>
+```
 
 # Common problems
 
 If a project appears empty, or is missing files, it could be that the dnanexus token does not have permissions for it. Try to see if you can do `dx ls YOUR_PROJECT:`.
 
 There is no natural match for DNAnexus applets and workflows, so they are presented as block devices. They do not behave like block devices, but the shell colors them differently from files and directories.
-
-FUSE does not support memory mappings shared between processes ([explanation](https://github.com/jacobsa/fuse/issues/82)). This is the location in the [Linux kernel](https://elixir.bootlin.com/linux/v5.6/source/fs/fuse/file.c#L2306) where this is not allowed. For example, trying to memory-map (mmap) a file with python causes an error.
-
-```
->>> import mmap
->>> fd = open('/home/orodeh/MNT/dxfuse_test_data/README.md', 'r')
->>> mmap.mmap(fp.fileno(), 0, mmap.PROT_READ)
-Traceback (most recent call last):
-  File "<stdin>", line 1, in <module>
-  OSError: [Errno 19] No such device
-```
-
-If the mapping is private to a single process then it does work. For example:
-
-```
->>> import mmap
->>> fd = open('/home/orodeh/MNT/dxfuse_test_data/README.md', 'r')
->>> mmap.mmap(fd.fileno(), 0, prot=mmap.PROT_READ, flags=mmap.MAP_PRIVATE, offset=0)
->>> fd.readline()
-```

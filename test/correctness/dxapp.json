@@ -21,10 +21,16 @@
     "interpreter": "bash",
     "file": "code.sh",
     "distribution": "Ubuntu",
-    "release": "16.04",
+    "release": "20.04",
+    "version": "0",
     "execDepends" : [
       {"name" : "tree", "package_manager" : "apt"}
     ],
+    "systemRequirements": {
+      "*":{
+        "instanceType": "mem2_hdd2_v2_x4"
+      }
+    },
     "timeoutPolicy" : {
       "*" : {
         "hours" : 1

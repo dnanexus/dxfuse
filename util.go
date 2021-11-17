@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jacobsa/fuse/fuseops"
+	"github.com/shirou/gopsutil/process"
 )
 
 const (
@@ -18,18 +19,18 @@ const (
 	GiB = 1024 * MiB
 )
 const (
-	CreatedFilesDir = "created_files"
-	DatabaseFile    = "metadata.db"
-	LogFile         = "dxfuse.log"
+	DatabaseFile = "metadata.db"
+	LogFile      = "dxfuse.log"
 )
 const (
-	HttpClientPoolSize        = 4
+	MinHttpClientPoolSize     = 30
 	FileWriteInactivityThresh = 5 * time.Minute
-	WritableFileSizeLimit     = 16 * MiB
 	MaxDirSize                = 255 * 1000
 	MaxNumFileHandles         = 1000 * 1000
 	NumRetriesDefault         = 10
-	Version                   = "v0.25.0"
+	InitialUploadPartSize     = 16 * MiB
+	MaxUploadPartSize         = 700 * MiB
+	Version                   = "v1.0.0-rc.5"
 )
 const (
 	InodeInvalid = 0
@@ -41,7 +42,7 @@ const (
 	dirReadOnlyMode   = 0555 | os.ModeDir
 	dirReadWriteMode  = 0777 | os.ModeDir
 	fileReadOnlyMode  = 0444
-	fileReadWriteMode = 0644
+	fileWriteOnlyMode = 0222
 )
 const (
 	// flags for writing files to disk
@@ -160,9 +161,6 @@ type File struct {
 
 	// for a symlink, it holds the path.
 	Symlink string
-
-	// For a regular file, a path to a local copy (if any).
-	LocalPath string
 
 	// is the file modified
 	dirtyData     bool
@@ -336,4 +334,16 @@ func MakeFSBaseDir() string {
 		os.Mkdir(dxfuseBaseDir, 0700)
 	}
 	return dxfuseBaseDir
+}
+
+func GetTgid(pid uint32) (tgid int32, err error) {
+	p, err := process.NewProcess(int32(pid))
+	if err != nil {
+		return -1, err
+	}
+	tgid, err = p.Tgid()
+	if err != nil {
+		return -1, err
+	}
+	return tgid, nil
 }

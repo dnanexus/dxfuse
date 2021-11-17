@@ -34,6 +34,8 @@ type MetadataDb struct {
 
 	inodeCnt int64
 	options  Options
+	// API to dx
+	ops *DxOps
 }
 
 func NewMetadataDb(
@@ -41,7 +43,7 @@ func NewMetadataDb(
 	dxEnv dxda.DXEnvironment,
 	options Options) (*MetadataDb, error) {
 	// create a connection to the database, that will be kept open
-	db, err := sql.Open("sqlite3", dbFullPath+"?mode=rwc")
+	db, err := sql.Open("sqlite", dbFullPath+"?mode=rwc")
 	if err != nil {
 		return nil, fmt.Errorf("Could not open the database %s", dbFullPath)
 	}
@@ -53,6 +55,7 @@ func NewMetadataDb(
 		baseDir2ProjectId: make(map[string]string),
 		inodeCnt:          InodeRoot + 1,
 		options:           options,
+		ops:               NewDxOps(dxEnv, options),
 	}, nil
 }
 
@@ -213,7 +216,6 @@ func (mdb *MetadataDb) init2(txn *sql.Tx) error {
                 tags text,
                 properties text,
                 symlink text,
-                local_path text,
                 dirty_data int,
                 dirty_metadata int,
                 PRIMARY KEY (inode)
@@ -387,7 +389,7 @@ func (mdb *MetadataDb) allocInodeNum() int64 {
 func (mdb *MetadataDb) lookupDataObjectByInode(oph *OpHandle, oname string, inode int64) (File, bool, error) {
 	// point lookup in the files table
 	sqlStmt := fmt.Sprintf(`
- 		        SELECT kind,id,proj_id,state,archival_state,size,ctime,mtime,mode,tags,properties,symlink,local_path, dirty_data, dirty_metadata
+ 		        SELECT kind,id,proj_id,state,archival_state,size,ctime,mtime,mode,tags,properties,symlink, dirty_data, dirty_metadata
                         FROM data_objects
 			WHERE inode = '%d';`,
 		inode)
@@ -412,7 +414,7 @@ func (mdb *MetadataDb) lookupDataObjectByInode(oph *OpHandle, oname string, inod
 		var dirtyData int
 		var dirtyMetadata int
 		rows.Scan(&f.Kind, &f.Id, &f.ProjId, &f.State, &f.ArchivalState, &f.Size, &ctime, &mtime, &f.Mode,
-			&tags, &props, &f.Symlink, &f.LocalPath, &dirtyData, &dirtyMetadata)
+			&tags, &props, &f.Symlink, &dirtyData, &dirtyMetadata)
 		f.Ctime = SecondsToTime(ctime)
 		f.Mtime = SecondsToTime(mtime)
 		f.Tags = tagsUnmarshal(tags)
@@ -654,7 +656,8 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 	rows.Close()
 
 	// Extract information for all the files
-	sqlStmt = `SELECT dos.kind, dos.id, dos.proj_id, dos.state, dos.archival_state, dos.inode, dos.size, dos.ctime, dos.mtime, dos.mode, dos.tags, dos.properties, dos.symlink, dos.local_path, dos.dirty_data, dos.dirty_metadata, namespace.name
+
+	sqlStmt = `SELECT dos.kind, dos.id, dos.proj_id, dos.state, dos.archival_state, dos.inode, dos.size, dos.ctime, dos.mtime, dos.mode, dos.tags, dos.properties, dos.symlink, dos.dirty_data, dos.dirty_metadata, namespace.name
                         FROM data_objects as dos
                         JOIN namespace
                         ON dos.inode = namespace.inode
@@ -679,7 +682,7 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 		var dirtyMetadata int
 		rows.Scan(&f.Kind, &f.Id, &f.ProjId, &f.State, &f.ArchivalState, &f.Inode,
 			&f.Size, &ctime, &mtime, &mode,
-			&tags, &props, &f.Symlink, &f.LocalPath, &dirtyData, &dirtyMetadata, &f.Name)
+			&tags, &props, &f.Symlink, &dirtyData, &dirtyMetadata, &f.Name)
 		f.Ctime = SecondsToTime(ctime)
 		f.Mtime = SecondsToTime(mtime)
 		f.Tags = tagsUnmarshal(tags)
@@ -719,8 +722,7 @@ func (mdb *MetadataDb) createDataObject(
 	mode os.FileMode,
 	parentDir string,
 	fname string,
-	symlink string,
-	localPath string) (int64, error) {
+	symlink string) (int64, error) {
 	if mdb.options.VerboseLevel > 1 {
 		mdb.log("createDataObject %s:%s %s", projId, objId,
 			filepath.Clean(parentDir+"/"+fname))
@@ -736,9 +738,9 @@ func (mdb *MetadataDb) createDataObject(
 	// Create an entry for the file
 	sqlStmt := fmt.Sprintf(`
  	        INSERT INTO data_objects
-		VALUES ('%d', '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%s', '%s', '%s', '%s', '%d', '%d');`,
+		VALUES ('%d', '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%d', '%s', '%s', '%s', '%d', '%d');`,
 		kind, objId, projId, state, archivalState, inode, size, ctime, mtime, int(mode),
-		mTags, mProps, symlink, localPath,
+		mTags, mProps, symlink,
 		boolToInt(dirtyData), boolToInt(dirtyMetadata))
 	if _, err := oph.txn.Exec(sqlStmt); err != nil {
 		mdb.log(err.Error())
@@ -809,7 +811,7 @@ func (mdb *MetadataDb) CreateDir(
 	mtime int64,
 	mode os.FileMode,
 	dirPath string) (int64, error) {
-	dnode, err := mdb.createEmptyDir(oph, projId, projFolder, ctime, mtime, mode, dirPath, true)
+	dnode, err := mdb.createEmptyDir(oph, projId, projFolder, ctime, mtime, mode, dirPath, false)
 	if err != nil {
 		mdb.log("error in create dir")
 		return 0, oph.RecordError(err)
@@ -917,12 +919,7 @@ func (mdb *MetadataDb) populateDir(
 	if mdb.options.VerboseLevel > 1 {
 		mdb.log("inserting files")
 	}
-	var fileMode os.FileMode
-	if mdb.options.ReadOnly {
-		fileMode = fileReadOnlyMode
-	} else {
-		fileMode = fileReadWriteMode
-	}
+
 	for _, o := range dxObjs {
 		kind := mdb.kindOfFile(o)
 		symlink := symlinkOfFile(kind, o)
@@ -941,11 +938,10 @@ func (mdb *MetadataDb) populateDir(
 			o.MtimeSeconds,
 			o.Tags,
 			o.Properties,
-			fileMode,
+			fileReadOnlyMode,
 			dirPath,
 			o.Name,
-			symlink,
-			"")
+			symlink)
 		if err != nil {
 			return oph.RecordError(err)
 		}
@@ -1214,7 +1210,6 @@ func (mdb *MetadataDb) PopulateRoot(ctx context.Context, oph *OpHandle, manifest
 			fileReadOnlyMode,
 			fl.Parent,
 			fl.Fname,
-			"",
 			"")
 		if err != nil {
 			mdb.log(err.Error())
@@ -1253,19 +1248,27 @@ func (mdb *MetadataDb) CreateFile(
 	oph *OpHandle,
 	dir *Dir,
 	fname string,
-	mode os.FileMode,
-	localPath string) (File, error) {
+	mode os.FileMode) (File, error) {
 	if mdb.options.Verbose {
-		mdb.log("CreateFile %s/%s  localPath=%s proj=%s",
-			dir.FullPath, fname, localPath, dir.ProjId)
+		mdb.log("CreateFile %s/%s projpath=%s%s",
+			dir.FullPath, fname, dir.ProjId, dir.ProjFolder)
 	}
 
-	// We are creating a fake DNAx file on the local machine.
-	// Its state doesn't quite make sense:
-	// 1. live, that means not archived
-	// 2. closed,
+	// Create remote file
+	fileId, err := mdb.ops.DxFileNew(
+		context.TODO(), oph.httpClient, NewNonce().String(),
+		dir.ProjId,
+		fname,
+		dir.ProjFolder)
+	if err != nil {
+		mdb.log("CreateFile error creating data object")
+		return File{}, err
+	}
+	// Create local metadata for file
+	// 1. live
+	// 2. open
 	// 3. empty, without any data
-	// 4. no object ID
+	// 4. dirtyData true, for any subsequent Open() calls to return a filehandler with append access
 	nowSeconds := time.Now().Unix()
 	inode, err := mdb.createDataObject(
 		oph,
@@ -1273,10 +1276,10 @@ func (mdb *MetadataDb) CreateFile(
 		true, // file is dirty, it should be uploaded.
 		false,
 		dir.ProjId,
-		"closed",
+		"open",
 		"live",
-		"", // no file-id yet
-		0,  /* the file is empty */
+		fileId,
+		0, /* the file is empty */
 		nowSeconds,
 		nowSeconds,
 		nil, // A local file initially doesn't have tags or properties
@@ -1284,17 +1287,18 @@ func (mdb *MetadataDb) CreateFile(
 		mode,
 		dir.FullPath,
 		fname,
-		"",
-		localPath)
+		"")
 	if err != nil {
 		mdb.log("CreateFile error creating data object")
 		return File{}, err
 	}
+	mdb.log("Created file %s/%s %s:%s",
+		dir.FullPath, fname, dir.ProjId, fileId)
 
 	// 3. return a File structure
 	return File{
 		Kind:          FK_Regular,
-		Id:            "",
+		Id:            fileId,
 		ProjId:        dir.ProjId,
 		ArchivalState: "live",
 		Name:          fname,
@@ -1304,7 +1308,7 @@ func (mdb *MetadataDb) CreateFile(
 		Mtime:         SecondsToTime(nowSeconds),
 		Mode:          mode,
 		Symlink:       "",
-		LocalPath:     localPath,
+		dirtyData:     true,
 	}, nil
 }
 
@@ -1366,6 +1370,29 @@ func (mdb *MetadataDb) UpdateFileAttrs(
 			WHERE inode = '%d';`,
 			fileSize, modTimeSec, int(*mode), inode)
 	}
+
+	if _, err := oph.txn.Exec(sqlStmt); err != nil {
+		mdb.log(err.Error())
+		mdb.log("UpdateFile error executing transaction")
+		return oph.RecordError(err)
+	}
+	return nil
+}
+
+func (mdb *MetadataDb) UpdateClosedFileMetadata(
+	ctx context.Context,
+	oph *OpHandle,
+	inode int64) error {
+
+	sqlStmt := ""
+	// don't update the mode
+	if mdb.options.Verbose {
+		mdb.log("Update inode=%d state=closed", inode)
+	}
+	sqlStmt = fmt.Sprintf(`
+ 		        UPDATE data_objects
+                        SET state = 'closed', dirty_data='0'
+			WHERE inode = '%d';`, inode)
 
 	if _, err := oph.txn.Exec(sqlStmt); err != nil {
 		mdb.log(err.Error())

@@ -11,16 +11,15 @@ permissions:
 jobs:
   linux:
     name: Linux build
-    runs-on: ubuntu-18.04
+    runs-on: ubuntu-20.04
     env:
         GOOS: linux
         GOARCH: amd64
-        CGO_ENABLED: 1
     steps:
       - uses: actions/checkout@v2
       - uses: actions/setup-go@v2
         with:
-          go-version: '^1.15.7'
+          go-version: '1.16.10'
       - name: Build Linux executable
         run: |
           set -x
@@ -46,12 +45,11 @@ jobs:
     env:
         GOOS: darwin
         GOARCH: amd64
-        CGO_ENABLED: 1
     steps:
       - uses: actions/checkout@v2
       - uses: actions/setup-go@v2
         with:
-          go-version: '^1.15.7'
+          go-version: '1.16.10'
       - name: Build Macos executable
         run: |
           set -x

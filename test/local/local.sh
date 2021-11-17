@@ -1,4 +1,4 @@
-#!/bin/bash -e
+#!/bin/bash -ex
 
 CRNT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 echo "current dir=$CRNT_DIR"
@@ -24,6 +24,3 @@ faux_dirs
 
 source $CRNT_DIR/file_overwrite.sh
 file_overwrite
-
-source $CRNT_DIR/sync_concurrency_test.sh
-sync_concurrency_test

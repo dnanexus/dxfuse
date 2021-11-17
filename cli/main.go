@@ -11,8 +11,10 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/jacobsa/fuse"
@@ -38,7 +40,7 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "options:\n")
 	// Hide experimental options
 	flag.VisitAll(func(f *flag.Flag) {
-		if f.Name == "readOnly" || f.Name == "readWrite" || f.Name == "daemon" {
+		if f.Name == "readOnly" || f.Name == "limitedWrite" || f.Name == "daemon" {
 			return
 		}
 		name, usage := flag.UnquoteUsage(f)
@@ -52,14 +54,14 @@ func usage() {
 var (
 	debugFuseFlag = flag.Bool("debugFuse", false, "Tap into FUSE debugging information")
 	daemon        = flag.Bool("daemon", false, "An internal flag, do not use it")
-	fsSync        = flag.Bool("sync", false, "Sychronize the filesystem and exit")
-	help          = flag.Bool("help", false, "display program options")
-	readOnly      = flag.Bool("readOnly", true, "DEPRECATED, now the default behavior. Mount the filesystem in read-only mode")
-	readWrite     = flag.Bool("readWrite", false, "mount the filesystem in read-write mode (Experimental, not recommended), default is read-only")
-	uid           = flag.Int("uid", -1, "User id (uid)")
-	gid           = flag.Int("gid", -1, "User group id (gid)")
-	verbose       = flag.Int("verbose", 0, "Enable verbose debugging")
-	version       = flag.Bool("version", false, "Print the version and exit")
+	// fsSync        = flag.Bool("sync", false, "Sychronize the filesystem and exit")
+	help         = flag.Bool("help", false, "display program options")
+	readOnly     = flag.Bool("readOnly", true, "DEPRECATED, now the default behavior. Mount the filesystem in read-only mode")
+	limitedWrite = flag.Bool("limitedWrite", false, "Allow removing files and folders, creating files and appending to them. (Experimental, not recommended), default is read-only")
+	uid          = flag.Int("uid", -1, "User id (uid)")
+	gid          = flag.Int("gid", -1, "User group id (gid)")
+	verbose      = flag.Int("verbose", 0, "Enable verbose debugging")
+	version      = flag.Bool("version", false, "Print the version and exit")
 )
 
 func lookupProject(dxEnv *dxda.DXEnvironment, projectIdOrName string) (string, error) {
@@ -127,6 +129,11 @@ func fsDaemon(
 		logger.Printf("started the filesystem as root, allowing other users access")
 		mountOptions["allow_other"] = ""
 	}
+	// Pass read-only mount option if not in limitedWrite
+	if options.ReadOnly {
+		mountOptions["ro"] = ""
+	}
+	mountOptions["max_read"] = "1048576"
 
 	// capture debug output from the FUSE subsystem
 	var fuse_logger *log.Logger
@@ -142,14 +149,8 @@ func fsDaemon(
 		ErrorLogger: logger,
 		DebugLogger: fuse_logger,
 
-		// This option makes writes accumulate in the kernel
-		// buffers before being handed over to dxfuse for processing.
-		// It significantly improves file-write performance. Still,
-		// what you get isn't great.
-		//
-		// Currently, instead of dxfuse receiving every 4KB synchronously,
-		// it can get 128KB.
-		DisableWritebackCaching: false,
+		// Required for sequential writes
+		DisableWritebackCaching: true,
 		Options:                 mountOptions,
 	}
 
@@ -159,6 +160,32 @@ func fsDaemon(
 		logger.Printf(err.Error())
 	}
 
+	// By default fuse will use 128kb read-ahead even though we ask for 1024kb
+	// If running as root on linux, raise read-ahead to 1024kb after mounting
+	if user.Uid == "0" && runtime.GOOS == "linux" {
+		mntInfo, err := os.Stat(mountpoint)
+		if err != nil {
+			logger.Printf(err.Error())
+		}
+		dxfuseDeviceNumber := mntInfo.Sys().(*syscall.Stat_t).Dev
+		readAheadFile := fmt.Sprintf("/sys/class/bdi/0:%d/read_ahead_kb", dxfuseDeviceNumber)
+		data, err := ioutil.ReadFile(readAheadFile)
+		if err != nil {
+			logger.Printf("Unable to get current read-ahead value")
+			logger.Printf(err.Error())
+		}
+		initialReadAhead, err := strconv.Atoi(strings.TrimSpace(string(data)))
+		if initialReadAhead < 1024 {
+			err = ioutil.WriteFile(readAheadFile, []byte("1024"), 0644)
+			if err != nil {
+				logger.Printf("Error raising read-ahead to 1024kb")
+				logger.Printf(err.Error())
+			} else {
+				logger.Printf("Raised kernel read-ahead from %dkb to 1024kb", initialReadAhead)
+			}
+		}
+
+	}
 	// Wait for it to be unmounted. This happens only after
 	// all requests have been served.
 	if err = mfs.Join(context.Background()); err != nil {
@@ -228,27 +255,27 @@ func parseCmdLineArgs() Config {
 		fmt.Println(dxfuse.Version)
 		os.Exit(0)
 	}
-	if *fsSync {
-		cmdClient := dxfuse.NewCmdClient()
-		cmdClient.Sync()
-		os.Exit(0)
-	}
+	// if *fsSync {
+	// 	cmdClient := dxfuse.NewCmdClient()
+	// 	cmdClient.Sync()
+	// 	os.Exit(0)
+	// }
 	if *help {
 		usage()
 		os.Exit(0)
 	}
-	// -readOnly and -readWrite flags are mutually exclusive
+	// -readOnly and -limitedWrite flags are mutually exclusive
 	readOnlyFlagSet := false
-	readWriteFlagSet := false
+	limitedWriteFlagSet := false
 	flag.Visit(func(f *flag.Flag) {
 		if f.Name == "readOnly" {
 			readOnlyFlagSet = true
-		} else if f.Name == "readWrite" {
-			readWriteFlagSet = true
+		} else if f.Name == "limitedWrite" {
+			limitedWriteFlagSet = true
 		}
 	})
-	if readWriteFlagSet && readOnlyFlagSet {
-		fmt.Printf("Cannot provide both -readOnly and -readWrite flags\n")
+	if limitedWriteFlagSet && readOnlyFlagSet {
+		fmt.Printf("Cannot provide both -readOnly and -limitedWrite flags\n")
 		usage()
 		os.Exit(2)
 	}
@@ -262,7 +289,7 @@ func parseCmdLineArgs() Config {
 
 	uid, gid := initUidGid()
 	options := dxfuse.Options{
-		ReadOnly:     !*readWrite,
+		ReadOnly:     !*limitedWrite,
 		Verbose:      *verbose > 0,
 		VerboseLevel: *verbose,
 		Uid:          uid,
@@ -366,15 +393,15 @@ func buildDaemonCommandLine(cfg Config, fullManifestPath string) []string {
 	if *debugFuseFlag {
 		daemonArgs = append(daemonArgs, "-debugFuse")
 	}
-	if *fsSync {
-		daemonArgs = append(daemonArgs, "-sync")
-	}
+	// if *fsSync {
+	// 	daemonArgs = append(daemonArgs, "-sync")
+	// }
 	if *gid != -1 {
 		args := []string{"-gid", strconv.FormatInt(int64(*gid), 10)}
 		daemonArgs = append(daemonArgs, args...)
 	}
-	if *readWrite {
-		daemonArgs = append(daemonArgs, "-readWrite")
+	if *limitedWrite {
+		daemonArgs = append(daemonArgs, "-limitedWrite")
 	}
 	if *uid != -1 {
 		args := []string{"-uid", strconv.FormatInt(int64(*uid), 10)}
@@ -465,6 +492,8 @@ func main() {
 	validateConfig(cfg)
 	logFile := dxfuse.MakeFSBaseDir() + "/" + dxfuse.LogFile
 	fmt.Printf("The log file is located at %s\n", logFile)
+
+	dxda.UserAgent = fmt.Sprintf("dxfuse/%s (%s)", dxfuse.Version, runtime.GOOS)
 
 	if *daemon {
 		// This will be true -only- in the child sub-process
