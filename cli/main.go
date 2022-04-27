@@ -434,8 +434,8 @@ func startDaemonAndWaitForInitializationToComplete(cfg Config, logFile string) {
 		os.Exit(1)
 	}
 
-	// This could be converted into a random temporary file to avoid collisions
-	fullManifestPath := "/tmp/dxfuse_manifest.json"
+	username := getUser().username
+	fullManifestPath := fmt.Printf("/tmp/%s_dxfuse_manifest.json", username)
 	err = ioutil.WriteFile(fullManifestPath, manifestJSON, 0644)
 	if err != nil {
 		fmt.Printf("Error writing out fully elaborated manifest to %s (%s)",
