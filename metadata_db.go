@@ -43,7 +43,7 @@ func NewMetadataDb(
 	dxEnv dxda.DXEnvironment,
 	options Options) (*MetadataDb, error) {
 	// create a connection to the database, that will be kept open
-	db, err := sql.Open("sqlite", dbFullPath+"?mode=rwc")
+	db, err := sql.Open("sqlite3", dbFullPath+"?mode=rwc")
 	if err != nil {
 		return nil, fmt.Errorf("Could not open the database %s", dbFullPath)
 	}
