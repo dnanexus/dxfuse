@@ -1295,7 +1295,7 @@ func (fsys *Filesys) openRegularFile(
 	body, err := dxda.DxAPI(ctx, oph.httpClient, NumRetriesDefault, &fsys.dxEnv, fmt.Sprintf("%s/download", f.Id), payload)
 	if err != nil {
 		oph.RecordError(err)
-		return nil, err
+		return nil, fsys.translateError(err)
 	}
 	var u DxDownloadURL
 	json.Unmarshal(body, &u)
