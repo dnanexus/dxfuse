@@ -435,7 +435,8 @@ func startDaemonAndWaitForInitializationToComplete(cfg Config, logFile string) {
 	}
 
 	// This could be converted into a random temporary file to avoid collisions
-	fullManifestPath := "/tmp/dxfuse_manifest.json"
+
+	fullManifestPath := filepath.Join(dxfuse.MakeFSBaseDir(), "dxfuse_manifest.json")
 	err = ioutil.WriteFile(fullManifestPath, manifestJSON, 0644)
 	if err != nil {
 		fmt.Printf("Error writing out fully elaborated manifest to %s (%s)",
@@ -490,7 +491,7 @@ func main() {
 	flag.Parse()
 	cfg := parseCmdLineArgs()
 	validateConfig(cfg)
-	logFile := dxfuse.MakeFSBaseDir() + "/" + dxfuse.LogFile
+	logFile := filepath.Join(dxfuse.MakeFSBaseDir(), dxfuse.LogFile)
 	fmt.Printf("The log file is located at %s\n", logFile)
 
 	dxda.UserAgent = fmt.Sprintf("dxfuse/%s (%s)", dxfuse.Version, runtime.GOOS)
