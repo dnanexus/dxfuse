@@ -65,7 +65,7 @@ type Filesys struct {
 	ops *DxOps
 
 	// A way to send external commands to the filesystem
-	cmdSrv *CmdServer
+	// cmdSrv *CmdServer
 
 	// description for each mounted project
 	projId2Desc map[string]DxDescribePrj
@@ -220,8 +220,8 @@ func NewDxfuse(
 	//fsys.sybx = NewSyncDbDx(options, dxEnv, projId2Desc, mdb, fsys.mutex)
 
 	// create an endpoint for communicating with the user
-	fsys.cmdSrv = NewCmdServer(options, fsys.sybx)
-	fsys.cmdSrv.Init()
+	// fsys.cmdSrv = NewCmdServer(options, fsys.sybx)
+	// fsys.cmdSrv.Init()
 
 	return fsys, nil
 }
@@ -256,7 +256,7 @@ func (fsys *Filesys) Shutdown() {
 	fsys.pgs.Shutdown()
 
 	// close the command server, this frees up the port
-	fsys.cmdSrv.Close()
+	// fsys.cmdSrv.Close()
 
 	if fsys.uploader != nil {
 		fsys.uploader.Shutdown()
