@@ -219,6 +219,7 @@ func NewDxfuse(
 	// initialize sync daemon
 	//fsys.sybx = NewSyncDbDx(options, dxEnv, projId2Desc, mdb, fsys.mutex)
 
+	// DEVEX-2143 removed for now, could be useful again in the future for other enhancements
 	// create an endpoint for communicating with the user
 	// fsys.cmdSrv = NewCmdServer(options, fsys.sybx)
 	// fsys.cmdSrv.Init()
