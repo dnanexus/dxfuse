@@ -1141,8 +1141,6 @@ func (fsys *Filesys) readEntireDir(ctx context.Context, oph *OpHandle, dir Dir) 
 		switch oDesc.Kind {
 		case FK_Regular:
 			dType = fuseutil.DT_File
-		case FK_Symlink:
-			dType = fuseutil.DT_File
 		default:
 			// There is no good way to represent these
 			// in the filesystem.
@@ -1370,27 +1368,6 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 		fh, err = fsys.openRegularFile(ctx, oph, op, file)
 		if err != nil {
 			return err
-		}
-	case FK_Symlink:
-		// A symbolic link can use the remote URL address
-		// directly. There is no need to generate a preauthenticated
-		// URL.
-		tgid, _ := GetTgid(op.OpContext.Pid)
-		fh = &FileHandle{
-			accessMode: AM_RO_Remote,
-			inode:      file.Inode,
-			size:       file.Size,
-			Id:         file.Id,
-			url: &DxDownloadURL{
-				URL:     file.Symlink,
-				Headers: nil,
-			},
-			Tgid:              tgid,
-			lastPartId:        0,
-			nextWriteOffset:   0,
-			writeBuffer:       nil,
-			writeBufferOffset: 0,
-			mutex:             nil,
 		}
 	default:
 		// can't open an applet/workflow/etc.
