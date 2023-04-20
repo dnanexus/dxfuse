@@ -30,7 +30,7 @@ const (
 	NumRetriesDefault         = 10
 	InitialUploadPartSize     = 16 * MiB
 	MaxUploadPartSize         = 700 * MiB
-	Version                   = "v1.1.1"
+	Version                   = "v1.2.0"
 )
 const (
 	InodeInvalid = 0
@@ -120,7 +120,6 @@ func (d Dir) GetInode() fuseops.InodeID {
 // Kinds of files
 const (
 	FK_Regular  = 10
-	FK_Symlink  = 11
 	FK_Applet   = 12
 	FK_Workflow = 13
 	FK_Record   = 14
@@ -158,9 +157,6 @@ type File struct {
 	// tags and properties
 	Tags       []string
 	Properties map[string]string
-
-	// for a symlink, it holds the path.
-	Symlink string
 
 	// is the file modified
 	dirtyData     bool

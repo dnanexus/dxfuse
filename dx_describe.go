@@ -31,7 +31,6 @@ type DxDescribeDataObject struct {
 	MtimeSeconds  int64
 	Tags          []string
 	Properties    map[string]string
-	SymlinkPath   string
 }
 
 // https://documentation.dnanexus.com/developer/api/data-containers/projects#api-method-project-xxxx-describe
@@ -83,10 +82,6 @@ type DxDescribeRawTop struct {
 	Describe DxDescribeRaw `json:"describe"`
 }
 
-type DxSymLink struct {
-	Url string `json:"object"`
-}
-
 type DxDescribeRaw struct {
 	Id               string            `json:"id"`
 	ProjId           string            `json:"project"`
@@ -99,7 +94,6 @@ type DxDescribeRaw struct {
 	Size             int64             `json:"size"`
 	Tags             []string          `json:"tags"`
 	Properties       map[string]string `json:"properties"`
-	SymlinkPath      *DxSymLink        `json:"symlinkPath,omitempty"`
 }
 
 // Describe a large number of file-ids in one API call.
@@ -126,8 +120,6 @@ func submit(
 			"size":          true,
 			"tags":          true,
 			"properties":    true,
-			"symlinkPath":   true,
-			"drive":         true,
 		},
 	}
 
@@ -175,11 +167,6 @@ func submit(
 	for _, descRawTop := range reply.Results {
 		descRaw := descRawTop.Describe
 
-		symlinkUrl := ""
-		if descRaw.SymlinkPath != nil {
-			symlinkUrl = descRaw.SymlinkPath.Url
-		}
-
 		desc := DxDescribeDataObject{
 			Id:            descRaw.Id,
 			ProjId:        descRaw.ProjId,
@@ -192,7 +179,6 @@ func submit(
 			MtimeSeconds:  descRaw.ModifiedMillisec / 1000,
 			Tags:          descRaw.Tags,
 			Properties:    descRaw.Properties,
-			SymlinkPath:   symlinkUrl,
 		}
 		//fmt.Printf("%v\n", desc)
 		files[desc.Id] = desc
