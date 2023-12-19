@@ -224,9 +224,10 @@ func DxDescribeBulkObjects(
 }
 
 type ListFolderRequest struct {
-	Folder        string `json:"folder"`
-	Only          string `json:"only"`
-	IncludeHidden bool   `json:"includeHidden"`
+	Folder        string          `json:"folder"`
+	Only          string          `json:"only"`
+	IncludeHidden bool            `json:"includeHidden"`
+	Describe      map[string]bool `json:"describe"`
 }
 
 type ListFolderResponse struct {
@@ -235,51 +236,13 @@ type ListFolderResponse struct {
 }
 
 type ObjInfo struct {
-	Id string `json:"id"`
+	Id       string        `json:"id"`
+	Describe DxDescribeRaw `json:"describe"`
 }
 
 type DxListFolder struct {
 	objIds  []string
 	subdirs []string
-}
-
-// Issue a /project-xxxx/listFolder API call. Get
-// back a list of object-ids and sub-directories.
-func listFolder(
-	ctx context.Context,
-	httpClient *http.Client,
-	dxEnv *dxda.DXEnvironment,
-	projectId string,
-	dir string) (*DxListFolder, error) {
-
-	request := ListFolderRequest{
-		Folder:        dir,
-		Only:          "all",
-		IncludeHidden: false,
-	}
-	var payload []byte
-	payload, err := json.Marshal(request)
-	if err != nil {
-		return nil, err
-	}
-	dxRequest := fmt.Sprintf("%s/listFolder", projectId)
-	repJs, err := dxda.DxAPI(ctx, httpClient, NumRetriesDefault, dxEnv, dxRequest, string(payload))
-	if err != nil {
-		return nil, err
-	}
-	var reply ListFolderResponse
-	if err := json.Unmarshal(repJs, &reply); err != nil {
-		return nil, err
-	}
-	var objIds []string
-	for _, objInfo := range reply.Objects {
-		objIds = append(objIds, objInfo.Id)
-	}
-	retval := DxListFolder{
-		objIds:  objIds,
-		subdirs: reply.Folders,
-	}
-	return &retval, nil
 }
 
 func DxDescribeFolder(
@@ -288,34 +251,75 @@ func DxDescribeFolder(
 	dxEnv *dxda.DXEnvironment,
 	projectId string,
 	folder string) (*DxFolder, error) {
+	request := ListFolderRequest{
+		Folder:        folder,
+		Only:          "all",
+		IncludeHidden: false,
+	}
+	request.Describe = map[string]bool{
+		"id":            true,
+		"name":          true,
+		"state":         true,
+		"archivalState": true,
+		"folder":        true,
+		"created":       true,
+		"modified":      true,
+		"size":          true,
+		"tags":          true,
+		"properties":    true,
+	}
+
 	// The listFolder API call returns a list of object ids and folders.
 	// We could describe the objects right here, but we do that separately.
-	folderInfo, err := listFolder(ctx, httpClient, dxEnv, projectId, folder)
+	var payload []byte
+	payload, err := json.Marshal(request)
 	if err != nil {
-		log.Printf("listFolder(%s) error %s", folder, err.Error())
+		log.Printf("listFolder(%s) payload marshalling error %s", folder, err.Error())
 		return nil, err
 	}
+	dxRequest := fmt.Sprintf("%s/listFolder", projectId)
+	repJs, err := dxda.DxAPI(ctx, httpClient, NumRetriesDefault, dxEnv, dxRequest, string(payload))
+	if err != nil {
+		log.Printf("listFolder(%s) request error %s", folder, err.Error())
+		return nil, err
+	}
+	var reply ListFolderResponse
+	if err := json.Unmarshal(repJs, &reply); err != nil {
+		log.Printf("listFolder(%s) response unmarshalling error %s", folder, err.Error())
+		return nil, err
+	}
+	dataObjects := make(map[string]DxDescribeDataObject)
+	for _, oDesc := range reply.Objects {
+		dataObjects[oDesc.Id] = DxDescribeDataObject{
+			Id:            oDesc.Describe.Id,
+			ProjId:        projectId,
+			Name:          oDesc.Describe.Name,
+			State:         oDesc.Describe.State,
+			ArchivalState: oDesc.Describe.ArchivalState,
+			Folder:        oDesc.Describe.Folder,
+			Size:          oDesc.Describe.Size,
+			CtimeSeconds:  oDesc.Describe.CreatedMillisec / 1000,
+			MtimeSeconds:  oDesc.Describe.ModifiedMillisec / 1000,
+			Tags:          oDesc.Describe.Tags,
+			Properties:    oDesc.Describe.Properties,
+		}
+	}
+
+	var folderInfo *DxFolder
+	folderInfo = &DxFolder{
+		path:        folder,
+		dataObjects: dataObjects,
+		subdirs:     reply.Folders,
+	}
+
 	// limit the number of directory elements
-	numElementsInDir := len(folderInfo.objIds)
+	numElementsInDir := len(folderInfo.dataObjects)
 	if numElementsInDir > MaxDirSize {
 		return nil, fmt.Errorf(
 			"Too many elements (%d) in a directory, the limit is %d",
 			numElementsInDir, MaxDirSize)
 	}
-	dxObjs, err := DxDescribeBulkObjects(ctx, httpClient, dxEnv, projectId, folderInfo.objIds)
-	if err != nil {
-		log.Printf("describeBulkObjects(%v) error %s", folderInfo.objIds, err.Error())
-		return nil, err
-	}
-	dataObjects := make(map[string]DxDescribeDataObject)
-	for _, oDesc := range dxObjs {
-		dataObjects[oDesc.Id] = oDesc
-	}
-	return &DxFolder{
-		path:        folder,
-		dataObjects: dataObjects,
-		subdirs:     folderInfo.subdirs,
-	}, nil
+	return folderInfo, nil
 }
 
 type RequestDescribeProject struct {
