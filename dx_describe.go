@@ -240,11 +240,6 @@ type ObjInfo struct {
 	Describe DxDescribeRaw `json:"describe"`
 }
 
-type DxListFolder struct {
-	objIds  []string
-	subdirs []string
-}
-
 func DxDescribeFolder(
 	ctx context.Context,
 	httpClient *http.Client,
