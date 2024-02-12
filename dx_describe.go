@@ -33,6 +33,24 @@ type DxDescribeDataObject struct {
 	Properties    map[string]string
 }
 
+func ConvertDescribeRawToDataObject(
+	projectId string,
+	descRaw DxDescribeRaw) DxDescribeDataObject {
+	return DxDescribeDataObject{
+		Id:            descRaw.Id,
+		ProjId:        projectId,
+		Name:          descRaw.Name,
+		State:         descRaw.State,
+		ArchivalState: descRaw.ArchivalState,
+		Folder:        descRaw.Folder,
+		Size:          descRaw.Size,
+		CtimeSeconds:  descRaw.CreatedMillisec / 1000,
+		MtimeSeconds:  descRaw.ModifiedMillisec / 1000,
+		Tags:          descRaw.Tags,
+		Properties:    descRaw.Properties,
+	}
+}
+
 // https://documentation.dnanexus.com/developer/api/data-containers/projects#api-method-project-xxxx-describe
 type FileUploadParameters struct {
 	MinimumPartSize      int64 `json:"minimumPartSize"`
@@ -165,21 +183,7 @@ func submit(
 
 	var files = make(map[string]DxDescribeDataObject)
 	for _, descRawTop := range reply.Results {
-		descRaw := descRawTop.Describe
-
-		desc := DxDescribeDataObject{
-			Id:            descRaw.Id,
-			ProjId:        descRaw.ProjId,
-			Name:          descRaw.Name,
-			State:         descRaw.State,
-			ArchivalState: descRaw.ArchivalState,
-			Folder:        descRaw.Folder,
-			Size:          descRaw.Size,
-			CtimeSeconds:  descRaw.CreatedMillisec / 1000,
-			MtimeSeconds:  descRaw.ModifiedMillisec / 1000,
-			Tags:          descRaw.Tags,
-			Properties:    descRaw.Properties,
-		}
+		desc := ConvertDescribeRawToDataObject(descRawTop.Describe.ProjId, descRawTop.Describe)
 		//fmt.Printf("%v\n", desc)
 		files[desc.Id] = desc
 	}
@@ -285,19 +289,7 @@ func DxDescribeFolder(
 	}
 	dataObjects := make(map[string]DxDescribeDataObject)
 	for _, oDesc := range reply.Objects {
-		dataObjects[oDesc.Id] = DxDescribeDataObject{
-			Id:            oDesc.Describe.Id,
-			ProjId:        projectId,
-			Name:          oDesc.Describe.Name,
-			State:         oDesc.Describe.State,
-			ArchivalState: oDesc.Describe.ArchivalState,
-			Folder:        oDesc.Describe.Folder,
-			Size:          oDesc.Describe.Size,
-			CtimeSeconds:  oDesc.Describe.CreatedMillisec / 1000,
-			MtimeSeconds:  oDesc.Describe.ModifiedMillisec / 1000,
-			Tags:          oDesc.Describe.Tags,
-			Properties:    oDesc.Describe.Properties,
-		}
+		dataObjects[oDesc.Id] = ConvertDescribeRawToDataObject(projectId, oDesc.Describe)
 	}
 
 	var folderInfo *DxFolder
