@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	// The dxda package has the get-environment code
 	"github.com/dnanexus/dxda"
@@ -275,11 +276,14 @@ func DxDescribeFolder(
 		return nil, err
 	}
 	dxRequest := fmt.Sprintf("%s/listFolder", projectId)
+	reqStart := time.Now()
 	repJs, err := dxda.DxAPI(ctx, httpClient, NumRetriesDefault, dxEnv, dxRequest, string(payload))
+	reqEnd := time.Now()
 	if err != nil {
 		log.Printf("listFolder(%s) request error %s", folder, err.Error())
 		return nil, err
 	}
+	log.Printf("listFolder(%s) time elapsed %s", folder, reqEnd.Sub(reqStart))
 	var reply ListFolderResponse
 	if err := json.Unmarshal(repJs, &reply); err != nil {
 		log.Printf("listFolder(%s) response unmarshalling error %s", folder, err.Error())
