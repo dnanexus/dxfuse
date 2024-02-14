@@ -268,8 +268,6 @@ func DxDescribeFolder(
 		"properties":    true,
 	}
 
-	// The listFolder API call returns a list of object ids and folders.
-	// We could describe the objects right here, but we do that separately.
 	var payload []byte
 	payload, err := json.Marshal(request)
 	if err != nil {
