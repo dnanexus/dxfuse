@@ -248,6 +248,7 @@ type ObjInfo struct {
 func DxDescribeFolder(
 	ctx context.Context,
 	httpClient *http.Client,
+	dxOptions *Options,
 	dxEnv *dxda.DXEnvironment,
 	projectId string,
 	folder string) (*DxFolder, error) {
@@ -276,14 +277,15 @@ func DxDescribeFolder(
 		return nil, err
 	}
 	dxRequest := fmt.Sprintf("%s/listFolder", projectId)
-	reqStart := time.Now()
+	reqStartTime := time.Now()
 	repJs, err := dxda.DxAPI(ctx, httpClient, NumRetriesDefault, dxEnv, dxRequest, string(payload))
-	reqEnd := time.Now()
+	if dxOptions.VerboseLevel > 1 {
+		log.Printf("listFolder(%s) API call duration %s", folder, time.Now().Sub(reqStartTime))
+	}
 	if err != nil {
 		log.Printf("listFolder(%s) request error %s", folder, err.Error())
 		return nil, err
 	}
-	log.Printf("listFolder(%s) time elapsed %s", folder, reqEnd.Sub(reqStart))
 	var reply ListFolderResponse
 	if err := json.Unmarshal(repJs, &reply); err != nil {
 		log.Printf("listFolder(%s) response unmarshalling error %s", folder, err.Error())
