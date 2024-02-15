@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	// The dxda package has the get-environment code
 	"github.com/dnanexus/dxda"
@@ -31,6 +32,24 @@ type DxDescribeDataObject struct {
 	MtimeSeconds  int64
 	Tags          []string
 	Properties    map[string]string
+}
+
+func ConvertDescribeRawToDataObject(
+	projectId string,
+	descRaw DxDescribeRaw) DxDescribeDataObject {
+	return DxDescribeDataObject{
+		Id:            descRaw.Id,
+		ProjId:        projectId,
+		Name:          descRaw.Name,
+		State:         descRaw.State,
+		ArchivalState: descRaw.ArchivalState,
+		Folder:        descRaw.Folder,
+		Size:          descRaw.Size,
+		CtimeSeconds:  descRaw.CreatedMillisec / 1000,
+		MtimeSeconds:  descRaw.ModifiedMillisec / 1000,
+		Tags:          descRaw.Tags,
+		Properties:    descRaw.Properties,
+	}
 }
 
 // https://documentation.dnanexus.com/developer/api/data-containers/projects#api-method-project-xxxx-describe
@@ -165,21 +184,7 @@ func submit(
 
 	var files = make(map[string]DxDescribeDataObject)
 	for _, descRawTop := range reply.Results {
-		descRaw := descRawTop.Describe
-
-		desc := DxDescribeDataObject{
-			Id:            descRaw.Id,
-			ProjId:        descRaw.ProjId,
-			Name:          descRaw.Name,
-			State:         descRaw.State,
-			ArchivalState: descRaw.ArchivalState,
-			Folder:        descRaw.Folder,
-			Size:          descRaw.Size,
-			CtimeSeconds:  descRaw.CreatedMillisec / 1000,
-			MtimeSeconds:  descRaw.ModifiedMillisec / 1000,
-			Tags:          descRaw.Tags,
-			Properties:    descRaw.Properties,
-		}
+		desc := ConvertDescribeRawToDataObject(descRawTop.Describe.ProjId, descRawTop.Describe)
 		//fmt.Printf("%v\n", desc)
 		files[desc.Id] = desc
 	}
@@ -224,9 +229,10 @@ func DxDescribeBulkObjects(
 }
 
 type ListFolderRequest struct {
-	Folder        string `json:"folder"`
-	Only          string `json:"only"`
-	IncludeHidden bool   `json:"includeHidden"`
+	Folder        string          `json:"folder"`
+	Only          string          `json:"only"`
+	IncludeHidden bool            `json:"includeHidden"`
+	Describe      map[string]bool `json:"describe"`
 }
 
 type ListFolderResponse struct {
@@ -235,87 +241,76 @@ type ListFolderResponse struct {
 }
 
 type ObjInfo struct {
-	Id string `json:"id"`
-}
-
-type DxListFolder struct {
-	objIds  []string
-	subdirs []string
-}
-
-// Issue a /project-xxxx/listFolder API call. Get
-// back a list of object-ids and sub-directories.
-func listFolder(
-	ctx context.Context,
-	httpClient *http.Client,
-	dxEnv *dxda.DXEnvironment,
-	projectId string,
-	dir string) (*DxListFolder, error) {
-
-	request := ListFolderRequest{
-		Folder:        dir,
-		Only:          "all",
-		IncludeHidden: false,
-	}
-	var payload []byte
-	payload, err := json.Marshal(request)
-	if err != nil {
-		return nil, err
-	}
-	dxRequest := fmt.Sprintf("%s/listFolder", projectId)
-	repJs, err := dxda.DxAPI(ctx, httpClient, NumRetriesDefault, dxEnv, dxRequest, string(payload))
-	if err != nil {
-		return nil, err
-	}
-	var reply ListFolderResponse
-	if err := json.Unmarshal(repJs, &reply); err != nil {
-		return nil, err
-	}
-	var objIds []string
-	for _, objInfo := range reply.Objects {
-		objIds = append(objIds, objInfo.Id)
-	}
-	retval := DxListFolder{
-		objIds:  objIds,
-		subdirs: reply.Folders,
-	}
-	return &retval, nil
+	Id       string        `json:"id"`
+	Describe DxDescribeRaw `json:"describe"`
 }
 
 func DxDescribeFolder(
 	ctx context.Context,
 	httpClient *http.Client,
+	dxOptions *Options,
 	dxEnv *dxda.DXEnvironment,
 	projectId string,
 	folder string) (*DxFolder, error) {
-	// The listFolder API call returns a list of object ids and folders.
-	// We could describe the objects right here, but we do that separately.
-	folderInfo, err := listFolder(ctx, httpClient, dxEnv, projectId, folder)
+	request := ListFolderRequest{
+		Folder:        folder,
+		Only:          "all",
+		IncludeHidden: false,
+	}
+	request.Describe = map[string]bool{
+		"id":            true,
+		"name":          true,
+		"state":         true,
+		"archivalState": true,
+		"folder":        true,
+		"created":       true,
+		"modified":      true,
+		"size":          true,
+		"tags":          true,
+		"properties":    true,
+	}
+
+	var payload []byte
+	payload, err := json.Marshal(request)
 	if err != nil {
-		log.Printf("listFolder(%s) error %s", folder, err.Error())
+		log.Printf("listFolder(%s) payload marshalling error %s", folder, err.Error())
 		return nil, err
 	}
+	dxRequest := fmt.Sprintf("%s/listFolder", projectId)
+	reqStartTime := time.Now()
+	repJs, err := dxda.DxAPI(ctx, httpClient, NumRetriesDefault, dxEnv, dxRequest, string(payload))
+	if dxOptions.VerboseLevel > 1 {
+		log.Printf("listFolder(%s) API call duration %s", folder, time.Now().Sub(reqStartTime))
+	}
+	if err != nil {
+		log.Printf("listFolder(%s) request error %s", folder, err.Error())
+		return nil, err
+	}
+	var reply ListFolderResponse
+	if err := json.Unmarshal(repJs, &reply); err != nil {
+		log.Printf("listFolder(%s) response unmarshalling error %s", folder, err.Error())
+		return nil, err
+	}
+	dataObjects := make(map[string]DxDescribeDataObject)
+	for _, oDesc := range reply.Objects {
+		dataObjects[oDesc.Id] = ConvertDescribeRawToDataObject(projectId, oDesc.Describe)
+	}
+
+	var folderInfo *DxFolder
+	folderInfo = &DxFolder{
+		path:        folder,
+		dataObjects: dataObjects,
+		subdirs:     reply.Folders,
+	}
+
 	// limit the number of directory elements
-	numElementsInDir := len(folderInfo.objIds)
+	numElementsInDir := len(folderInfo.dataObjects)
 	if numElementsInDir > MaxDirSize {
 		return nil, fmt.Errorf(
 			"Too many elements (%d) in a directory, the limit is %d",
 			numElementsInDir, MaxDirSize)
 	}
-	dxObjs, err := DxDescribeBulkObjects(ctx, httpClient, dxEnv, projectId, folderInfo.objIds)
-	if err != nil {
-		log.Printf("describeBulkObjects(%v) error %s", folderInfo.objIds, err.Error())
-		return nil, err
-	}
-	dataObjects := make(map[string]DxDescribeDataObject)
-	for _, oDesc := range dxObjs {
-		dataObjects[oDesc.Id] = oDesc
-	}
-	return &DxFolder{
-		path:        folder,
-		dataObjects: dataObjects,
-		subdirs:     folderInfo.subdirs,
-	}, nil
+	return folderInfo, nil
 }
 
 type RequestDescribeProject struct {
