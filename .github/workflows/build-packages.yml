@@ -42,7 +42,7 @@ jobs:
           asset_content_type: binary/octet-stream
   macos:
     name: Macos build
-    runs-on: macos-10.15
+    runs-on: macos-latest
     env:
         GOOS: darwin
         GOARCH: amd64
