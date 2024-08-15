@@ -1378,7 +1378,7 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 		// enable page cache for reads because file contents are immutable
 		// page cache enables shared read-only mmap access
 		op.KeepPageCache = true
-		op.UseDirectIO = false
+		op.UseDirectIO = true
 		// Create an entry in the prefetch table
 		fsys.pgs.CreateStreamEntry(fh.hid, file, *fh.url)
 	} else {
