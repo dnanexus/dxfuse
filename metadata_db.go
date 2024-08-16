@@ -102,8 +102,8 @@ func (mdb *MetadataDb) opClose(oph *OpHandle) {
 
 // Split a path into a parent and child. For example:
 //
-//   /A/B/C  -> "/A/B", "C"
-//   / ->       "", "/"
+//	/A/B/C  -> "/A/B", "C"
+//	/ ->       "", "/"
 func splitPath(fullPath string) (parentDir string, basename string) {
 	if fullPath == "/" {
 		// The anomalous case.
@@ -497,7 +497,6 @@ func (mdb *MetadataDb) lookupDirByInode(oph *OpHandle, parent string, dname stri
 }
 
 // search for a file with a particular inode.
-//
 func (mdb *MetadataDb) LookupByInode(ctx context.Context, oph *OpHandle, inode int64) (Node, bool, error) {
 	// point lookup in the namespace table
 	sqlStmt := fmt.Sprintf(`
@@ -554,7 +553,6 @@ func (mdb *MetadataDb) LookupDirByInode(ctx context.Context, oph *OpHandle, inod
 }
 
 // Find information on a directory by searching on its full name.
-//
 func (mdb *MetadataDb) lookupDirByName(oph *OpHandle, dirname string) (string, string, error) {
 	parentDir, basename := splitPath(dirname)
 	if mdb.options.Verbose {
@@ -700,10 +698,10 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 
 // Create an entry representing one remote file. This has
 // several use cases:
-//  1) Create a singleton file from the manifest
-//  2) Create a new file, and upload it later to the platform
+//  1. Create a singleton file from the manifest
+//  2. Create a new file, and upload it later to the platform
 //     (the file-id will be the empty string "")
-//  3) Discover a file in a directory, which may actually be a link to another file.
+//  3. Discover a file in a directory, which may actually be a link to another file.
 func (mdb *MetadataDb) createDataObject(
 	oph *OpHandle,
 	kind int,
@@ -1398,9 +1396,9 @@ func (mdb *MetadataDb) UpdateFileLocalPath(
 }
 
 // Move a file
-// 1) Can move a file from one directory to another,
-//    or leave it in the same directory
-// 2) Can change the filename.
+//  1. Can move a file from one directory to another,
+//     or leave it in the same directory
+//  2. Can change the filename.
 func (mdb *MetadataDb) MoveFile(
 	ctx context.Context,
 	oph *OpHandle,
@@ -1488,7 +1486,6 @@ func (mdb *MetadataDb) execModifyRecord(oph *OpHandle, r MoveRecord) error {
 //
 // From the shell we issue the command:
 // $ mv A D/K/
-//
 func (mdb *MetadataDb) MoveDir(
 	ctx context.Context,
 	oph *OpHandle,

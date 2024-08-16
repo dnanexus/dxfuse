@@ -1,16 +1,16 @@
 package main
 
 import (
-	"golang.org/x/exp/mmap"
 	"flag"
 	"fmt"
+	"golang.org/x/exp/mmap"
 	"os"
 	"path/filepath"
 )
 
 type Config struct {
 	filename string
-	verbose bool
+	verbose  bool
 }
 
 var progName = filepath.Base(os.Args[0])
@@ -22,10 +22,9 @@ func usage() {
 }
 
 var (
-	help = flag.Bool("help", false, "display program options")
+	help    = flag.Bool("help", false, "display program options")
 	verbose = flag.Bool("verbose", false, "Enable verbose debugging")
 )
-
 
 func parseCmdLineArgs() Config {
 	if *help {
@@ -40,8 +39,8 @@ func parseCmdLineArgs() Config {
 	}
 
 	return Config{
-		filename : flag.Arg(0),
-		verbose : *verbose,
+		filename: flag.Arg(0),
+		verbose:  *verbose,
 	}
 }
 

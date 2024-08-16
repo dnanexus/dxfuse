@@ -194,7 +194,6 @@ type DeadFile struct {
 //
 // Not that not only files have attributes, applets and workflows
 // have them too.
-//
 type DirtyFileInfo struct {
 	Inode         int64
 	dirtyData     bool
@@ -273,7 +272,6 @@ func LogMsg(moduleName string, a string, args ...interface{}) {
 	log.Printf("%s %s: %s", Time2string(now), moduleName, msg)
 }
 
-//
 // 1024   => 1KB
 // 10240  => 10KB
 // 1100000 => 1MB

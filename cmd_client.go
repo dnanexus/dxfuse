@@ -10,7 +10,6 @@ type CmdClient struct {
 }
 
 // Sending commands with a client
-//
 func NewCmdClient() *CmdClient {
 	return &CmdClient{}
 }

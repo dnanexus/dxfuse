@@ -198,8 +198,9 @@ func MakeManifestFromProjectIds(
 
 // return all the parents of a directory.
 // For example:
-//   "/A/B/C"      ["/", "/A", "/A/B"]
-//   "/foo/bar"   ["/", "/foo"]
+//
+//	"/A/B/C"      ["/", "/A", "/A/B"]
+//	"/foo/bar"   ["/", "/foo"]
 func ancestors(p string) []string {
 	if p == "" || p == "/" {
 		return []string{"/"}
@@ -233,9 +234,12 @@ func (d Dirs) Less(i, j int) bool {
 
 // Figure out the directory structure needed to support
 // the leaf nodes. For example, if we need to create:
-//     ["/A/B/C", "/D", "/D/E"]
+//
+//	["/A/B/C", "/D", "/D/E"]
+//
 // then the skeleton is:
-//     ["/A", "/A/B", "/D"]
+//
+//	["/A", "/A/B", "/D"]
 //
 // The root directory is not reported in the skeleton.
 func (m *Manifest) DirSkeleton() ([]string, error) {
