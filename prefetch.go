@@ -521,9 +521,10 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 		// are doing this, because this request could take a long time.
 		data, err := pgs.readData(client, ioReq)
 
-		if pgs.verboseLevel >= 2 {
-			pgs.log("(inode=%d) (io=%d) adding returned data to file", ioReq.inode, ioReq.id)
-		}
+		//if pgs.verboseLevel >= 2 {
+		pgs.log("(inode=%d) (io=%d) adding returned data to file", ioReq.inode, ioReq.id)
+		log.Printf("inode=%d io=%d adding returned data to file", ioReq.inode, ioReq.id)
+		//}
 		pfm := pgs.getAndLockPfm(ioReq.hid)
 		if pfm == nil {
 			// file is not tracked anymore
