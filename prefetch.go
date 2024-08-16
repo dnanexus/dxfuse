@@ -956,7 +956,8 @@ func (pgs *PrefetchGlobalState) isDataInCache(
 		// the cached area.
 		return DATA_OUTSIDE_CACHE
 	}
-	// if endOf is greater than the end of the last iov, then we are outside the cache.
+	// if the end offset is greater than the last byte iov, then we are outside the cache
+	// If access were deemed sequential, we would have prefetched the data
 	if endOfs > pfm.cache.iovecs[last].endByte {
 		if pgs.verboseLevel >= 2 {
 			pfm.log("isDataInCache: endOfs=%d  last=%d  endByte=%d", endOfs, last, pfm.cache.iovecs[last].endByte)
