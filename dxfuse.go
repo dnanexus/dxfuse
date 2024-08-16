@@ -1407,13 +1407,14 @@ func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp,
 	lastByteInFile := fh.size - 1
 	endOfs = MinInt64(lastByteInFile, endOfs)
 	reqSize = endOfs - op.Offset + 1
-	log.Printf("lastByteInFile: %d, endOfs: %d, reqSize: %d", lastByteInFile, endOfs, reqSize)
 
 	// See if the data has already been prefetched.
 	// This call will wait, if a prefetch IO is in progress.
 	len := fsys.pgs.CacheLookup(fh.hid, op.Offset, endOfs, op.Dst)
-	// log received length
-	fsys.log("ReadFile: CacheLookup returned %d", len)
+	// log received length if less than requested
+	if fsys.options.Verbose && int64(len) < reqSize {
+		fsys.log("ReadFile: CacheLookup returned %d, requested %d", len, reqSize)
+	}
 	if len > 0 {
 		op.BytesRead = len
 		return nil
