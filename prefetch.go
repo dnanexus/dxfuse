@@ -736,6 +736,8 @@ func (pgs *PrefetchGlobalState) findCoveredRange(
 
 	first := -1
 	for k, iovec := range pfm.cache.iovecs {
+		// log
+		pfm.log("findCoverRange: iovec[%d] = [%d -- %d]", k, iovec.startByte, iovec.endByte)
 		if iovec.startByte <= startOfs &&
 			iovec.endByte >= startOfs {
 			first = k
@@ -746,6 +748,8 @@ func (pgs *PrefetchGlobalState) findCoveredRange(
 
 	last := -1
 	for k, iovec := range pfm.cache.iovecs {
+		// log
+		pfm.log("findCoverRange: iovec[%d] = [%d -- %d]", k, iovec.startByte, iovec.endByte)
 		if iovec.startByte <= endOfs &&
 			iovec.endByte >= endOfs {
 			last = k
