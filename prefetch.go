@@ -152,6 +152,9 @@ func (iov Iovec) intersectBuffer(startOfs int64, endOfs int64) []byte {
 	bgnByte -= iov.startByte
 	endByte -= iov.startByte
 
+	// log the intersection details
+	log.Printf("Intersection: startByte=%d, endByte=%d\n", bgnByte, endByte)
+
 	return iov.data[bgnByte : endByte+1]
 }
 
@@ -1001,6 +1004,7 @@ func (pgs *PrefetchGlobalState) copyDataFromCache(
 		len := copy(data[cursor:], subBuf)
 		cursor += len
 	}
+	log.Printf("cursor=%d", cursor)
 	return cursor
 }
 
@@ -1015,7 +1019,9 @@ func (pgs *PrefetchGlobalState) getDataFromCache(
 	data []byte) (int, int) {
 	numTries := 3
 	for i := 0; i < numTries; i++ {
+		pfm.log("getDataFromCache: try %d", i)
 		retCode := pgs.isDataInCache(pfm, startOfs, endOfs)
+		pfm.log("getDataFromCache: retCode=%s", cacheCode2string(retCode))
 		if pgs.verboseLevel >= 2 {
 			pfm.log("isDataInCache=%s", cacheCode2string(retCode))
 		}
@@ -1085,6 +1091,7 @@ func (pgs *PrefetchGlobalState) CacheLookup(hid fuseops.HandleID, startOfs int64
 		// ongoing prefetch IO
 		pgs.markAccessedAndMaybeStartPrefetch(pfm, startOfs, endOfs)
 		retCode, len := pgs.getDataFromCache(pfm, startOfs, endOfs, data)
+		log.Printf("PFM_PREFETCH_IN_PROGRESS: retCode=%d len=%d", retCode, len)
 		if retCode == DATA_OUTSIDE_CACHE {
 			// The file is not accessed sequentially.
 			// zero out the cache and start over.

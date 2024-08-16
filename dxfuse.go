@@ -1378,7 +1378,7 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 		// enable page cache for reads because file contents are immutable
 		// page cache enables shared read-only mmap access
 		op.KeepPageCache = true
-		op.UseDirectIO = true
+		op.UseDirectIO = false
 		// Create an entry in the prefetch table
 		fsys.pgs.CreateStreamEntry(fh.hid, file, *fh.url)
 	} else {
@@ -1407,10 +1407,13 @@ func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp,
 	lastByteInFile := fh.size - 1
 	endOfs = MinInt64(lastByteInFile, endOfs)
 	reqSize = endOfs - op.Offset + 1
+	log.Printf("lastByteInFile: %d, endOfs: %d, reqSize: %d", lastByteInFile, endOfs, reqSize)
 
 	// See if the data has already been prefetched.
 	// This call will wait, if a prefetch IO is in progress.
 	len := fsys.pgs.CacheLookup(fh.hid, op.Offset, endOfs, op.Dst)
+	// log received length
+	fsys.log("ReadFile: CacheLookup returned %d", len)
 	if len > 0 {
 		op.BytesRead = len
 		return nil
