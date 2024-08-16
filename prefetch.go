@@ -760,6 +760,7 @@ func (pgs *PrefetchGlobalState) findCoveredRange(
 	}
 	if last == -1 {
 		// The IO ends after the cache.
+		pfm.log("findCoverRange: IO ends after the cache")
 		last = len(pfm.cache.iovecs) - 1
 	}
 
