@@ -891,7 +891,7 @@ func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 		pfm.log("touch: ofs=%d  len=%d  numAccessed=%d",
 			startOfs, endOfs-startOfs, numAccessed)
 	}
-	if numAccessed < (numSlotsInChunk) {
+	if numAccessed < (numSlotsInChunk - 32) {
 		return true
 	}
 	// A sufficient number of the slots were accessed. Start a prefetch for
