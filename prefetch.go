@@ -728,6 +728,8 @@ func (pgs *PrefetchGlobalState) findCoveredRange(
 	pfm *PrefetchFileMetadata,
 	startOfs int64,
 	endOfs int64) (int, int) {
+	// log args
+	pfm.log("findCoverRange: startOfs=%d  endOfs=%d", startOfs, endOfs)
 	// check if there is ANY intersection with cache
 	if endOfs < pfm.cache.startByte ||
 		pfm.cache.endByte < startOfs {
