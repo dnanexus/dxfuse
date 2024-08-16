@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v2
       - uses: actions/setup-go@v2
         with:
-          go-version: '1.16.10'
+          go-version: '1.22.6'
 
       - name: Install & build
         run: |
@@ -33,7 +33,7 @@ jobs:
           python3 python3-pip python3-dev
 
           # Install printing with colors python package
-          python3 -m pip install --upgrade setuptools wheel pyOpenSSL
+          python3 -m pip install --upgrade 'setuptools<71.0.0' wheel
           wget https://raw.githubusercontent.com/dnanexus/dx-toolkit/master/src/python/requirements.txt
           python3 -m pip install -r requirements.txt
 
@@ -63,7 +63,7 @@ jobs:
       - uses: actions/checkout@v2
       - uses: actions/setup-go@v2
         with:
-          go-version: '1.16.10'
+          go-version: '1.22.6'
 
       - name: Install & build
         run: |
@@ -75,7 +75,7 @@ jobs:
           openssl libssl-dev zip unzip libffi-dev \
           python3 python3-pip python3-dev
           # Install printing with colors python package
-          python3 -m pip install --upgrade setuptools wheel pyOpenSSL
+          python3 -m pip install --upgrade 'setuptools<71.0.0' wheel
           wget https://raw.githubusercontent.com/dnanexus/dx-toolkit/master/src/python/requirements.txt
           python3 -m pip install -r requirements.txt
 
@@ -105,7 +105,7 @@ jobs:
       - uses: actions/checkout@v2
       - uses: actions/setup-go@v2
         with:
-          go-version: '1.16.10'
+          go-version: '1.22.6'
       - name: Install & build
         run: |
           set -x

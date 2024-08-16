@@ -148,7 +148,7 @@ func (iov Iovec) intersectBuffer(startOfs int64, endOfs int64) []byte {
 	bgnByte := MaxInt64(iov.startByte, startOfs)
 	endByte := MinInt64(iov.endByte, endOfs)
 
-	// normalize, to offets inside the buffer
+	// normalize, to offsets inside the buffer
 	bgnByte -= iov.startByte
 	endByte -= iov.startByte
 
@@ -724,6 +724,7 @@ func (pgs *PrefetchGlobalState) findCoveredRange(
 	pfm *PrefetchFileMetadata,
 	startOfs int64,
 	endOfs int64) (int, int) {
+
 	// check if there is ANY intersection with cache
 	if endOfs < pfm.cache.startByte ||
 		pfm.cache.endByte < startOfs {
@@ -769,11 +770,15 @@ func (pgs *PrefetchGlobalState) findCoveredRange(
 // For example, if there are currently 2 chunks in cache, and the current IO falls
 // in the second location then:
 // assuming
-//     maxNumIovecs = 2
+//
+//	maxNumIovecs = 2
+//
 // calculate
-//     iovIndex = 1
-//     nReadAheadChunks = iovIndex + maxNumIovecs - nIovec
-//                      =  1       + 2            - 2      = 1
+//
+//	iovIndex = 1
+//	nReadAheadChunks = iovIndex + maxNumIovecs - nIovec
+//	                 =  1       + 2            - 2      = 1
+//
 // If the IO landed on the first location, then iovIndex=0, and we will not issue
 // additional readahead IOs.
 func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIndex int) {
@@ -951,6 +956,14 @@ func (pgs *PrefetchGlobalState) isDataInCache(
 		// the cached area.
 		return DATA_OUTSIDE_CACHE
 	}
+	// if the end offset is greater than the last byte iov, then we are outside the cache
+	// If access were deemed sequential, we would have prefetched the data
+	if endOfs > pfm.cache.iovecs[last].endByte {
+		if pgs.verboseLevel >= 2 {
+			pfm.log("isDataInCache: endOfs=%d  last=%d  endByte=%d", endOfs, last, pfm.cache.iovecs[last].endByte)
+		}
+		return DATA_OUTSIDE_CACHE
+	}
 
 	for i := first; i <= last; i++ {
 		iov := pfm.cache.iovecs[i]
@@ -1044,7 +1057,6 @@ func (pgs *PrefetchGlobalState) getDataFromCache(
 
 // This is done on behalf of a user read request. If this range has been prefetched, copy the data.
 // Return how much data was copied. Return zero length if the data isn't in cache.
-//
 func (pgs *PrefetchGlobalState) CacheLookup(hid fuseops.HandleID, startOfs int64, endOfs int64, data []byte) int {
 	pfm := pgs.getAndLockPfm(hid)
 	if pfm == nil {

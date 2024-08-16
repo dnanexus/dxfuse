@@ -720,7 +720,6 @@ func (fsys *Filesys) RmDir(ctx context.Context, op *fuseops.RmDirOp) error {
 //
 // Note: We want to have a guarantied O(1) algorithm, otherwise, we would use a
 // randomized approach.
-//
 func (fsys *Filesys) insertIntoFileHandleTable(fh *FileHandle) fuseops.HandleID {
 	fsys.fhCounter++
 	hid := fuseops.HandleID(fsys.fhCounter)
@@ -738,7 +737,6 @@ func (fsys *Filesys) insertIntoDirHandleTable(dh *DirHandle) fuseops.HandleID {
 }
 
 // A CreateRequest asks to create and open a file (not a directory).
-//
 func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) error {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
@@ -1258,7 +1256,6 @@ func (fsys *Filesys) ReleaseDirHandle(ctx context.Context, op *fuseops.ReleaseDi
 
 // ===
 // File handling
-//
 func (fsys *Filesys) openRegularFile(
 	ctx context.Context,
 	oph *OpHandle,
@@ -1317,7 +1314,6 @@ func (fsys *Filesys) openRegularFile(
 }
 
 // Note: What happens if the file is opened for writing?
-//
 func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
@@ -1415,6 +1411,10 @@ func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp,
 	// See if the data has already been prefetched.
 	// This call will wait, if a prefetch IO is in progress.
 	len := fsys.pgs.CacheLookup(fh.hid, op.Offset, endOfs, op.Dst)
+	// log received length if less than requested
+	if fsys.options.Verbose && int64(len) < reqSize {
+		fsys.log("ReadFile: CacheLookup returned %d, requested %d", len, reqSize)
+	}
 	if len > 0 {
 		op.BytesRead = len
 		return nil
