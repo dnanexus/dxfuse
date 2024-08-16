@@ -518,10 +518,9 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 		// are doing this, because this request could take a long time.
 		data, err := pgs.readData(client, ioReq)
 
-		//if pgs.verboseLevel >= 2 {
-		pgs.log("(inode=%d) (io=%d) adding returned data to file", ioReq.inode, ioReq.id)
-		log.Printf("inode=%d io=%d adding returned data to file", ioReq.inode, ioReq.id)
-		//}
+		if pgs.verboseLevel >= 2 {
+			pgs.log("(inode=%d) (io=%d) adding returned data to file", ioReq.inode, ioReq.id)
+		}
 		pfm := pgs.getAndLockPfm(ioReq.hid)
 		if pfm == nil {
 			// file is not tracked anymore
@@ -725,8 +724,7 @@ func (pgs *PrefetchGlobalState) findCoveredRange(
 	pfm *PrefetchFileMetadata,
 	startOfs int64,
 	endOfs int64) (int, int) {
-	// log args
-	pfm.log("findCoverRange: startOfs=%d  endOfs=%d", startOfs, endOfs)
+
 	// check if there is ANY intersection with cache
 	if endOfs < pfm.cache.startByte ||
 		pfm.cache.endByte < startOfs {
@@ -735,8 +733,6 @@ func (pgs *PrefetchGlobalState) findCoveredRange(
 
 	first := -1
 	for k, iovec := range pfm.cache.iovecs {
-		// log
-		pfm.log("findCoverRange: iovec[%d] = [%d -- %d]", k, iovec.startByte, iovec.endByte)
 		if iovec.startByte <= startOfs &&
 			iovec.endByte >= startOfs {
 			first = k
@@ -747,8 +743,6 @@ func (pgs *PrefetchGlobalState) findCoveredRange(
 
 	last := -1
 	for k, iovec := range pfm.cache.iovecs {
-		// log
-		pfm.log("findCoverRange: iovec[%d] = [%d -- %d]", k, iovec.startByte, iovec.endByte)
 		if iovec.startByte <= endOfs &&
 			iovec.endByte >= endOfs {
 			last = k
@@ -757,7 +751,6 @@ func (pgs *PrefetchGlobalState) findCoveredRange(
 	}
 	if last == -1 {
 		// The IO ends after the cache.
-		pfm.log("findCoverRange: IO ends after the cache")
 		last = len(pfm.cache.iovecs) - 1
 	}
 
@@ -921,14 +914,10 @@ func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 	}
 
 	if pfm.state == PFM_PREFETCH_IN_PROGRESS {
-		//log
-		pfm.log("moveCacheWindow, last=%d", last)
 		pgs.moveCacheWindow(pfm, last)
 
 		// Have we reached the end of the file?
 		if pfm.cache.endByte >= pfm.size-1 {
-			// log
-			pfm.log("reached EOF: pfm.cache.endByte=%d  pfm.size=%d", pfm.cache.endByte, pfm.size)
 			pfm.state = PFM_EOF
 		}
 	}
