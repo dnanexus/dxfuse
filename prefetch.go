@@ -148,12 +148,9 @@ func (iov Iovec) intersectBuffer(startOfs int64, endOfs int64) []byte {
 	bgnByte := MaxInt64(iov.startByte, startOfs)
 	endByte := MinInt64(iov.endByte, endOfs)
 
-	// normalize, to offets inside the buffer
+	// normalize, to offsets inside the buffer
 	bgnByte -= iov.startByte
 	endByte -= iov.startByte
-
-	// log the intersection details
-	log.Printf("Intersection: startByte=%d, endByte=%d\n", bgnByte, endByte)
 
 	return iov.data[bgnByte : endByte+1]
 }
@@ -972,7 +969,9 @@ func (pgs *PrefetchGlobalState) isDataInCache(
 	}
 	// if endOf is greater than the end of the last iov, then we are outside the cache.
 	if endOfs > pfm.cache.iovecs[last].endByte {
-		pfm.log("isDataInCache: endOfs=%d  last=%d  endByte=%d", endOfs, last, pfm.cache.iovecs[last].endByte)
+		if pgs.verboseLevel >= 2 {
+			pfm.log("isDataInCache: endOfs=%d  last=%d  endByte=%d", endOfs, last, pfm.cache.iovecs[last].endByte)
+		}
 		return DATA_OUTSIDE_CACHE
 	}
 
@@ -1021,7 +1020,6 @@ func (pgs *PrefetchGlobalState) copyDataFromCache(
 		len := copy(data[cursor:], subBuf)
 		cursor += len
 	}
-	log.Printf("cursor=%d", cursor)
 	return cursor
 }
 
@@ -1036,9 +1034,7 @@ func (pgs *PrefetchGlobalState) getDataFromCache(
 	data []byte) (int, int) {
 	numTries := 3
 	for i := 0; i < numTries; i++ {
-		pfm.log("getDataFromCache: try %d", i)
 		retCode := pgs.isDataInCache(pfm, startOfs, endOfs)
-		pfm.log("getDataFromCache: retCode=%s", cacheCode2string(retCode))
 		if pgs.verboseLevel >= 2 {
 			pfm.log("isDataInCache=%s", cacheCode2string(retCode))
 		}
@@ -1088,14 +1084,12 @@ func (pgs *PrefetchGlobalState) CacheLookup(hid fuseops.HandleID, startOfs int64
 
 	switch pfm.state {
 	case PFM_NIL:
-		log.Printf("PFM_NIL")
 		pgs.firstAccessToStream(pfm, startOfs)
 		pfm.state = PFM_DETECT_SEQ
 		pgs.markAccessedAndMaybeStartPrefetch(pfm, startOfs, endOfs)
 		return 0
 
 	case PFM_DETECT_SEQ:
-		log.Printf("PFM_DETECT_SEQ")
 		// No data is cached. Only detecting if there is sequential access.
 		ok := pgs.markAccessedAndMaybeStartPrefetch(pfm, startOfs, endOfs)
 		if !ok {
@@ -1104,11 +1098,9 @@ func (pgs *PrefetchGlobalState) CacheLookup(hid fuseops.HandleID, startOfs int64
 		return 0
 
 	case PFM_PREFETCH_IN_PROGRESS:
-		log.Printf("PFM_PREFETCH_IN_PROGRESS")
 		// ongoing prefetch IO
 		pgs.markAccessedAndMaybeStartPrefetch(pfm, startOfs, endOfs)
 		retCode, len := pgs.getDataFromCache(pfm, startOfs, endOfs, data)
-		log.Printf("PFM_PREFETCH_IN_PROGRESS: retCode=%d len=%d", retCode, len)
 		if retCode == DATA_OUTSIDE_CACHE {
 			// The file is not accessed sequentially.
 			// zero out the cache and start over.
@@ -1117,11 +1109,9 @@ func (pgs *PrefetchGlobalState) CacheLookup(hid fuseops.HandleID, startOfs int64
 		return len
 
 	case PFM_EOF:
-		log.Printf("PFM_EOF")
 		// don't issue any more prefetch IOs, we have reached the end of the file
 		retCode, len := pgs.getDataFromCache(pfm, startOfs, endOfs, data)
 		if retCode == DATA_OUTSIDE_CACHE {
-			log.Printf("PFM_EOF: DATA_OUTSIDE_CACHE")
 			// The file is being accessed again, perhaps reading from a different region
 			// reset the cache and start over
 			pgs.resetPfm(pfm)
