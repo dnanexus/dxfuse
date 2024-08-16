@@ -917,10 +917,14 @@ func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 	}
 
 	if pfm.state == PFM_PREFETCH_IN_PROGRESS {
+		//log
+		pfm.log("moveCacheWindow, last=%d", last)
 		pgs.moveCacheWindow(pfm, last)
 
 		// Have we reached the end of the file?
 		if pfm.cache.endByte >= pfm.size-1 {
+			// log
+			pfm.log("reached EOF: pfm.cache.endByte=%d  pfm.size=%d", pfm.cache.endByte, pfm.size)
 			pfm.state = PFM_EOF
 		}
 	}
