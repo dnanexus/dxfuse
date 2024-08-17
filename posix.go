@@ -10,27 +10,26 @@ import (
 
 // Try to fix a DNAx directory, so it will adhere to POSIX.
 //
-// 1. If several files share the same name, make them unique by moving into an
-//    extra subdirectory. For example:
+//  1. If several files share the same name, make them unique by moving into an
+//     extra subdirectory. For example:
 //
-//    src name file-id      new name
-//    X.txt    file-0001    X.txt
-//    X.txt    file-0005    1/X.txt
-//    X.txt    file-0012    2/X.txt
+//     src name file-id      new name
+//     X.txt    file-0001    X.txt
+//     X.txt    file-0005    1/X.txt
+//     X.txt    file-0012    2/X.txt
 //
 // 2. DNAx files can include slashes. Drop these files, with a put note in the log.
 //
-// 3. A directory and a file can have the same name. For example:
-//    ROOT/
-//         zoo/      sub-directory
-//         zoo       regular file
+//  3. A directory and a file can have the same name. For example:
+//     ROOT/
+//     zoo/      sub-directory
+//     zoo       regular file
 //
-//    Is converted into:
-//    ROOT
-//         zoo/      sub-directory
-//         1/        faux sub-directory
-//           zoo     regular file
-//
+//     Is converted into:
+//     ROOT
+//     zoo/      sub-directory
+//     1/        faux sub-directory
+//     zoo     regular file
 type PosixDir struct {
 	path        string // entire directory path
 	dataObjects []DxDescribeDataObject
@@ -103,7 +102,6 @@ func (px *Posix) pickFauxDirNames(subdirs []string, uniqueFileNames []string, nu
 }
 
 // Find all the unique file names.
-//
 func (px *Posix) uniqueFileNames(dxObjs []DxDescribeDataObject) []string {
 	usedNames := make(map[string]bool)
 

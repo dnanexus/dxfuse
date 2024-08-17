@@ -973,7 +973,7 @@ func (mdb *MetadataDb) directoryReadFromDNAx(
 	}
 
 	// describe all (closed) files
-	dxDir, err := DxDescribeFolder(ctx, oph.httpClient, &mdb.options, &mdb.dxEnv, projId, projFolder)
+	dxDir, err := DxDescribeFolder(ctx, oph.httpClient, &mdb.dxEnv, projId, projFolder)
 	if err != nil {
 		fmt.Printf(err.Error())
 		fmt.Printf("reading directory frmo DNAx error")

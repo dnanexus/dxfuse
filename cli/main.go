@@ -104,7 +104,7 @@ func getUser() user.User {
 }
 
 // Mount the filesystem:
-//  - setup the debug log to the FUSE kernel log (I think)
+//   - setup the debug log to the FUSE kernel log (I think)
 func fsDaemon(
 	mountpoint string,
 	dxEnv dxda.DXEnvironment,
@@ -419,7 +419,6 @@ func buildDaemonCommandLine(cfg Config, fullManifestPath string) []string {
 }
 
 // We are in the parent process.
-//
 func startDaemonAndWaitForInitializationToComplete(cfg Config, logFile string) {
 	manifest, err := parseManifest(cfg)
 	if err != nil {

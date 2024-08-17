@@ -357,9 +357,9 @@ type ReplyRename struct {
 	Id string `json:"id"`
 }
 
-//  API method: /class-xxxx/rename
+// API method: /class-xxxx/rename
 //
-//  rename a data object
+// rename a data object
 func (ops *DxOps) DxRename(
 	ctx context.Context,
 	httpClient *http.Client,
@@ -404,7 +404,7 @@ type ReplyMove struct {
 	Id string `json:"id"`
 }
 
-//  API method: /class-xxxx/move
+//	API method: /class-xxxx/move
 //
 // Moves the specified data objects and folders to a destination folder in the same container.
 func (ops *DxOps) DxMove(

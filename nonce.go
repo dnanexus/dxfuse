@@ -34,7 +34,6 @@ func NewNonce() *Nonce {
 }
 
 // Create a random nonce, no longer than 128 bytes
-//
 func (n *Nonce) String() string {
 	b := make([]byte, nonceLen)
 
