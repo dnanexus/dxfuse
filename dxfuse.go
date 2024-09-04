@@ -1239,7 +1239,6 @@ func (fsys *Filesys) ReadDir(ctx context.Context, op *fuseops.ReadDirOp) (err er
 	}
 	var i int
 	op.BytesRead = 0
-	start := time.Now()
 	for i = index; i < len(dh.entries); i++ {
 		n := fuseutil.WriteDirent(op.Dst[op.BytesRead:], dh.entries[i])
 		if n == 0 {
@@ -1247,13 +1246,11 @@ func (fsys *Filesys) ReadDir(ctx context.Context, op *fuseops.ReadDirOp) (err er
 		}
 		op.BytesRead += n
 	}
-	end := time.Now()
 	// log execution time
-	fsys.log("ReadDir took %v", end.Sub(start))
-	if fsys.options.Verbose {
-		fsys.log("ReadDir  offset=%d  bytesRead=%d nEntriesReported=%d",
-			index, op.BytesRead, i)
-	}
+
+	fsys.log("ReadDir  offset=%d  bytesRead=%d nEntriesReported=%d",
+		index, op.BytesRead, i)
+
 	return
 }
 
