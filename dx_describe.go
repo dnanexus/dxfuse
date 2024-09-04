@@ -252,6 +252,7 @@ func DxDescribeFolder(
 	dxEnv *dxda.DXEnvironment,
 	projectId string,
 	folder string) (*DxFolder, error) {
+	startTime := time.Now()
 	request := ListFolderRequest{
 		Folder:        folder,
 		Only:          "all",
@@ -282,19 +283,28 @@ func DxDescribeFolder(
 	if dxOptions.VerboseLevel > 1 {
 		log.Printf("listFolder(%s) API call duration %s", folder, time.Now().Sub(reqStartTime))
 	}
+	elapsedTime := time.Since(startTime) // Calculate the elapsed time
+	log.Printf("DxDescribeFolder function took %s", elapsedTime)
+
 	if err != nil {
 		log.Printf("listFolder(%s) request error %s", folder, err.Error())
 		return nil, err
 	}
+	startTime = time.Now()
 	var reply ListFolderResponse
 	if err := json.Unmarshal(repJs, &reply); err != nil {
 		log.Printf("listFolder(%s) response unmarshalling error %s", folder, err.Error())
 		return nil, err
 	}
+	elapsedTime = time.Since(startTime) // Calculate the elapsed time
+	log.Printf("unmarshal function took %s", elapsedTime)
+	startTime = time.Now()
 	dataObjects := make(map[string]DxDescribeDataObject)
 	for _, oDesc := range reply.Objects {
 		dataObjects[oDesc.Id] = ConvertDescribeRawToDataObject(projectId, oDesc.Describe)
 	}
+	elapsedTime = time.Since(startTime) // Calculate the elapsed time
+	log.Printf("Obj conversion function took %s", elapsedTime)
 
 	var folderInfo *DxFolder
 	folderInfo = &DxFolder{

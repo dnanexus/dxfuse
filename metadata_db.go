@@ -617,7 +617,7 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 	if mdb.options.Verbose {
 		mdb.log("directoryReadAllEntries %s", dirFullName)
 	}
-
+	startTime := time.Now()
 	// Extract information for all the subdirectories
 	sqlStmt := `SELECT directories.inode, directories.proj_id, namespace.name, directories.ctime, directories.mtime, directories.mode
                         FROM directories
@@ -625,11 +625,13 @@ func (mdb *MetadataDb) directoryReadAllEntries(
                         ON directories.inode = namespace.inode
 			WHERE namespace.parent = $1 AND namespace.obj_type = $2`
 	rows, err := oph.txn.Query(sqlStmt, dirFullName, nsDirType)
+	elapsedTime := time.Since(startTime)
+	mdb.log("directoryReadAllEntries: subdirs query took %s", elapsedTime)
 	if err != nil {
 		mdb.log("Error in directories query, err=%s", err.Error())
 		return nil, nil, oph.RecordError(err)
 	}
-
+	startTime = time.Now()
 	subdirs := make(map[string]Dir)
 	for rows.Next() {
 		var inode int64
@@ -651,20 +653,24 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 		}
 	}
 	rows.Close()
+	elapsedTime = time.Since(startTime)
+	mdb.log("directoryReadAllEntries: subdirs processing took %s", elapsedTime)
 
 	// Extract information for all the files
-
+	startTime = time.Now()
 	sqlStmt = `SELECT dos.kind, dos.id, dos.proj_id, dos.state, dos.archival_state, dos.inode, dos.size, dos.ctime, dos.mtime, dos.mode, dos.tags, dos.properties, dos.dirty_data, dos.dirty_metadata, namespace.name
                         FROM data_objects as dos
                         JOIN namespace
                         ON dos.inode = namespace.inode
 			WHERE namespace.parent = $1 AND namespace.obj_type = $2`
 	rows, err = oph.txn.Query(sqlStmt, dirFullName, nsDataObjType)
+	elapsedTime = time.Since(startTime)
+	mdb.log("directoryReadAllEntries: files query took %s", elapsedTime)
 	if err != nil {
 		mdb.log("Error in data object query, err=%s", err.Error())
 		return nil, nil, oph.RecordError(err)
 	}
-
+	startTime = time.Now()
 	// Find the files in the directory
 	files := make(map[string]File)
 	for rows.Next() {
@@ -690,6 +696,8 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 
 		files[f.Name] = f
 	}
+	elapsedTime = time.Since(startTime)
+	mdb.log("directoryReadAllEntries: files processing took %s", elapsedTime)
 
 	//mdb.log("  #files=%d", len(files))
 	//mdb.log("]")
@@ -973,12 +981,15 @@ func (mdb *MetadataDb) directoryReadFromDNAx(
 	}
 
 	// describe all (closed) files
+	startTime := time.Now()
 	dxDir, err := DxDescribeFolder(ctx, oph.httpClient, &mdb.options, &mdb.dxEnv, projId, projFolder)
 	if err != nil {
 		fmt.Printf(err.Error())
 		fmt.Printf("reading directory frmo DNAx error")
 		return err
 	}
+	elapsedTime := time.Since(startTime)
+	mdb.log("directoryReadFromDNAx: describe folder %s:%s took %s", projId, projFolder, elapsedTime)
 
 	if mdb.options.Verbose {
 		mdb.log("read dir from DNAx #data_objects=%d #subdirs=%d",
@@ -991,22 +1002,29 @@ func (mdb *MetadataDb) directoryReadFromDNAx(
 	// - The directory modification time is the maximum across all file modifications.
 	ctimeApprox := ctime
 	mtimeApprox := mtime
+	startTime = time.Now()
 	for _, f := range dxDir.dataObjects {
 		ctimeApprox = MinInt64(ctimeApprox, f.CtimeSeconds)
 		mtimeApprox = MaxInt64(mtimeApprox, f.MtimeSeconds)
 	}
+	elapsedTime = time.Since(startTime)
+	mdb.log("directoryReadFromDNAx: ctime/mtime approx took %s", elapsedTime)
 
 	// The DNAx storage system does not adhere to POSIX. Try
 	// to fix the elements in the directory, so they would comply. This
 	// comes at the cost of renaming the original files, which can
 	// very well mislead the user.
+	startTime = time.Now()
 	px := NewPosix(mdb.options)
 	posixDir, err := px.FixDir(dxDir)
 	if err != nil {
 		return err
 	}
+	elapsedTime = time.Since(startTime)
+	mdb.log("directoryReadFromDNAx: fixDir took %s", elapsedTime)
 
 	// build the top level directory
+	startTime = time.Now()
 	err = mdb.populateDir(
 		oph, dinode,
 		projId, projFolder,
@@ -1016,6 +1034,8 @@ func (mdb *MetadataDb) directoryReadFromDNAx(
 		mdb.log("directoryReadFromDNAx: Error populating directory, err=%s", err.Error())
 		return oph.RecordError(err)
 	}
+	elapsedTime = time.Since(startTime)
+	mdb.log("directoryReadFromDNAx: populateDir took %s", elapsedTime)
 
 	// create the faux sub directories. These have no additional depth, and are fully
 	// populated. They contains all the files with multiple versions.
@@ -1057,6 +1077,7 @@ func (mdb *MetadataDb) ReadDirAll(ctx context.Context, oph *OpHandle, dir *Dir) 
 	}
 
 	if !dir.Populated {
+		timeStart := time.Now()
 		err := mdb.directoryReadFromDNAx(
 			ctx,
 			oph,
@@ -1070,6 +1091,8 @@ func (mdb *MetadataDb) ReadDirAll(ctx context.Context, oph *OpHandle, dir *Dir) 
 			return nil, nil, err
 		}
 		dir.Populated = true
+		elapsedTime := time.Since(timeStart)
+		mdb.log("ReadDirAll: directoryReadFromDNAx took %s", elapsedTime)
 	}
 
 	// Now that the directory is in the database, we can read it with a local query.

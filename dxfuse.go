@@ -43,7 +43,7 @@ type Filesys struct {
 	options Options
 
 	// Lock for protecting shared access to the database
-	mutex *sync.Mutex
+	mutex *sync.RWMutex
 
 	// a pool of http clients, for short requests, such as file creation,
 	// or file describe.
@@ -152,7 +152,7 @@ func NewDxfuse(
 	fsys := &Filesys{
 		dxEnv:          dxEnv,
 		options:        options,
-		mutex:          &sync.Mutex{},
+		mutex:          &sync.RWMutex{},
 		httpClientPool: httpIoPool,
 		ops:            NewDxOps(dxEnv, options),
 		fhCounter:      1,
@@ -383,8 +383,8 @@ func (fsys *Filesys) calcExpirationTime(a fuseops.InodeAttributes) time.Time {
 }
 
 func (fsys *Filesys) LookUpInode(ctx context.Context, op *fuseops.LookUpInodeOp) error {
-	fsys.mutex.Lock()
-	defer fsys.mutex.Unlock()
+	fsys.mutex.RLock()
+	defer fsys.mutex.RUnlock()
 	oph := fsys.opOpen()
 	defer fsys.opClose(oph)
 
@@ -720,7 +720,6 @@ func (fsys *Filesys) RmDir(ctx context.Context, op *fuseops.RmDirOp) error {
 //
 // Note: We want to have a guarantied O(1) algorithm, otherwise, we would use a
 // randomized approach.
-//
 func (fsys *Filesys) insertIntoFileHandleTable(fh *FileHandle) fuseops.HandleID {
 	fsys.fhCounter++
 	hid := fuseops.HandleID(fsys.fhCounter)
@@ -738,7 +737,6 @@ func (fsys *Filesys) insertIntoDirHandleTable(dh *DirHandle) fuseops.HandleID {
 }
 
 // A CreateRequest asks to create and open a file (not a directory).
-//
 func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) error {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
@@ -1122,12 +1120,14 @@ func (fsys *Filesys) readEntireDir(ctx context.Context, oph *OpHandle, dir Dir) 
 	if fsys.options.Verbose {
 		fsys.log("ReadDirAll dir=(%s)\n", dir.FullPath)
 	}
-
+	startTime := time.Now()
 	dxObjs, subdirs, err := fsys.mdb.ReadDirAll(ctx, oph, &dir)
 	if err != nil {
 		fsys.log("database error in read entire dir %s", err.Error())
 		return nil, fuse.EIO
 	}
+	elapsedTime := time.Since(startTime)
+	fsys.log("mdb.ReadDirAll took %s", elapsedTime)
 
 	if fsys.options.Verbose {
 		fsys.log("%d data objects, %d subdirs", len(dxObjs), len(subdirs))
@@ -1136,6 +1136,7 @@ func (fsys *Filesys) readEntireDir(ctx context.Context, oph *OpHandle, dir Dir) 
 	var dEntries []fuseutil.Dirent
 
 	// Add entries for Unix files, representing DNAx data objects
+	startTime = time.Now()
 	for oname, oDesc := range dxObjs {
 		var dType fuseutil.DirentType
 		switch oDesc.Kind {
@@ -1154,7 +1155,10 @@ func (fsys *Filesys) readEntireDir(ctx context.Context, oph *OpHandle, dir Dir) 
 		}
 		dEntries = append(dEntries, dirEnt)
 	}
+	elapsedTime = time.Since(startTime)
+	fsys.log("adding data objects took %s", elapsedTime)
 
+	startTime = time.Now()
 	// Add entries for subdirs
 	for subDirName, dirDesc := range subdirs {
 		dirEnt := fuseutil.Dirent{
@@ -1165,9 +1169,13 @@ func (fsys *Filesys) readEntireDir(ctx context.Context, oph *OpHandle, dir Dir) 
 		}
 		dEntries = append(dEntries, dirEnt)
 	}
-
+	elapsedTime = time.Since(startTime)
+	fsys.log("adding subdirs took %s", elapsedTime)
 	// directory entries need to be sorted
+	startTime = time.Now()
 	sort.Slice(dEntries, func(i, j int) bool { return dEntries[i].Name < dEntries[j].Name })
+	elapsedTime = time.Since(startTime)
+	fsys.log("sorting dEntries took %s", elapsedTime)
 	if fsys.options.Verbose {
 		fsys.log("dentries=%v", dEntries)
 	}
@@ -1176,9 +1184,12 @@ func (fsys *Filesys) readEntireDir(ctx context.Context, oph *OpHandle, dir Dir) 
 	// operation reorders the entries.
 	//
 	// The offsets are one-based, due to how OpenDir works.
+	startTime = time.Now()
 	for i := 0; i < len(dEntries); i++ {
 		dEntries[i].Offset = fuseops.DirOffset(i) + 1
 	}
+	elapsedTime = time.Since(startTime)
+	fsys.log("fixing offsets took %s", elapsedTime)
 
 	return dEntries, nil
 }
@@ -1203,25 +1214,31 @@ func (fsys *Filesys) OpenDir(ctx context.Context, op *fuseops.OpenDirOp) error {
 
 	// Read the entire directory into memory, and sort
 	// the entries properly.
+	startTime := time.Now()
 	dentries, err := fsys.readEntireDir(ctx, oph, dir)
 	if err != nil {
 		return err
 	}
+	elapsedTime := time.Since(startTime)
+	fsys.log("fsys.readEntireDir took %s", elapsedTime)
 
 	dh := &DirHandle{
 		d:       dir,
 		entries: dentries,
 	}
+	startTime = time.Now()
 	op.Handle = fsys.insertIntoDirHandleTable(dh)
+	elapsedTime = time.Since(startTime)
+	fsys.log("insertIntoDirHandleTable took %s", elapsedTime)
 	return nil
 }
 
 // ReadDir lists files into readdirop
-func (fsys *Filesys) ReadDir(ctx context.Context, op *fuseops.ReadDirOp) (err error) {
-	fsys.mutex.Lock()
-	defer fsys.mutex.Unlock()
 
+func (fsys *Filesys) ReadDir(ctx context.Context, op *fuseops.ReadDirOp) (err error) {
+	fsys.mutex.RLock()
 	dh, ok := fsys.dhTable[op.Handle]
+	defer fsys.mutex.RUnlock()
 	if !ok {
 		return fuse.EIO
 	}
@@ -1233,13 +1250,27 @@ func (fsys *Filesys) ReadDir(ctx context.Context, op *fuseops.ReadDirOp) (err er
 	}
 	var i int
 	op.BytesRead = 0
+	//startTime := time.Now()
+	// What does this code do?
+	// It copies the directory entries into the buffer, starting at index.
+	// The buffer is a slice of bytes, and we need to convert the directory
+	// entries into bytes. We use the fuseutil.WriteDirent function to do this.
+	// The function returns the number of bytes written, and we use this to
+	// update the offset into the buffer.
+	count := 0
 	for i = index; i < len(dh.entries); i++ {
+		// log dh.entries[i]
+		//fsys.log("%v", dh.entries[i])
 		n := fuseutil.WriteDirent(op.Dst[op.BytesRead:], dh.entries[i])
 		if n == 0 {
 			break
 		}
 		op.BytesRead += n
+		count++
 	}
+	fsys.log("ReadDir count=%d", count)
+	//elapsedTime := time.Since(startTime)
+	//fsys.log("ReadDir WriteDirent took %s", elapsedTime)
 	if fsys.options.Verbose {
 		fsys.log("ReadDir  offset=%d  bytesRead=%d nEntriesReported=%d",
 			index, op.BytesRead, i)
@@ -1258,7 +1289,6 @@ func (fsys *Filesys) ReleaseDirHandle(ctx context.Context, op *fuseops.ReleaseDi
 
 // ===
 // File handling
-//
 func (fsys *Filesys) openRegularFile(
 	ctx context.Context,
 	oph *OpHandle,
@@ -1317,7 +1347,6 @@ func (fsys *Filesys) openRegularFile(
 }
 
 // Note: What happens if the file is opened for writing?
-//
 func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
