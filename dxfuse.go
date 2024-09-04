@@ -1120,10 +1120,7 @@ func (fsys *Filesys) readEntireDir(ctx context.Context, oph *OpHandle, dir Dir) 
 	if fsys.options.Verbose {
 		fsys.log("ReadDirAll dir=(%s)\n", dir.FullPath)
 	}
-	start := time.Now()
 	dxObjs, subdirs, err := fsys.mdb.ReadDirAll(ctx, oph, &dir)
-	end := time.Now()
-	fsys.log("ReadDirAll took %v", end.Sub(start))
 	if err != nil {
 		fsys.log("database error in read entire dir %s", err.Error())
 		return nil, fuse.EIO
@@ -1186,7 +1183,6 @@ func (fsys *Filesys) readEntireDir(ctx context.Context, oph *OpHandle, dir Dir) 
 // OpenDir return nil error allows open dir
 // COMMON for drivers
 func (fsys *Filesys) OpenDir(ctx context.Context, op *fuseops.OpenDirOp) error {
-	openStart := time.Now()
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
 	oph := fsys.opOpen()
@@ -1204,10 +1200,7 @@ func (fsys *Filesys) OpenDir(ctx context.Context, op *fuseops.OpenDirOp) error {
 
 	// Read the entire directory into memory, and sort
 	// the entries properly.
-	start := time.Now()
 	dentries, err := fsys.readEntireDir(ctx, oph, dir)
-	end := time.Now()
-	fsys.log("ReadEntireDir took %v", end.Sub(start))
 	if err != nil {
 		return err
 	}
@@ -1217,8 +1210,6 @@ func (fsys *Filesys) OpenDir(ctx context.Context, op *fuseops.OpenDirOp) error {
 		entries: dentries,
 	}
 	op.Handle = fsys.insertIntoDirHandleTable(dh)
-	openEnd := time.Now()
-	fsys.log("OpenDir took %v", openEnd.Sub(openStart))
 	return nil
 }
 
@@ -1246,10 +1237,6 @@ func (fsys *Filesys) ReadDir(ctx context.Context, op *fuseops.ReadDirOp) (err er
 		}
 		op.BytesRead += n
 	}
-	// log execution time
-
-	fsys.log("ReadDir  offset=%d  bytesRead=%d nEntriesReported=%d",
-		index, op.BytesRead, i)
 
 	return
 }
@@ -1920,7 +1907,8 @@ func (fsys *Filesys) getXattrFill(op *fuseops.GetXattrOp, val_str string) error 
 }
 
 func (fsys *Filesys) GetXattr(ctx context.Context, op *fuseops.GetXattrOp) error {
-	if op.Name == "security.capability" {
+	// we don't support these, so return ENOATTR
+	if op.Name == "security.capability" || op.Name == "security.selinux" || op.Name == "system.posix_acl_access" {
 		return fuse.ENOATTR
 	}
 	fsys.mutex.Lock()
