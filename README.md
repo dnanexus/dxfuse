@@ -2,7 +2,7 @@
 
 A filesystem that allows users access to the DNAnexus storage system.
 
-**NOTE: This project is in beta . It's used on DNAnexus cloud workers, and may also be run on a Linux or macOS machine with a network connection and a DNAnexus account.**
+**NOTE: This project is designed for read-only use in the DNAnexus worker environment. Any other environment or use such as -limitedWrite can be considered in beta**
 
 The code uses the [FUSE](https://github.com/jacobsa/fuse)
 library, implemented in [golang](https://golang.org). The DNAnexus
