@@ -2,6 +2,8 @@
 
 A filesystem that allows users access to the DNAnexus storage system.
 
+**For support issues please contact support@dnanexus.com**
+
 **NOTE: This project is designed for read-only use in the DNAnexus worker environment. Use in any other environment (such as macOS or Linux clients) or use of `-limitedWrite` is in beta**
 
 The code uses the [FUSE](https://github.com/jacobsa/fuse)
