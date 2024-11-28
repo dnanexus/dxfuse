@@ -27,7 +27,7 @@ jobs:
           go build -o dxfuse-linux cli/main.go
           chmod +x dxfuse-linux
       - name: Upload artifact
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: dxfuse-linux
           path: ./dxfuse-linux
@@ -58,7 +58,7 @@ jobs:
           go build -o dxfuse-macos cli/main.go
           chmod +x dxfuse-macos
       - name: Upload artifact
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: dxfuse-macos
           path: ./dxfuse-macos
