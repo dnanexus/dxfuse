@@ -739,14 +739,6 @@ func (pgs *PrefetchGlobalState) findCoveredRange(
 			break
 		}
 	}
-	if first < 0 {
-		pfm.log("findCoverRange first < 0: startOfs=%d  endOfs=%d  cache=[%d -- %d]",
-			startOfs, endOfs, pfm.cache.startByte, pfm.cache.endByte)
-		for k, iovec := range pfm.cache.iovecs {
-			pfm.log("cache %d -> [%d -- %d]  %s", k, iovec.startByte, iovec.endByte,
-				iovec.stateString())
-		}
-	}
 
 	last := -1
 	for k, iovec := range pfm.cache.iovecs {
