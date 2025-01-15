@@ -231,7 +231,7 @@ func NewPrefetchGlobalState(verboseLevel int, dxEnv dxda.DXEnvironment) *Prefetc
 	// 2) not have more than two workers per CPU
 	// 3) not go over an overall limit, regardless of machine size
 	numCPUs := runtime.NumCPU()
-	numPrefetchThreads := MinInt(numCPUs*2, maxNumPrefetchThreads)
+	numPrefetchThreads := MinInt(numCPUs*8, maxNumPrefetchThreads)
 	log.Printf("Number of prefetch threads=%d", numPrefetchThreads)
 
 	// The number of read-ahead should be limited to 8
@@ -737,6 +737,17 @@ func (pgs *PrefetchGlobalState) findCoveredRange(
 			iovec.endByte >= startOfs {
 			first = k
 			break
+		}
+	}
+	// if first < 0, log message
+	if first < 0 {
+		// log pfm.cache
+		pfm.log("findCoverRange first < 0: startOfs=%d  endOfs=%d  cache=[%d -- %d]",
+			startOfs, endOfs, pfm.cache.startByte, pfm.cache.endByte)
+		// log all iovecs
+		for k, iovec := range pfm.cache.iovecs {
+			pfm.log("cache %d -> [%d -- %d]  %s", k, iovec.startByte, iovec.endByte,
+				iovec.stateString())
 		}
 	}
 	check(first >= 0)
