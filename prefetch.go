@@ -231,7 +231,7 @@ func NewPrefetchGlobalState(verboseLevel int, dxEnv dxda.DXEnvironment) *Prefetc
 	// 2) not have more than two workers per CPU
 	// 3) not go over an overall limit, regardless of machine size
 	numCPUs := runtime.NumCPU()
-	numPrefetchThreads := MinInt(numCPUs*8, maxNumPrefetchThreads)
+	numPrefetchThreads := MinInt(numCPUs*2, maxNumPrefetchThreads)
 	log.Printf("Number of prefetch threads=%d", numPrefetchThreads)
 
 	// The number of read-ahead should be limited to 8
