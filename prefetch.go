@@ -739,7 +739,6 @@ func (pgs *PrefetchGlobalState) findCoveredRange(
 			break
 		}
 	}
-	check(first >= 0)
 
 	last := -1
 	for k, iovec := range pfm.cache.iovecs {

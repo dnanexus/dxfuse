@@ -1413,7 +1413,7 @@ func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp,
 	len := fsys.pgs.CacheLookup(fh.hid, op.Offset, endOfs, op.Dst)
 	// log received length if less than requested
 	if fsys.options.Verbose && int64(len) < reqSize {
-		fsys.log("ReadFile: CacheLookup returned %d, requested %d", len, reqSize)
+		fsys.log("ReadFile: CacheLookup returned %d, requested %d, offset %d", len, reqSize, op.Offset)
 	}
 	if len > 0 {
 		op.BytesRead = len
