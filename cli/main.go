@@ -55,13 +55,14 @@ var (
 	debugFuseFlag = flag.Bool("debugFuse", false, "Tap into FUSE debugging information")
 	daemon        = flag.Bool("daemon", false, "An internal flag, do not use it")
 	// fsSync        = flag.Bool("sync", false, "Sychronize the filesystem and exit")
-	help         = flag.Bool("help", false, "display program options")
-	readOnly     = flag.Bool("readOnly", true, "DEPRECATED, now the default behavior. Mount the filesystem in read-only mode")
-	limitedWrite = flag.Bool("limitedWrite", false, "Allow removing files and folders, creating files and appending to them. (Experimental, not recommended), default is read-only")
-	uid          = flag.Int("uid", -1, "User id (uid)")
-	gid          = flag.Int("gid", -1, "User group id (gid)")
-	verbose      = flag.Int("verbose", 0, "Enable verbose debugging")
-	version      = flag.Bool("version", false, "Print the version and exit")
+	help             = flag.Bool("help", false, "display program options")
+	readOnly         = flag.Bool("readOnly", true, "DEPRECATED, now the default behavior. Mount the filesystem in read-only mode")
+	limitedWrite     = flag.Bool("limitedWrite", false, "Allow removing files and folders, creating files and appending to them. (Experimental, not recommended), default is read-only")
+	uid              = flag.Int("uid", -1, "User id (uid)")
+	gid              = flag.Int("gid", -1, "User group id (gid)")
+	verbose          = flag.Int("verbose", 0, "Enable verbose debugging")
+	version          = flag.Bool("version", false, "Print the version and exit")
+	dxfuseMetdataDir = flag.String("dxfuseMetdataDir", "", "Path to dxfuse metadata base directory. Defaults to $HOME/.dxfuse")
 )
 
 func lookupProject(dxEnv *dxda.DXEnvironment, projectIdOrName string) (string, error) {
@@ -285,6 +286,19 @@ func parseCmdLineArgs() Config {
 		usage()
 		os.Exit(2)
 	}
+	dxfuseBaseDir := ""
+	// if *metadataPath is empty string, then default to user homedir + .dxfuse
+	if *dxfuseMetdataDir == "" {
+		user, err := user.Current()
+		if err != nil {
+			log.Printf("error, could not describe the user")
+			os.Exit(1)
+		}
+		dxfuseBaseDir = user.HomeDir + "/.dxfuse"
+	} else {
+		dxfuseBaseDir = *dxfuseMetdataDir
+	}
+
 	mountpoint := flag.Arg(0)
 
 	uid, gid := initUidGid()
@@ -294,6 +308,7 @@ func parseCmdLineArgs() Config {
 		VerboseLevel: *verbose,
 		Uid:          uid,
 		Gid:          gid,
+		MetadataDir:  dxfuseBaseDir,
 	}
 
 	dxEnv, _, err := dxda.GetDxEnvironment()
@@ -364,6 +379,7 @@ func parseManifest(cfg Config) (*dxfuse.Manifest, error) {
 
 func startDaemon(cfg Config, logFile string) {
 	// initialize the log file
+	dxfuse.MakeDxfuseBaseDir(cfg.options.MetadataDir)
 	logf := initLog(logFile)
 	logger := log.New(logf, "dxfuse: ", log.Flags())
 
@@ -435,7 +451,7 @@ func startDaemonAndWaitForInitializationToComplete(cfg Config, logFile string) {
 
 	// This could be converted into a random temporary file to avoid collisions
 
-	fullManifestPath := filepath.Join(dxfuse.MakeFSBaseDir(), "dxfuse_manifest.json")
+	fullManifestPath := filepath.Join(cfg.options.MetadataDir, "dxfuse_manifest.json")
 	err = ioutil.WriteFile(fullManifestPath, manifestJSON, 0644)
 	if err != nil {
 		fmt.Printf("Error writing out fully elaborated manifest to %s (%s)",
@@ -490,7 +506,7 @@ func main() {
 	flag.Parse()
 	cfg := parseCmdLineArgs()
 	validateConfig(cfg)
-	logFile := filepath.Join(dxfuse.MakeFSBaseDir(), dxfuse.LogFile)
+	logFile := filepath.Join(cfg.options.MetadataDir, dxfuse.LogFile)
 	fmt.Printf("The log file is located at %s\n", logFile)
 
 	dxda.UserAgent = fmt.Sprintf("dxfuse/%s (%s)", dxfuse.Version, runtime.GOOS)

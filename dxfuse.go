@@ -148,7 +148,6 @@ func NewDxfuse(
 		httpIoPool <- dxda.NewHttpClient()
 	}
 
-	dxfuseBaseDir := MakeFSBaseDir()
 	fsys := &Filesys{
 		dxEnv:          dxEnv,
 		options:        options,
@@ -167,7 +166,7 @@ func NewDxfuse(
 	}
 
 	// Create a fresh SQL database
-	databaseFile := filepath.Join(dxfuseBaseDir, DatabaseFile)
+	databaseFile := filepath.Join(options.MetadataDir, DatabaseFile)
 	fsys.log("Removing old version of the database (%s)", databaseFile)
 	if err := os.RemoveAll(databaseFile); err != nil {
 		fsys.log("error removing old database %s", err.Error())
