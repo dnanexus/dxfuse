@@ -380,6 +380,7 @@ func parseManifest(cfg Config) (*dxfuse.Manifest, error) {
 func startDaemon(cfg Config, logFile string) {
 	// initialize the log file
 	dxfuse.MakeDxfuseBaseDir(cfg.options.MetadataDir)
+
 	logf := initLog(logFile)
 	logger := log.New(logf, "dxfuse: ", log.Flags())
 	logger.Printf("dxfuse version %s", dxfuse.Version)
@@ -406,6 +407,8 @@ func startDaemon(cfg Config, logFile string) {
 func buildDaemonCommandLine(cfg Config, fullManifestPath string) []string {
 	var daemonArgs []string
 	daemonArgs = append(daemonArgs, "-daemon")
+
+	daemonArgs = append(daemonArgs, "-metadataDir", cfg.options.MetadataDir)
 
 	if *debugFuseFlag {
 		daemonArgs = append(daemonArgs, "-debugFuse")
