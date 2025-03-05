@@ -62,7 +62,7 @@ var (
 	gid          = flag.Int("gid", -1, "User group id (gid)")
 	verbose      = flag.Int("verbose", 0, "Enable verbose debugging")
 	version      = flag.Bool("version", false, "Print the version and exit")
-	metdataDir   = flag.String("metdataDir", "", "Path to dxfuse metadata base directory. Defaults to $HOME/.dxfuse")
+	metadataDir  = flag.String("metadataDir", "", "Path to dxfuse metadata base directory. Defaults to $HOME/.dxfuse")
 )
 
 func lookupProject(dxEnv *dxda.DXEnvironment, projectIdOrName string) (string, error) {
@@ -287,8 +287,8 @@ func parseCmdLineArgs() Config {
 		os.Exit(2)
 	}
 	dxfuseBaseDir := ""
-	// if *metdataDir is empty string, then default to user homedir + .dxfuse
-	if *metdataDir == "" {
+	// if *metadataDir is empty string, then default to user homedir + .dxfuse
+	if *metadataDir == "" {
 		user, err := user.Current()
 		if err != nil {
 			log.Printf("error, could not describe the user")
@@ -296,7 +296,7 @@ func parseCmdLineArgs() Config {
 		}
 		dxfuseBaseDir = user.HomeDir + "/.dxfuse"
 	} else {
-		dxfuseBaseDir = *metdataDir
+		dxfuseBaseDir = *metadataDir
 	}
 
 	mountpoint := flag.Arg(0)
