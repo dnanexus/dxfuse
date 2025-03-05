@@ -408,7 +408,9 @@ func buildDaemonCommandLine(cfg Config, fullManifestPath string) []string {
 	var daemonArgs []string
 	daemonArgs = append(daemonArgs, "-daemon")
 
-	daemonArgs = append(daemonArgs, []string{"-metadataDir", cfg.options.MetadataDir}...)
+	metadataArg := []string{"-metadataDir", cfg.options.MetadataDir}
+
+	daemonArgs = append(daemonArgs, metadataArg...)
 
 	if *debugFuseFlag {
 		daemonArgs = append(daemonArgs, "-debugFuse")
