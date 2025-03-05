@@ -495,6 +495,7 @@ func startDaemonAndWaitForInitializationToComplete(cfg Config, logFile string) {
 
 	// Wait for the tool to say the file system is ready.
 	fmt.Println("wait for ready")
+	fmt.Println("log file is at", logFile)
 	status := waitForReady(logFile)
 
 	if status == "error" {
