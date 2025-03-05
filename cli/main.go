@@ -477,6 +477,7 @@ func startDaemonAndWaitForInitializationToComplete(cfg Config, logFile string) {
 
 	// build the command line arguments for the daemon
 	daemonArgs := buildDaemonCommandLine(cfg, fullManifestPath)
+	fmt.Printf("daemonArgs=%v\n", daemonArgs)
 	mountCmd := exec.Command(progPath, daemonArgs...)
 	// Redirect stderr in case of go panic to write the stacktrace in the logfile
 	// Required since dxfuse daemon is a subprocess and not running in the foreground
