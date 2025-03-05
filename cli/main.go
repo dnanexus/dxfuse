@@ -294,18 +294,6 @@ func parseCmdLineArgs() Config {
 		usage()
 		os.Exit(2)
 	}
-	// dxfuseBaseDir := ""
-	// // if *metadataDir is empty string, then default to user homedir + .dxfuse
-	// if *metadataDir == "" {
-	// 	user, err := user.Current()
-	// 	if err != nil {
-	// 		log.Printf("error, could not describe the user")
-	// 		os.Exit(1)
-	// 	}
-	// 	dxfuseBaseDir = user.HomeDir + "/.dxfuse"
-	// } else {
-	// 	dxfuseBaseDir = *metadataDir
-	// }
 
 	mountpoint := flag.Arg(0)
 
@@ -485,7 +473,6 @@ func startDaemonAndWaitForInitializationToComplete(cfg Config, logFile string) {
 
 	// build the command line arguments for the daemon
 	daemonArgs := buildDaemonCommandLine(cfg, fullManifestPath)
-	fmt.Printf("daemonArgs=%v\n", daemonArgs)
 	mountCmd := exec.Command(progPath, daemonArgs...)
 	// Redirect stderr in case of go panic to write the stacktrace in the logfile
 	// Required since dxfuse daemon is a subprocess and not running in the foreground
@@ -504,7 +491,6 @@ func startDaemonAndWaitForInitializationToComplete(cfg Config, logFile string) {
 
 	// Wait for the tool to say the file system is ready.
 	fmt.Println("wait for ready")
-	fmt.Println("log file is at", logFile)
 	status := waitForReady(logFile)
 
 	if status == "error" {
