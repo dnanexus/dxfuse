@@ -62,7 +62,7 @@ var (
 	gid          = flag.Int("gid", -1, "User group id (gid)")
 	verbose      = flag.Int("verbose", 0, "Enable verbose debugging")
 	version      = flag.Bool("version", false, "Print the version and exit")
-	metadataDir  = flag.String("metadataDir", "", "Path to dxfuse metadata base directory. Defaults to $HOME/.dxfuse")
+	metadataDir  = flag.String("metadataDir", getDefaultMetadataDir(), "Path to dxfuse metadata base directory. Defaults to $HOME/.dxfuse")
 )
 
 func lookupProject(dxEnv *dxda.DXEnvironment, projectIdOrName string) (string, error) {
@@ -102,6 +102,14 @@ func getUser() user.User {
 		panic("asking the OS for the user returned nil")
 	}
 	return *user
+}
+
+func getDefaultMetadataDir() string {
+	user, err := user.Current()
+	if err != nil {
+		log.Fatalf("error, could not describe the user: %v", err)
+	}
+	return user.HomeDir + "/.dxfuse"
 }
 
 // Mount the filesystem:
@@ -286,18 +294,18 @@ func parseCmdLineArgs() Config {
 		usage()
 		os.Exit(2)
 	}
-	dxfuseBaseDir := ""
-	// if *metadataDir is empty string, then default to user homedir + .dxfuse
-	if *metadataDir == "" {
-		user, err := user.Current()
-		if err != nil {
-			log.Printf("error, could not describe the user")
-			os.Exit(1)
-		}
-		dxfuseBaseDir = user.HomeDir + "/.dxfuse"
-	} else {
-		dxfuseBaseDir = *metadataDir
-	}
+	// dxfuseBaseDir := ""
+	// // if *metadataDir is empty string, then default to user homedir + .dxfuse
+	// if *metadataDir == "" {
+	// 	user, err := user.Current()
+	// 	if err != nil {
+	// 		log.Printf("error, could not describe the user")
+	// 		os.Exit(1)
+	// 	}
+	// 	dxfuseBaseDir = user.HomeDir + "/.dxfuse"
+	// } else {
+	// 	dxfuseBaseDir = *metadataDir
+	// }
 
 	mountpoint := flag.Arg(0)
 
@@ -308,7 +316,7 @@ func parseCmdLineArgs() Config {
 		VerboseLevel: *verbose,
 		Uid:          uid,
 		Gid:          gid,
-		MetadataDir:  dxfuseBaseDir,
+		MetadataDir:  *metadataDir,
 	}
 
 	dxEnv, _, err := dxda.GetDxEnvironment()
