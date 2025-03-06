@@ -321,11 +321,11 @@ func MakeDxfuseBaseDir(dxfuseBaseDir string) string {
 	if _, err := os.Stat(dxfuseBaseDir); err != nil {
 		if os.IsNotExist(err) {
 			if err := os.Mkdir(dxfuseBaseDir, 0700); err != nil {
-				log.Fatalf("Failed to create directory %s: %v", dxfuseBaseDir, err)
+				log.Fatalf("Failed to create state directory %s: %v", dxfuseBaseDir, err)
 				os.Exit(1)
 			}
 		} else {
-			log.Fatalf("Failed to stat directory %s: %v", dxfuseBaseDir, err)
+			log.Fatalf("Failed to create state directory %s: %v", dxfuseBaseDir, err)
 			os.Exit(1)
 		}
 	}
