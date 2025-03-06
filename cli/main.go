@@ -62,7 +62,7 @@ var (
 	gid          = flag.Int("gid", -1, "User group id (gid)")
 	verbose      = flag.Int("verbose", 0, "Enable verbose debugging")
 	version      = flag.Bool("version", false, "Print the version and exit")
-	metadataDir  = flag.String("metadataDir", getDefaultMetadataDir(), "Path to dxfuse metadata base directory. Defaults to $HOME/.dxfuse")
+	metadataDir  = flag.String("metadataDir", getDefaultMetadataDir(), "Directory to use for logfile and database. Defaults to $HOME/.dxfuse. Created if it does not exist.")
 )
 
 func lookupProject(dxEnv *dxda.DXEnvironment, projectIdOrName string) (string, error) {
