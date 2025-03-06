@@ -374,9 +374,6 @@ func parseManifest(cfg Config) (*dxfuse.Manifest, error) {
 }
 
 func startDaemon(cfg Config, logFile string) {
-	// initialize the log file
-	dxfuse.MakeDxfuseBaseDir(cfg.options.MetadataDir)
-
 	logf := initLog(logFile)
 	logger := log.New(logf, "dxfuse: ", log.Flags())
 	logger.Printf("dxfuse version %s", dxfuse.Version)
@@ -508,8 +505,10 @@ func main() {
 	flag.Parse()
 	cfg := parseCmdLineArgs()
 	validateConfig(cfg)
+	dxfuse.MakeDxfuseBaseDir(cfg.options.MetadataDir)
 	logFile := filepath.Join(cfg.options.MetadataDir, dxfuse.LogFile)
 	fmt.Printf("The log file is located at %s\n", logFile)
+	// initialize the log file
 
 	dxda.UserAgent = fmt.Sprintf("dxfuse/%s (%s)", dxfuse.Version, runtime.GOOS)
 
