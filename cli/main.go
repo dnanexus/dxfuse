@@ -62,7 +62,7 @@ var (
 	gid          = flag.Int("gid", -1, "User group id (gid)")
 	verbose      = flag.Int("verbose", 0, "Enable verbose debugging")
 	version      = flag.Bool("version", false, "Print the version and exit")
-	metadataDir  = flag.String("metadataDir", getDefaultMetadataDir(), "Directory to use for logfile and database. Defaults to $HOME/.dxfuse. Created if it does not exist.")
+	metadataDir  = flag.String("metadataDir", getDefaultMetadataDir(), "Directory to use for dxfuse's internal metadata (log file, state database, etc). Created if does not exist. Defaults to "+getDefaultMetadataDir()+".")
 )
 
 func lookupProject(dxEnv *dxda.DXEnvironment, projectIdOrName string) (string, error) {
@@ -108,6 +108,7 @@ func getDefaultMetadataDir() string {
 	user, err := user.Current()
 	if err != nil {
 		log.Fatalf("error, could not describe the user: %v", err)
+		os.Exit(1)
 	}
 	return user.HomeDir + "/.dxfuse"
 }
@@ -508,7 +509,6 @@ func main() {
 	dxfuse.MakeDxfuseBaseDir(cfg.options.MetadataDir)
 	logFile := filepath.Join(cfg.options.MetadataDir, dxfuse.LogFile)
 	fmt.Printf("The log file is located at %s\n", logFile)
-	// initialize the log file
 
 	dxda.UserAgent = fmt.Sprintf("dxfuse/%s (%s)", dxfuse.Version, runtime.GOOS)
 
