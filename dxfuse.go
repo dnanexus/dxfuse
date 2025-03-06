@@ -166,7 +166,7 @@ func NewDxfuse(
 	}
 
 	// Create a fresh SQL database
-	databaseFile := filepath.Join(options.MetadataDir, DatabaseFile)
+	databaseFile := filepath.Join(options.StateFolder, DatabaseFile)
 	fsys.log("Removing old version of the database (%s)", databaseFile)
 	if err := os.RemoveAll(databaseFile); err != nil {
 		fsys.log("error removing old database %s", err.Error())

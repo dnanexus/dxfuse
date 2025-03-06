@@ -70,7 +70,7 @@ type Options struct {
 	VerboseLevel int
 	Uid          uint32
 	Gid          uint32
-	MetadataDir  string
+	StateFolder  string
 }
 
 // A node is a generalization over files and directories
@@ -318,8 +318,16 @@ func intToBool(x int) bool {
 
 // create a directory for all dxfuse files. Manifest, log, sqlite db, etc.
 func MakeDxfuseBaseDir(dxfuseBaseDir string) string {
-	if _, err := os.Stat(dxfuseBaseDir); os.IsNotExist(err) {
-		os.Mkdir(dxfuseBaseDir, 0700)
+	if _, err := os.Stat(dxfuseBaseDir); err != nil {
+		if os.IsNotExist(err) {
+			if err := os.Mkdir(dxfuseBaseDir, 0700); err != nil {
+				log.Fatalf("Failed to create directory %s: %v", dxfuseBaseDir, err)
+				os.Exit(1)
+			}
+		} else {
+			log.Fatalf("Failed to stat directory %s: %v", dxfuseBaseDir, err)
+			os.Exit(1)
+		}
 	}
 	return dxfuseBaseDir
 }

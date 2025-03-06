@@ -62,7 +62,7 @@ var (
 	gid          = flag.Int("gid", -1, "User group id (gid)")
 	verbose      = flag.Int("verbose", 0, "Enable verbose debugging")
 	version      = flag.Bool("version", false, "Print the version and exit")
-	metadataDir  = flag.String("metadataDir", getDefaultMetadataDir(), "Directory to use for dxfuse's internal metadata (log file, state database, etc). Created if does not exist. Defaults to "+getDefaultMetadataDir()+".")
+	stateFolder  = flag.String("stateFolder", getDefaultStateFolder(), "Directory to use for dxfuse's internal state (log file, database, etc). Created if does not exist. Defaults to "+getDefaultStateFolder())
 )
 
 func lookupProject(dxEnv *dxda.DXEnvironment, projectIdOrName string) (string, error) {
@@ -104,7 +104,7 @@ func getUser() user.User {
 	return *user
 }
 
-func getDefaultMetadataDir() string {
+func getDefaultStateFolder() string {
 	user, err := user.Current()
 	if err != nil {
 		log.Fatalf("error, could not describe the user: %v", err)
@@ -305,7 +305,7 @@ func parseCmdLineArgs() Config {
 		VerboseLevel: *verbose,
 		Uid:          uid,
 		Gid:          gid,
-		MetadataDir:  *metadataDir,
+		StateFolder:  *stateFolder,
 	}
 
 	dxEnv, _, err := dxda.GetDxEnvironment()
@@ -402,9 +402,9 @@ func buildDaemonCommandLine(cfg Config, fullManifestPath string) []string {
 	var daemonArgs []string
 	daemonArgs = append(daemonArgs, "-daemon")
 
-	metadataArg := []string{"-metadataDir", cfg.options.MetadataDir}
+	baseDirArg := []string{"-stateFolder", cfg.options.StateFolder}
 
-	daemonArgs = append(daemonArgs, metadataArg...)
+	daemonArgs = append(daemonArgs, baseDirArg...)
 
 	if *debugFuseFlag {
 		daemonArgs = append(daemonArgs, "-debugFuse")
@@ -451,10 +451,10 @@ func startDaemonAndWaitForInitializationToComplete(cfg Config, logFile string) {
 
 	// This could be converted into a random temporary file to avoid collisions
 
-	fullManifestPath := filepath.Join(cfg.options.MetadataDir, "dxfuse_manifest.json")
+	fullManifestPath := filepath.Join(cfg.options.StateFolder, "dxfuse_manifest.json")
 	err = ioutil.WriteFile(fullManifestPath, manifestJSON, 0644)
 	if err != nil {
-		fmt.Printf("Error writing out fully elaborated manifest to %s (%s)",
+		fmt.Printf("Error writing out fully elaborated manifest to %s (%s)\n",
 			fullManifestPath, err.Error())
 		os.Exit(1)
 	}
@@ -506,8 +506,8 @@ func main() {
 	flag.Parse()
 	cfg := parseCmdLineArgs()
 	validateConfig(cfg)
-	dxfuse.MakeDxfuseBaseDir(cfg.options.MetadataDir)
-	logFile := filepath.Join(cfg.options.MetadataDir, dxfuse.LogFile)
+	dxfuse.MakeDxfuseBaseDir(cfg.options.StateFolder)
+	logFile := filepath.Join(cfg.options.StateFolder, dxfuse.LogFile)
 	fmt.Printf("The log file is located at %s\n", logFile)
 
 	dxda.UserAgent = fmt.Sprintf("dxfuse/%s (%s)", dxfuse.Version, runtime.GOOS)
