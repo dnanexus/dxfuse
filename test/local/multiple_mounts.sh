@@ -70,7 +70,7 @@ function multiple_mounts {
     fi
 
     # check that the mounts are the same
-    if ! diff <(ls -l $mountpoint0) <(ls -l $mountpoint1); then
+    if ! diff <(ls -l "$mountpoint0/$projName") <(ls -l "$mountpoint1/$projName"); then
         echo "Error: The two mounts are different."
         exit 1
     fi
