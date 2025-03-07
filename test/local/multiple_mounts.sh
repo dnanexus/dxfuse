@@ -29,9 +29,9 @@ function multiple_mounts {
     # mount dxfuse with default folder path
     $dxfuse $mountpoint0 $projName
 
-    folder_path="$baseDir/.dxfusebase"
+    state_folder="$baseDir/.dxfusebase"
     # mount dxfuse with a different folder path
-    $dxfuse -folderPath $folder_path $mountpoint1 $projName
+    $dxfuse -stateFolder $state_folder $mountpoint1 $projName
 
     # check that two dxfuse processes are running
     dxfuse_process_count=$(pgrep -c dxfuse)
@@ -48,6 +48,21 @@ function multiple_mounts {
         echo "Two dxfuse mounts are present."
     else
         echo "Error: Expected 2 dxfuse mounts, but found $mount_count."
+        exit 1
+    fi
+
+    # check that dxfuse state files exist in both folders
+    if [[ -f $state_folder/dxfuse.log ]]; then
+        echo "Log file exists in $state_folder"
+    else
+        echo "Log file does not exist in $state_folder"
+        exit 1
+    fi
+
+    if [[ -f "$HOME/dxfuse.log" ]]; then
+        echo "Log file exists in $HOME"
+    else
+        echo "Log file not exist in $HOME"
         exit 1
     fi
 
