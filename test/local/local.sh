@@ -24,3 +24,6 @@ faux_dirs
 
 source $CRNT_DIR/file_overwrite.sh
 file_overwrite
+
+source $CRNT_DIR/multiple_mounts.sh
+multiple_mounts

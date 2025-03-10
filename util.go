@@ -6,7 +6,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/user"
 	"time"
 
 	"github.com/jacobsa/fuse/fuseops"
@@ -71,6 +70,7 @@ type Options struct {
 	VerboseLevel int
 	Uid          uint32
 	Gid          uint32
+	StateFolder  string
 }
 
 // A node is a generalization over files and directories
@@ -316,16 +316,18 @@ func intToBool(x int) bool {
 	return false
 }
 
-// create a directory for all the dxfuse files in  $HOME/.dxfuse
-func MakeFSBaseDir() string {
-	user, err := user.Current()
-	if err != nil {
-		log.Printf("error, could not describe the user")
-		os.Exit(1)
-	}
-	dxfuseBaseDir := user.HomeDir + "/.dxfuse"
-	if _, err := os.Stat(dxfuseBaseDir); os.IsNotExist(err) {
-		os.Mkdir(dxfuseBaseDir, 0700)
+// create a directory for all dxfuse files. Manifest, log, sqlite db, etc.
+func MakeDxfuseBaseDir(dxfuseBaseDir string) string {
+	if _, err := os.Stat(dxfuseBaseDir); err != nil {
+		if os.IsNotExist(err) {
+			if err := os.Mkdir(dxfuseBaseDir, 0700); err != nil {
+				log.Fatalf("Failed to create state directory %s: %v", dxfuseBaseDir, err)
+				os.Exit(1)
+			}
+		} else {
+			log.Fatalf("Failed to create state directory %s: %v", dxfuseBaseDir, err)
+			os.Exit(1)
+		}
 	}
 	return dxfuseBaseDir
 }

@@ -62,6 +62,7 @@ var (
 	gid          = flag.Int("gid", -1, "User group id (gid)")
 	verbose      = flag.Int("verbose", 0, "Enable verbose debugging")
 	version      = flag.Bool("version", false, "Print the version and exit")
+	stateFolder  = flag.String("stateFolder", getDefaultStateFolder(), "Directory to use for dxfuse's internal state (log file, database, etc). Created if does not exist. Defaults to "+getDefaultStateFolder())
 )
 
 func lookupProject(dxEnv *dxda.DXEnvironment, projectIdOrName string) (string, error) {
@@ -101,6 +102,15 @@ func getUser() user.User {
 		panic("asking the OS for the user returned nil")
 	}
 	return *user
+}
+
+func getDefaultStateFolder() string {
+	user, err := user.Current()
+	if err != nil {
+		log.Fatalf("error, could not describe the user: %v", err)
+		os.Exit(1)
+	}
+	return user.HomeDir + "/.dxfuse"
 }
 
 // Mount the filesystem:
@@ -285,6 +295,7 @@ func parseCmdLineArgs() Config {
 		usage()
 		os.Exit(2)
 	}
+
 	mountpoint := flag.Arg(0)
 
 	uid, gid := initUidGid()
@@ -294,6 +305,7 @@ func parseCmdLineArgs() Config {
 		VerboseLevel: *verbose,
 		Uid:          uid,
 		Gid:          gid,
+		StateFolder:  *stateFolder,
 	}
 
 	dxEnv, _, err := dxda.GetDxEnvironment()
@@ -363,9 +375,9 @@ func parseManifest(cfg Config) (*dxfuse.Manifest, error) {
 }
 
 func startDaemon(cfg Config, logFile string) {
-	// initialize the log file
 	logf := initLog(logFile)
 	logger := log.New(logf, "dxfuse: ", log.Flags())
+	logger.Printf("dxfuse version %s", dxfuse.Version)
 
 	// Read the manifest from disk. It should already have all the fields
 	// filled in. There is no need to perform API calls.
@@ -389,6 +401,10 @@ func startDaemon(cfg Config, logFile string) {
 func buildDaemonCommandLine(cfg Config, fullManifestPath string) []string {
 	var daemonArgs []string
 	daemonArgs = append(daemonArgs, "-daemon")
+
+	baseDirArg := []string{"-stateFolder", cfg.options.StateFolder}
+
+	daemonArgs = append(daemonArgs, baseDirArg...)
 
 	if *debugFuseFlag {
 		daemonArgs = append(daemonArgs, "-debugFuse")
@@ -435,10 +451,10 @@ func startDaemonAndWaitForInitializationToComplete(cfg Config, logFile string) {
 
 	// This could be converted into a random temporary file to avoid collisions
 
-	fullManifestPath := filepath.Join(dxfuse.MakeFSBaseDir(), "dxfuse_manifest.json")
+	fullManifestPath := filepath.Join(cfg.options.StateFolder, "dxfuse_manifest.json")
 	err = ioutil.WriteFile(fullManifestPath, manifestJSON, 0644)
 	if err != nil {
-		fmt.Printf("Error writing out fully elaborated manifest to %s (%s)",
+		fmt.Printf("Error writing out fully elaborated manifest to %s (%s)\n",
 			fullManifestPath, err.Error())
 		os.Exit(1)
 	}
@@ -490,7 +506,8 @@ func main() {
 	flag.Parse()
 	cfg := parseCmdLineArgs()
 	validateConfig(cfg)
-	logFile := filepath.Join(dxfuse.MakeFSBaseDir(), dxfuse.LogFile)
+	dxfuse.MakeDxfuseBaseDir(cfg.options.StateFolder)
+	logFile := filepath.Join(cfg.options.StateFolder, dxfuse.LogFile)
 	fmt.Printf("The log file is located at %s\n", logFile)
 
 	dxda.UserAgent = fmt.Sprintf("dxfuse/%s (%s)", dxfuse.Version, runtime.GOOS)
