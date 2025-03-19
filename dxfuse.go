@@ -743,7 +743,7 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	defer fsys.opClose(oph)
 
 	if fsys.options.Verbose {
-		fsys.log("CreateFile(%s)", op.Name)
+		fsys.log("CreateFile: %s", op.Name)
 	}
 
 	// the parent is supposed to be a directory
