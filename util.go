@@ -42,6 +42,7 @@ const (
 	dirReadWriteMode  = 0777 | os.ModeDir
 	fileReadOnlyMode  = 0444
 	fileWriteOnlyMode = 0222
+	fileReadWriteMode = 0666
 )
 const (
 	// flags for writing files to disk
@@ -65,12 +66,13 @@ type DxDownloadURL struct {
 }
 
 type Options struct {
-	ReadOnly     bool
-	Verbose      bool
-	VerboseLevel int
-	Uid          uint32
-	Gid          uint32
-	StateFolder  string
+	ReadOnly       bool
+	AllowOverwrite bool
+	Verbose        bool
+	VerboseLevel   int
+	Uid            uint32
+	Gid            uint32
+	StateFolder    string
 }
 
 // A node is a generalization over files and directories

@@ -890,6 +890,10 @@ func (mdb *MetadataDb) populateDir(
 		}
 		mdb.log("populateDir(%s)  data-objects=%v  subdirs=%v", dirPath, objNames, subdirs)
 	}
+	var fileMode os.FileMode = fileReadOnlyMode
+	if mdb.options.AllowOverwrite {
+		fileMode = fileReadWriteMode
+	}
 
 	// Create a database entry for each file
 	if mdb.options.VerboseLevel > 1 {
@@ -913,7 +917,7 @@ func (mdb *MetadataDb) populateDir(
 			o.MtimeSeconds,
 			o.Tags,
 			o.Properties,
-			fileReadOnlyMode,
+			fileMode,
 			dirPath,
 			o.Name)
 		if err != nil {
