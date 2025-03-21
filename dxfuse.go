@@ -445,10 +445,9 @@ func (fsys *Filesys) GetInodeAttributes(ctx context.Context, op *fuseops.GetInod
 	return nil
 }
 
-// The only supported operation is setting the size of a file to zero, which
-// is treated as deleting the file.
-// Only allowed if both -limitedWrite and -allowOverwrite are set
+// Ignore
 func (fsys *Filesys) SetInodeAttributes(ctx context.Context, op *fuseops.SetInodeAttributesOp) error {
+	fsys.log("op: %v", op)
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
 	oph := fsys.opOpen()
@@ -481,41 +480,35 @@ func (fsys *Filesys) SetInodeAttributes(ctx context.Context, op *fuseops.SetInod
 		return syscall.EPERM
 	}
 
-	if !fsys.checkProjectPermissions(file.ProjId, PERM_CONTRIBUTE) {
+	if !fsys.checkProjectPermissions(file.ProjId, PERM_VIEW) {
 		return syscall.EPERM
 	}
 
-	if !fsys.options.AllowOverwrite {
-		fsys.log("SetInodeAttributes: not allowed to modify files without -allowOverwrite")
+	attrs := file.GetAttrs()
+	if attrs.Mode == fileReadOnlyMode {
 		return syscall.EPERM
 	}
-
-	if *op.Size != 0 {
-		// we only support truncating files to zero
-		fsys.log("SetInodeAttributes: only allowed to truncate files to zero")
-		return syscall.EINVAL
+	// update the file
+	if op.Size != nil {
+		attrs.Size = *op.Size
 	}
-
-	if err := fsys.mdb.Unlink(ctx, oph, file); err != nil {
-		fsys.log("database error in unlink %s", err.Error())
+	if op.Mode != nil {
+		attrs.Mode = *op.Mode
+	}
+	if op.Mtime != nil {
+		attrs.Mtime = *op.Mtime
+	}
+	// Don't allow chmod
+	// we don't handle atime
+	err = fsys.mdb.UpdateFileAttrs(ctx, oph, file.Inode, int64(attrs.Size), attrs.Mtime, nil)
+	if err != nil {
+		fsys.log("database error in OpenFile %s", err.Error())
 		return fuse.EIO
 	}
 
-	// The file has not been created on the platform yet, there is no need to
-	// remove it
-	if file.Id == "" {
-		return nil
-	}
-
-	// remove the file on the platform
-	objectIds := make([]string, 1)
-	objectIds[0] = file.Id
-	if err := fsys.ops.DxRemoveObjects(ctx, oph.httpClient, file.ProjId, objectIds); err != nil {
-		fsys.log("Error in removing %s:%s on dnanexus: %s",
-			file.ProjId, file.Id, err.Error())
-		return fsys.translateError(err)
-	}
-	fsys.log("Removed %s, %s:%s", file.Name, file.ProjId, file.Id)
+	// Fill in the response.
+	op.Attributes = attrs
+	op.AttributesExpiration = fsys.calcExpirationTime(attrs)
 
 	return nil
 }
@@ -1324,7 +1317,11 @@ func (fsys *Filesys) openRegularFile(
 
 // Note: What happens if the file is opened for writing?
 func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error {
+	fsys.log("op: %v", op)
 	fsys.log("OpenfileOp Flags: %v", op.OpenFlags)
+	if op.OpenFlags&syscall.O_TRUNC != 0 {
+		fsys.log("File opened with O_TRUNC flag")
+	}
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
 	oph := fsys.opOpen()

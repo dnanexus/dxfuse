@@ -161,6 +161,7 @@ func fsDaemon(
 
 		// Required for sequential writes
 		DisableWritebackCaching: true,
+		EnableAtomicTrunc:       true,
 		Options:                 mountOptions,
 	}
 
