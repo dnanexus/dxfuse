@@ -13,7 +13,7 @@ jobs:
   applet-test:
     name: Applet dxfuse tests
     needs: local-test
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     env:
       CGO_ENABLED: 1
     steps:
@@ -56,7 +56,7 @@ jobs:
 
   local-test:
     name: Local dxfuse tests
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     env:
       CGO_ENABLED: 1
     steps:
