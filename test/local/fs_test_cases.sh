@@ -434,8 +434,8 @@ function fs_test_cases {
     mkdir_existing  $mountpoint/$projName/$base_dir/T4
 
     echo "file create remove"
-    file_create_existing "$mountpoint/$projName"
-    file_remove_non_exist "$mountpoint/$projName"
+    file_create_existing "$mountpoint/$projName/$expr_dir"
+    file_remove_non_exist "$mountpoint/$projName/$expr_dir"
 
     echo "move file I"
     move_file $mountpoint/$projName/$expr_dir
@@ -464,7 +464,7 @@ function fs_test_cases {
 
     echo "checking illegal directory moves"
     move_non_existent_dir "$mountpoint/$projName"
-    move_dir_to_file "$mountpoint/$projName"
+    move_dir_to_file "$mountpoint/$projName/$expr_dir"
 
     echo "directory and file with the same name"
     dir_and_file_with_the_same_name $mountpoint/$projName
