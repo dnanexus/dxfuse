@@ -11,7 +11,7 @@ azure: dxfuse copy_all
 	dx build correctness -f --destination dxfuse_azure_westus:/applets/correctness
 
 dxfuse : $(wildcard ../**/*)
-	go build -o ../dxfuse ../cli/main.go
+	docker run --rm --volume $(pwd)/..:/dxfuse dxfuse-builder:latest go build -o /dxfuse/dxfuse /dxfuse/cli/main.go
 
 copy_all : dxfuse bench correct bio correct_downloads
 

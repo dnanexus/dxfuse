@@ -22,10 +22,6 @@ jobs:
       - name: Work around unstable connection
         uses: ./.github/actions/unstable-connection-workaround
 
-      - uses: actions/setup-go@424fc82d43fa5a37540bae62709ddcc23d9520d4 # v2.1.5
-        with:
-          go-version: '1.22.6'
-
       - name: Install & build
         run: |
           set -x
@@ -43,7 +39,7 @@ jobs:
 
           python3 -m pip install dxpy
 
-          go build -o dxfuse cli/main.go
+          docker build --file builder.Dockerfile dxfuse-builder:latest
 
       - name: Applet dxfuse tests
         env:
