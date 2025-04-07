@@ -1,12 +1,14 @@
-FROM ubuntu:20.04
+FROM --platform=amd64 ubuntu:20.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PATH="/usr/local/go/bin:${PATH}"
+ENV CGO_ENABLED=1
 
 ENV GO_VERSION=1.22.6
 
 RUN apt-get update && \
-    apt-get install -y curl && \
+    apt-get --yes dist-upgrade && \
+    apt-get install --yes build-essential curl && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
