@@ -1,3 +1,5 @@
+ROOT_DIR := $(dir $(realpath $(lastword $(MAKEFILE_LIST))))
+
 all : aws
 
 aws : copy_all
@@ -11,7 +13,7 @@ azure: dxfuse copy_all
 	dx build correctness -f --destination dxfuse_azure_westus:/applets/correctness
 
 dxfuse : $(wildcard ../**/*)
-	docker run --rm --volume $(pwd)/..:/dxfuse dxfuse-builder:latest go build -o /dxfuse/dxfuse /dxfuse/cli/main.go
+	docker run --rm --volume $(ROOT_DIR):/dxfuse dxfuse-builder:latest go build -o /dxfuse/dxfuse /dxfuse/cli/main.go
 
 copy_all : dxfuse bench correct bio correct_downloads
 
