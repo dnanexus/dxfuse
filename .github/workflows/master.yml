@@ -51,10 +51,15 @@ jobs:
       - name: Work around unstable connection
         uses: ./.github/actions/unstable-connection-workaround
 
+      - uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
+        with:
+          name: dxfuse
+
       - name: Install & build
         run: |
           set -x
           pwd
+          chmod +x dxfuse
           sudo apt-get update
           sudo apt-get install -y apt-utils make \
           wget git build-essential apt-transport-https \
@@ -67,10 +72,6 @@ jobs:
           python3 -m pip install -r requirements.txt
 
           python3 -m pip install dxpy
-
-      - uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
-        with:
-          name: dxfuse
 
       - name: Applet dxfuse tests
         env:
@@ -94,11 +95,16 @@ jobs:
 
       - name: Work around unstable connection
         uses: ./.github/actions/unstable-connection-workaround
+      
+      - uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
+        with:
+          name: dxfuse
 
       - name: Install & build
         run: |
           set -x
           pwd
+          chmod +x dxfuse
           sudo apt-get update
           sudo apt-get install -y apt-utils xattr attr make \
           wget git build-essential apt-transport-https \
@@ -110,10 +116,6 @@ jobs:
           python3 -m pip install -r requirements.txt
 
           python3 -m pip install dxpy
-
-      - uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
-        with:
-          name: dxfuse
 
       - name: Local dxfuse tests
         env:
