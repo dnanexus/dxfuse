@@ -1,10 +1,12 @@
 FROM --platform=amd64 ubuntu:20.04
 
+ENV GO_VERSION=1.22.6
+
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PATH="/usr/local/go/bin:${PATH}"
+ENV GOOS=linux
+ENV GOARCH=amd64
 ENV CGO_ENABLED=1
-
-ENV GO_VERSION=1.22.6
 
 RUN apt-get update && \
     apt-get --yes dist-upgrade && \
