@@ -10,7 +10,7 @@ azure: copy_all
 	dx build benchmark -f --destination dxfuse_azure_westus:/applets/benchmark
 	dx build correctness -f --destination dxfuse_azure_westus:/applets/correctness
 
-copy_all: bench correct bio correct_downloads
+copy_all: bench correct bio correct_downloads correct_focal
 
 bench:
 	mkdir -p benchmark/resources/usr/bin
