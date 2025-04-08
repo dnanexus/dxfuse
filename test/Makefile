@@ -24,6 +24,10 @@ correct_downloads:
 	mkdir -p correctness_downloads/resources/usr/bin
 	cp -f ../dxfuse correctness_downloads/resources/usr/bin/
 
+correct_focal:
+	mkdir -p correctness_focal/resources/usr/bin
+	cp -f ../dxfuse correctness_focal/resources/usr/bin/
+
 bio:
 	cp -f ../dxfuse bio_tools/resources/usr/bin/
 

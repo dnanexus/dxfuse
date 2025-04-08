@@ -133,10 +133,12 @@ def run_correctness(dx_proj, itype, verbose):
     correctness = lookup_applet("correctness", dx_proj, "/applets")
     bio_tools = lookup_applet("bio_tools", dx_proj, "/applets")
     correctness_downloads = lookup_applet("correctness_downloads", dx_proj, "/applets")
+    correctness_focal = lookup_applet("correctness_focal", dx_proj, "/applets")
     jobs1 = launch_jobs(dx_proj, correctness, [itype], verbose)
     jobs2 = launch_jobs(dx_proj, bio_tools, [itype], verbose)
     jobs3 = launch_jobs(dx_proj, correctness_downloads, [itype], verbose)
-    wait_for_completion(jobs1 + jobs2 + jobs3)
+    jobs4 = launch_jobs(dx_proj, correctness_focal, [itype], verbose)
+    wait_for_completion(jobs1 + jobs2 + jobs3 + jobs4)
 
 def run_biotools(dx_proj, itype, verbose):
     bio_tools = lookup_applet("bio_tools", dx_proj, "/applets")

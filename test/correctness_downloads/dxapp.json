@@ -26,7 +26,7 @@
     "interpreter": "bash",
     "file": "code.sh",
     "distribution": "Ubuntu",
-    "release": "20.04",
+    "release": "24.04",
     "version": "0",
     "execDepends" : [
       {"name" : "tree", "package_manager" : "apt"}
