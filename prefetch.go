@@ -140,6 +140,7 @@ type PrefetchGlobalState struct {
 	numPrefetchThreads    int
 	maxNumChunksReadAhead int
 	ioCounter             uint64
+	memoryManager         *MemoryManager // Global memory manager
 }
 
 // presumption: there is some intersection
@@ -225,7 +226,7 @@ func (pgs *PrefetchGlobalState) log(a string, args ...interface{}) {
 	LogMsg("prefetch", a, args...)
 }
 
-func NewPrefetchGlobalState(verboseLevel int, dxEnv dxda.DXEnvironment) *PrefetchGlobalState {
+func NewPrefetchGlobalState(verboseLevel int, dxEnv dxda.DXEnvironment, memoryManager *MemoryManager) *PrefetchGlobalState {
 	// We want to:
 	// 1) allow all streams to have a worker available
 	// 2) not have more than two workers per CPU
@@ -238,7 +239,7 @@ func NewPrefetchGlobalState(verboseLevel int, dxEnv dxda.DXEnvironment) *Prefetc
 	maxNumChunksReadAhead := MinInt(8, numPrefetchThreads-1)
 	maxNumChunksReadAhead = MaxInt(1, maxNumChunksReadAhead)
 
-	// determine the maximal size of a prefetch IO.
+	// determine the maximal size of a prefetch IO.N
 	//
 	// TODO: make this dynamic based on network performance.
 	var prefetchMaxIoSize int64
@@ -272,6 +273,7 @@ func NewPrefetchGlobalState(verboseLevel int, dxEnv dxda.DXEnvironment) *Prefetc
 		prefetchMaxIoSize:     prefetchMaxIoSize,
 		numPrefetchThreads:    numPrefetchThreads,
 		maxNumChunksReadAhead: maxNumChunksReadAhead,
+		memoryManager:         memoryManager,
 	}
 
 	// limit the number of prefetch IOs
@@ -472,6 +474,10 @@ func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq
 	}
 	check(pfm.cache.iovecs[iovIdx].data == nil)
 	if err == nil {
+		if !pgs.memoryManager.Allocate(int64(len(data)), false) { // Lower priority for prefetching
+			pfm.log("Memory limit exceeded, dropping prefetch IO")
+			return
+		}
 		pfm.cache.iovecs[iovIdx].data = data
 		pfm.cache.iovecs[iovIdx].state = IOV_DONE
 
@@ -479,6 +485,10 @@ func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq
 		pfm.mw.numBytesPrefetched += int64(len(data))
 		pfm.mw.numPrefetchIOs++
 	} else {
+		// Release memory in case of an error
+		if data != nil {
+			pgs.memoryManager.Release(int64(len(data)))
+		}
 		pfm.log("(#io=%d) prefetch io error [%d -- %d] %s",
 			ioReq.id, ioReq.startByte, ioReq.endByte, err.Error())
 		pfm.cache.iovecs[iovIdx].state = IOV_ERRORED
@@ -844,6 +854,11 @@ func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIn
 			}
 		}
 		if nRemoved > 0 {
+			for i := 0; i < nRemoved; i++ {
+				if pfm.cache.iovecs[i].data != nil {
+					pgs.memoryManager.Release(int64(len(pfm.cache.iovecs[i].data)))
+				}
+			}
 			pfm.cache.iovecs = pfm.cache.iovecs[nRemoved:]
 			if pgs.verbose {
 				pfm.log("Removed %d chunks", nRemoved)

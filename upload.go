@@ -25,6 +25,8 @@ func (uploader *FileUploader) AllocateWriteBuffer(partId int, block bool) []byte
 	}
 	writeBufferCapacity := math.Min(InitialUploadPartSize*math.Pow(1.1, float64(partId)), MaxUploadPartSize)
 	writeBufferCapacity = math.Round(writeBufferCapacity)
+
+	uploader.memoryManager.Allocate(int64(writeBufferCapacity), true) // Prioritize uploads
 	writeBuffer := make([]byte, 0, int64(writeBufferCapacity))
 	return writeBuffer
 }
@@ -45,6 +47,8 @@ type FileUploader struct {
 	writeBufferChan chan struct{}
 	// API to dx
 	ops *DxOps
+	// Memory manager
+	memoryManager *MemoryManager
 }
 
 // write a log message, and add a header
@@ -63,6 +67,7 @@ func NewFileUploader(verboseLevel int, options Options, dxEnv dxda.DXEnvironment
 		writeBufferChan:   make(chan struct{}, concurrentWriteBufferLimit),
 		numUploadRoutines: maxUploadRoutines,
 		ops:               NewDxOps(dxEnv, options),
+		memoryManager:     NewMemoryManager(),
 	}
 
 	uploader.wg.Add(maxUploadRoutines)
@@ -89,6 +94,8 @@ func (uploader *FileUploader) uploadWorker() {
 			return
 		}
 		err := uploader.ops.DxFileUploadPart(context.TODO(), httpClient, uploadReq.fileId, uploadReq.partId, uploadReq.writeBuffer)
+		// Release the memory back to the pool
+		uploader.memoryManager.Release(int64(cap(uploadReq.writeBuffer)), true)
 		if err != nil {
 			// Record upload error in FileHandle
 			uploader.log("Error uploading %s, part %d, %s", uploadReq.fileId, uploadReq.partId, err.Error())

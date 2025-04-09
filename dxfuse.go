@@ -190,7 +190,15 @@ func NewDxfuse(
 	}
 	fsys.opClose(oph)
 
+	// Initialize the memory manager
+	maxMemory := int64(2 * 1024 * 1024 * 1024) // Default to 2 GiB
+	if options.MaxMemory > 0 {
+		maxMemory = options.MaxMemory
+	}
+	memoryManager := NewMemoryManager(maxMemory)
+
 	fsys.pgs = NewPrefetchGlobalState(options.VerboseLevel, dxEnv)
+	fsys.pgs.memoryManager = memoryManager
 
 	// describe all the projects, we need their upload parameters
 	httpClient := <-fsys.httpClientPool
@@ -215,6 +223,7 @@ func NewDxfuse(
 	}
 
 	fsys.uploader = NewFileUploader(options.VerboseLevel, options, dxEnv)
+	fsys.uploader.memoryManager = memoryManager
 	// initialize sync daemon
 	//fsys.sybx = NewSyncDbDx(options, dxEnv, projId2Desc, mdb, fsys.mutex)
 
