@@ -1,9 +1,13 @@
+#!/bin/bash -e
+
 ######################################################################
 ## constants
-CRNT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+
 projName="dxfuse_test_data"
-dxfuse="$CRNT_DIR/../../dxfuse"
-dxDirOnProject="mini"
+
+# larger test for a cloud worker
+dxDirOnProject="correctness"
+
 baseDir=$HOME/dxfuse_test
 mountpoint=${baseDir}/MNT
 
@@ -20,23 +24,91 @@ function teardown {
     fi
     teardown_complete=1
 
-    rm -f cmd_results.txt
 
     echo "unmounting dxfuse"
     cd $HOME
     fusermount -u $mountpoint
 
-    cat /root/.dxfuse/dxfuse.log
-
     for d in ${writeable_dirs[@]}; do
         dx rm -r $projName:/$d >& /dev/null || true
     done
+
+    if [[ $DX_JOB_ID != "" && $verbose != "" ]]; then
+        mkdir -p out/filesystem_log
+        cp /root/.dxfuse/dxfuse.log out/filesystem_log/dxfuse_correctness.log
+        dx-upload-all-outputs
+    fi
 }
 
 # trap any errors and cleanup
 trap teardown EXIT
 
 ######################################################################
+
+# copy a file and check that platform has the correct content
+#
+function check_file_write_content {
+    local top_dir=$1
+    local target_dir=$2
+    local write_dir=$top_dir/$target_dir
+    local content="nothing much"
+
+    echo "write_dir = $write_dir"
+
+    # create a small file through the filesystem interface
+    echo $content > $write_dir/A.txt
+    ls -l $write_dir/A.txt
+
+
+    dx wait $projName:/$target_dir/A.txt
+
+    # compare the data
+    local content2=$(dx cat $projName:/$target_dir/A.txt)
+    if [[ "$content" == "$content2" ]]; then
+        echo "correct"
+    else
+        echo "bad content"
+        echo "should be: $content"
+        echo "found: $content2"
+    fi
+
+    # create an empty file
+    touch $write_dir/B.txt
+    ls -l $write_dir/B.txt
+
+    dx wait $projName:/$target_dir/B.txt
+
+    # compare the data
+    local content3=$(dx cat $projName:/$target_dir/B.txt)
+    if [[ "$content3" == "" ]]; then
+        echo "correct"
+    else
+        echo "bad content"
+        echo "should be empty"
+        echo "found: $content3"
+    fi
+}
+
+# copy files inside the mounted filesystem
+#
+function write_files {
+    local src_dir=$1
+    local write_dir=$2
+
+    echo "write_dir = $write_dir"
+    ls -l $write_dir
+
+    echo "copying large files"
+    cp $src_dir/*  $write_dir/
+
+    # compare resulting files
+    echo "comparing files"
+    local files=$(find $src_dir -type f)
+    for f in $files; do
+        b_name=$(basename $f)
+        diff $f $write_dir/$b_name
+    done
+}
 
 # check that we can't write to VIEW only project
 #
@@ -58,7 +130,6 @@ function create_dir {
     local src_dir=$1
     local write_dir=$2
 
-    echo "create_dir($src_dir, $write_dir)"
     mkdir $write_dir
 
     # copy files to new directory
@@ -87,7 +158,6 @@ function create_remove_dir {
     local src_dir=$2
     local write_dir=$3
 
-    echo "create_remove_dir($flag, $src_dir, $write_dir)"
     mkdir $write_dir
     rmdir $write_dir
     mkdir $write_dir
@@ -110,6 +180,11 @@ function create_remove_dir {
     echo "catch 22" > $write_dir/E/Z.txt
 
     tree $write_dir
+
+    if [[ $flag == "yes" ]]; then
+        echo "letting the files complete uploading"
+        sleep 10
+    fi
 
     echo "removing directory recursively"
     rm -rf $write_dir
@@ -176,7 +251,7 @@ function mkdir_existing {
 function file_create_existing {
     local write_dir=$1
     cd $write_dir
-
+    rm -f hello.txt
     echo "happy days" > hello.txt
 
     set +e
@@ -194,7 +269,7 @@ function file_create_existing {
         cat /tmp/cmd_results.txt
 
         echo "===== log ======="
-        cat /var/log/dxfuse.log
+        cat /root/.dxfuse/dxfuse.log
         exit 1
     fi
 
@@ -363,6 +438,58 @@ function move_dir_to_file {
     rm -f Y.txt
 }
 
+function faux_dirs_move {
+    local root_dir=$1
+    cd $root_dir
+
+    tree $root_dir
+
+    # cannot move faux directories
+    set +e
+    (mv $root_dir/1 $root_dir/2 ) >& /dev/null
+    rc=$?
+    if [[ $rc == 0 ]]; then
+        echo "Error, could not a faux directory"
+    fi
+
+    # cannot move files into a faux directory
+    (mv -f $root_dir/NewYork.txt $root_dir/1) >& /dev/null
+    rc=$?
+    if [[ $rc == 0 ]]; then
+        echo "Error, could move a file into a faux directory"
+    fi
+    set -e
+}
+
+function faux_dirs_remove {
+    local root_dir=$1
+    cd $root_dir
+
+    # can move a file out of a faux directory
+    mkdir $root_dir/T
+    mv $root_dir/1/NewYork.txt $root_dir/T
+    rm -rf $root_dir/T
+
+    echo "removing faux dir 1"
+    rm -rf $root_dir/1
+}
+
+
+
+function populate_faux_dir {
+    local faux_dir=$1
+
+    echo "deep dish pizza and sky trains" > /tmp/XXX
+    echo "nice play chunk" > /tmp/YYY
+    echo "no more chewing on shoes!" > /tmp/ZZZ
+    echo "you just won a trip to the Caribbean" > /tmp/VVV
+
+    dx upload /tmp/XXX -p --destination $projName:/$faux_dir/Chicago.txt >& /dev/null
+    dx upload /tmp/YYY -p --destination $projName:/$faux_dir/Chicago.txt >& /dev/null
+    dx upload /tmp/ZZZ -p --destination $projName:/$faux_dir/NewYork.txt >& /dev/null
+    dx upload /tmp/VVV -p --destination $projName:/$faux_dir/NewYork.txt >& /dev/null
+    rm -f /tmp/XXX /tmp/YYY /tmp/ZZZ /tmp/VVV
+}
 
 function dir_and_file_with_the_same_name {
     local root_dir=$1
@@ -375,20 +502,20 @@ function archived_files {
 
     num_files=$(ls -1 $root_dir | wc -l)
     if [[ $num_files != 3 ]]; then
-        echo "Should see two live files. Instead, can see $num_files files."
+        echo "Should see 3 files. Instead, can see $num_files files."
         exit 1
+    else
+        echo "correct, can see 3 files"
     fi
 }
 
-function fs_test_cases {
+main() {
     # Get all the DX environment variables, so that dxfuse can use them
     echo "loading the dx environment"
 
-    # local machine
-    rm -f ENV
-    dx env --bash > ENV
-    source ENV >& /dev/null
-    rm -f ENV
+    # Running on a cloud worker
+    source environment >& /dev/null
+    dxfuse="dxfuse"
 
     # clean and make fresh directories
     mkdir -p $mountpoint
@@ -396,15 +523,21 @@ function fs_test_cases {
     # generate random alphanumeric strings
     base_dir=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null| base64 | tr -dc 'a-zA-Z0-9'|fold -w 12|head -n1)
     base_dir="base_$base_dir"
+    faux_dir=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null| base64 | tr -dc 'a-zA-Z0-9'|fold -w 12|head -n1)
+    faux_dir="faux_$faux_dir"
     expr_dir=$(dd if=/dev/urandom bs=15 count=1 2>/dev/null| base64 | tr -dc 'a-zA-Z0-9'|fold -w 12|head -n1)
     expr_dir="expr_$expr_dir"
-    writeable_dirs=($base_dir $expr_dir)
+    writeable_dirs=($base_dir $faux_dir $expr_dir)
     for d in ${writeable_dirs[@]}; do
         dx rm -r $projName:/$d >& /dev/null || true
     done
 
     dx mkdir $projName:/$base_dir
+    populate_faux_dir $faux_dir
     dx mkdir $projName:/$expr_dir
+
+    target_dir=$base_dir/T1
+    dx mkdir $projName:/$target_dir
 
     # Start the dxfuse daemon in the background, and wait for it to initilize.
     echo "Mounting dxfuse"
@@ -412,13 +545,19 @@ function fs_test_cases {
     if [[ $verbose != "" ]]; then
         flags="$flags -verbose 2"
     fi
+    set -x
     $dxfuse $flags $mountpoint dxfuse_test_data dxfuse_test_read_only ArchivedStuff
-    sleep 1
+
+    echo "can write to a small file"
+    check_file_write_content $mountpoint/$projName $target_dir
+
+    echo "can write several files to a directory"
+    write_files $mountpoint/$projName/$dxDirOnProject/large $mountpoint/$projName/$target_dir
 
     echo "can't write to read-only project"
     write_to_read_only_project
 
-    echo "archived files"
+    echo "can't see archived files"
     archived_files $mountpoint/ArchivedStuff
 
     echo "create directory"
@@ -434,8 +573,8 @@ function fs_test_cases {
     mkdir_existing  $mountpoint/$projName/$base_dir/T4
 
     echo "file create remove"
-    file_create_existing "$mountpoint/$projName/$expr_dir"
-    file_remove_non_exist "$mountpoint/$projName/$expr_dir"
+    file_create_existing "$mountpoint/$projName"
+    file_remove_non_exist "$mountpoint/$projName"
 
     echo "move file I"
     move_file $mountpoint/$projName/$expr_dir
@@ -464,7 +603,13 @@ function fs_test_cases {
 
     echo "checking illegal directory moves"
     move_non_existent_dir "$mountpoint/$projName"
-    move_dir_to_file "$mountpoint/$projName/$expr_dir"
+    move_dir_to_file "$mountpoint/$projName"
+
+    echo "faux dirs cannot be moved"
+    faux_dirs_move $mountpoint/$projName/$faux_dir
+
+    echo "faux dir operations"
+    faux_dirs_remove $mountpoint/$projName/$faux_dir
 
     echo "directory and file with the same name"
     dir_and_file_with_the_same_name $mountpoint/$projName
