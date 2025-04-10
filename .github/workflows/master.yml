@@ -10,22 +10,56 @@ on:
   workflow_dispatch:
 
 jobs:
+  build:
+    name: Build dxfuse
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Build builder Docker image
+        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
+        with:
+          context: .
+          file: builder.Dockerfile
+          push: false
+          tags: dxfuse-builder:latest
+
+      - name: Build dxfuse
+        run: |
+          set -x
+          docker run --rm \
+            -v ${{ github.workspace }}:/dxfuse \
+            -w /dxfuse \
+            dxfuse-builder:latest \
+            go build -o dxfuse cli/main.go
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dxfuse
+          path: dxfuse
+          retention-days: 7
+
+
   applet-test:
     name: Applet dxfuse tests
     needs: local-test
-    runs-on: ubuntu-20.04
-    env:
-      CGO_ENABLED: 1
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-go@v2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Work around unstable connection
+        uses: ./.github/actions/unstable-connection-workaround
+
+      - uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
         with:
-          go-version: '1.22.6'
+          name: dxfuse
 
       - name: Install & build
         run: |
           set -x
           pwd
+          chmod +x dxfuse
           sudo apt-get update
           sudo apt-get install -y apt-utils make \
           wget git build-essential apt-transport-https \
@@ -38,8 +72,6 @@ jobs:
           python3 -m pip install -r requirements.txt
 
           python3 -m pip install dxpy
-
-          go build -o dxfuse cli/main.go
 
       - name: Applet dxfuse tests
         env:
@@ -56,19 +88,23 @@ jobs:
 
   local-test:
     name: Local dxfuse tests
-    runs-on: ubuntu-20.04
-    env:
-      CGO_ENABLED: 1
+    needs: build
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-go@v2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Work around unstable connection
+        uses: ./.github/actions/unstable-connection-workaround
+      
+      - uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
         with:
-          go-version: '1.22.6'
+          name: dxfuse
 
       - name: Install & build
         run: |
           set -x
           pwd
+          chmod +x dxfuse
           sudo apt-get update
           sudo apt-get install -y apt-utils xattr attr make \
           wget git build-essential apt-transport-https \
@@ -80,8 +116,6 @@ jobs:
           python3 -m pip install -r requirements.txt
 
           python3 -m pip install dxpy
-
-          go build -o dxfuse cli/main.go
 
       - name: Local dxfuse tests
         env:
@@ -102,8 +136,8 @@ jobs:
         GOARCH: amd64
         CGO_ENABLED: 1
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-go@v2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@424fc82d43fa5a37540bae62709ddcc23d9520d4 # v2.1.5
         with:
           go-version: '1.22.6'
       - name: Install & build

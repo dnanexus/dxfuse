@@ -1,0 +1,41 @@
+name: Unstable connection workaround
+description: |
+  Fixes PTFM-39592. Resolves hostnames of our services that have multiple IPs and puts
+  one IP into /etc/hosts. This causes the IP to be stable, which fixes connection resets
+  and other network instabilities. Reported as GitHub bug in:
+    - https://github.com/actions/runner-images/issues/7402
+    - https://github.com/actions/runner-images/issues/11886
+
+runs:
+  using: composite
+  steps:
+    - name: Make IPs stable
+      id: make-ips-stable
+      shell: bash
+      run: |
+        # Resolves hostname and puts one IP into /etc/hosts.
+        # Updates the IP every 5 minutes.
+        make_ip_stable() {
+          local hostname="$1"
+          local IP
+          
+          while true; do
+            IP=$(host "$hostname" | awk '/has address/ { print $4; exit }')
+          
+            if [ -z "$IP" ]; then
+              echo "No IP address found for $hostname"
+            else
+              # Remove existing entry for the hostname
+              sudo sed -i "/$hostname/d" /etc/hosts
+          
+              # Add updated IP and hostname to /etc/hosts
+              echo "$IP $hostname" | sudo tee -a /etc/hosts > /dev/null
+            fi
+          
+            # Sleep for 5 minutes
+            sleep 300
+          done &
+        }
+        
+        make_ip_stable stagingapi.dnanexus.com
+        make_ip_stable stagingauth.dnanexus.com
