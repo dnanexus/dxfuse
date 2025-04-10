@@ -191,17 +191,16 @@ func NewDxfuse(
 	}
 	fsys.opClose(oph)
 
-	// Initialize the memory manager
-	// Calculate default memory usage as 75% of system memory using gopsutil
+	// Default to max 50% memory usage of system memory
 	sysMemory, _ := mem.VirtualMemory()
-	maxMemory := int64(sysMemory.Total * 3 / 4) // Default to 75% of system memory
+	maxMemory := int64(sysMemory.Total / 2)
 	if options.MaxMemoryUsageMiB > 0 {
 		maxMemory = int64(options.MaxMemoryUsageMiB) * MiB
 	}
 	// 10% of maxMemory
 	reservedReadMemory := maxMemory / 10
-	// 10% of maxMemory if not options.ReadOnly
 	reservedWriteMemory := int64(0)
+	// 10% of maxMemory if -limitedWrite mode
 	if !options.ReadOnly {
 		reservedWriteMemory = maxMemory / 10
 	}
