@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/dnanexus/dxda"
+	"github.com/shirou/gopsutil/process"
 )
 
 const (
@@ -64,13 +65,21 @@ func NewFileUploader(verboseLevel int, options Options, dxEnv dxda.DXEnvironment
 	if runtime.NumCPU()*3 > concurrentWriteBufferLimit {
 		concurrentWriteBufferLimit = runtime.NumCPU() * 3
 	}
+
+	// Calculate default memory usage as 75% of system memory using gopsutil
+	sysMemory, _ := process.VirtualMemory()
+	maxMemory := int64(sysMemory.Total * 3 / 4) // Default to 75% of system memory
+	if options.MaxMemoryUsageMiB > 0 {
+		maxMemory = int64(options.MaxMemoryUsageMiB) * MiB
+	}
+
 	uploader := &FileUploader{
 		verbose:           verboseLevel >= 1,
 		uploadQueue:       make(chan UploadRequest),
 		writeBufferChan:   make(chan struct{}, concurrentWriteBufferLimit),
 		numUploadRoutines: maxUploadRoutines,
 		ops:               NewDxOps(dxEnv, options),
-		memoryManager:     NewMemoryManager(int64(2 * 1024 * 1024 * 1024)), // Default to 2 GiB
+		memoryManager:     NewMemoryManager(maxMemory),
 	}
 
 	uploader.wg.Add(maxUploadRoutines)

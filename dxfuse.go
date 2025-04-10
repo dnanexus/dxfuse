@@ -19,6 +19,7 @@ import (
 	"github.com/jacobsa/fuse"
 	"github.com/jacobsa/fuse/fuseops"
 	"github.com/jacobsa/fuse/fuseutil"
+	"github.com/shirou/gopsutil/mem"
 
 	// for the sqlite driver
 	_ "github.com/mattn/go-sqlite3"
@@ -191,11 +192,20 @@ func NewDxfuse(
 	fsys.opClose(oph)
 
 	// Initialize the memory manager
-	maxMemory := int64(2 * 1024 * 1024 * 1024) // Default to 2 GiB
-	if options.MaxMemory > 0 {
-		maxMemory = options.MaxMemory
+	// Calculate default memory usage as 75% of system memory using gopsutil
+	sysMemory, _ := mem.VirtualMemory()
+	maxMemory := int64(sysMemory.Total * 3 / 4) // Default to 75% of system memory
+	if options.MaxMemoryUsageMiB > 0 {
+		maxMemory = int64(options.MaxMemoryUsageMiB) * MiB
 	}
-	memoryManager := NewMemoryManager(maxMemory, options.MinReadMemory, options.MinWriteMemory)
+	// 10% of maxMemory
+	reservedReadMemory := maxMemory / 10
+	// 10% of maxMemory if not options.ReadOnly
+	reservedWriteMemory := int64(0)
+	if !options.ReadOnly {
+		reservedWriteMemory = maxMemory / 10
+	}
+	memoryManager := NewMemoryManager(maxMemory, reservedReadMemory, reservedWriteMemory)
 
 	fsys.pgs = NewPrefetchGlobalState(options.VerboseLevel, dxEnv, memoryManager)
 

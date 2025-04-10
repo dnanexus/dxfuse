@@ -3,7 +3,7 @@ package dxfuse
 import "sync"
 
 type MemoryManager struct {
-	mutex           sync.Mutex
+	mutex           sync.Mutex // Lock for thread-safe updates to counters
 	cond            *sync.Cond // Condition variable for waiting
 	maxMemory       int64      // Maximum memory allowed (in bytes)
 	minReadMemory   int64      // Minimum reserved memory for reads

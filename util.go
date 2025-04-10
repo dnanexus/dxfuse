@@ -65,15 +65,13 @@ type DxDownloadURL struct {
 }
 
 type Options struct {
-	ReadOnly       bool
-	Verbose        bool
-	VerboseLevel   int
-	Uid            uint32
-	Gid            uint32
-	StateFolder    string
-	MaxMemory      int64 // Maximum memory allowed
-	MinReadMemory  int64 // Minimum reserved memory for reads
-	MinWriteMemory int64 // Minimum reserved memory for writes
+	ReadOnly          bool
+	Verbose           bool
+	VerboseLevel      int
+	Uid               uint32
+	Gid               uint32
+	StateFolder       string
+	MaxMemoryUsageMiB int // Hidden flag to override default memory usage (in MiB)
 }
 
 // A node is a generalization over files and directories
