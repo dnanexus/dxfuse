@@ -145,11 +145,12 @@ type PrefetchGlobalState struct {
 
 // Ensure all IOvec memory allocations use MemoryManager
 func (pgs *PrefetchGlobalState) allocateIOvecMemory(size int64) []byte {
-	if !pgs.memoryManager.AllocateReadBuffer(size, true) {
+	data := pgs.memoryManager.AllocateReadBuffer(size)
+	if data == nil {
 		pgs.log("Memory limit exceeded, dropping IOvec allocation")
 		return nil
 	}
-	return make([]byte, size)
+	return data
 }
 
 // Ensure all IOvec memory releases use MemoryManager
@@ -515,7 +516,7 @@ func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq
 	}
 	check(pfm.cache.iovecs[iovIdx].data == nil)
 	if err == nil {
-		if !pgs.memoryManager.AllocateReadBuffer(int64(len(data)), false) {
+		if !pgs.memoryManager.AllocateReadBuffer(int64(len(data))) {
 			pfm.log("Memory limit exceeded, dropping prefetch IO")
 			return
 		}

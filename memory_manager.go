@@ -6,28 +6,38 @@ type MemoryManager struct {
 	mutex           sync.Mutex
 	cond            *sync.Cond // Condition variable for waiting
 	maxMemory       int64      // Maximum memory allowed (in bytes)
+	minReadMemory   int64      // Minimum reserved memory for reads
+	minWriteMemory  int64      // Minimum reserved memory for writes
 	usedMemory      int64      // Currently used memory (in bytes)
 	prefetchWaiting int        // Number of prefetch threads waiting for memory
 	uploadMemory    int64      // Memory allocated for uploads
 	prefetchMemory  int64      // Memory allocated for prefetching
 }
 
-func NewMemoryManager(maxMemory int64) *MemoryManager {
+func NewMemoryManager(maxMemory, minReadMemory, minWriteMemory int64) *MemoryManager {
 	mm := &MemoryManager{
-		maxMemory:  maxMemory,
-		usedMemory: 0,
+		maxMemory:      maxMemory,
+		minReadMemory:  minReadMemory,
+		minWriteMemory: minWriteMemory,
+		usedMemory:     0,
 	}
 	mm.cond = sync.NewCond(&mm.mutex)
 	return mm
 }
 
 // Separate functions for read and write buffer allocation
-func (mm *MemoryManager) AllocateReadBuffer(size int64, priority bool) bool {
-	return mm.allocate(size, priority, false)
+func (mm *MemoryManager) AllocateReadBuffer(size int64) []byte {
+	if !mm.allocate(size, false) {
+		return nil
+	}
+	return make([]byte, size)
 }
 
-func (mm *MemoryManager) AllocateWriteBuffer(size int64, priority bool) bool {
-	return mm.allocate(size, priority, true)
+func (mm *MemoryManager) AllocateWriteBuffer(size int64) []byte {
+	if !mm.allocate(size, true) {
+		return nil
+	}
+	return make([]byte, size)
 }
 
 // Separate functions for read and write buffer release
@@ -41,7 +51,7 @@ func (mm *MemoryManager) ReleaseWriteBuffer(size int64) {
 
 // Add a helper function to allocate memory for buffers
 func (mm *MemoryManager) AllocateBuffer(size int64) []byte {
-	if !mm.allocate(size, true, false) {
+	if !mm.allocate(size, true) {
 		return nil
 	}
 	return make([]byte, size)
@@ -51,23 +61,22 @@ func (mm *MemoryManager) AllocateBuffer(size int64) []byte {
 func (mm *MemoryManager) ReleaseBuffer(data []byte) {
 	if data != nil {
 		mm.release(int64(len(data)), false)
+		// Set the buffer to nil to allow garbage collection
+		data = nil
 	}
 }
 
 // Internal helper functions for allocation and release
-func (mm *MemoryManager) allocate(size int64, priority bool, isWriteBuffer bool) bool {
+func (mm *MemoryManager) allocate(size int64, isWriteBuffer bool) bool {
 	mm.mutex.Lock()
 	defer mm.mutex.Unlock()
 
-	if !priority {
+	if !isWriteBuffer {
 		mm.prefetchWaiting++
 		defer func() { mm.prefetchWaiting-- }()
 	}
 
-	for mm.usedMemory+size > mm.maxMemory || (!priority && mm.prefetchWaiting > 0) {
-		if isWriteBuffer || (mm.prefetchMemory > mm.uploadMemory && priority) {
-			mm.prefetchWaiting = 0
-		}
+	for mm.usedMemory+size > mm.maxMemory || (!isWriteBuffer && mm.prefetchWaiting > 0) {
 		mm.cond.Wait()
 	}
 

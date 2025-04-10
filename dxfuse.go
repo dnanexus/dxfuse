@@ -195,10 +195,9 @@ func NewDxfuse(
 	if options.MaxMemory > 0 {
 		maxMemory = options.MaxMemory
 	}
-	memoryManager := NewMemoryManager(maxMemory)
+	memoryManager := NewMemoryManager(maxMemory, options.MinReadMemory, options.MinWriteMemory)
 
-	fsys.pgs = NewPrefetchGlobalState(options.VerboseLevel, dxEnv)
-	fsys.pgs.memoryManager = memoryManager
+	fsys.pgs = NewPrefetchGlobalState(options.VerboseLevel, dxEnv, memoryManager)
 
 	// describe all the projects, we need their upload parameters
 	httpClient := <-fsys.httpClientPool
@@ -1520,6 +1519,9 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 	if fh.writeBuffer == nil {
 		// Allocate write buffer
 		fh.writeBuffer = fsys.uploader.AllocateWriteBuffer(fh.lastPartId, true)
+		if fh.writeBuffer == nil {
+			return syscall.ENOMEM
+		}
 	}
 
 	bytesToWrite := op.Data
@@ -2116,7 +2118,7 @@ func (fsys *Filesys) SetXattr(ctx context.Context, op *fuseops.SetXattrOp) error
 	default:
 		fsys.log("invalid SetAttr flag value %d, expecting one of {0x0, 0x1, 0x2}",
 			op.Flags)
-		return syscall.EINVAL
+		return fuse.EINVAL
 	}
 
 	// update the file in-memory representation

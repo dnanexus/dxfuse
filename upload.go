@@ -26,8 +26,11 @@ func (uploader *FileUploader) AllocateWriteBuffer(partId int, block bool) []byte
 	writeBufferCapacity := math.Min(InitialUploadPartSize*math.Pow(1.1, float64(partId)), MaxUploadPartSize)
 	writeBufferCapacity = math.Round(writeBufferCapacity)
 
-	uploader.memoryManager.AllocateWriteBuffer(int64(writeBufferCapacity), true) // Prioritize uploads
-	writeBuffer := make([]byte, 0, int64(writeBufferCapacity))
+	writeBuffer := uploader.memoryManager.AllocateWriteBuffer(int64(writeBufferCapacity))
+	if writeBuffer == nil {
+		uploader.log("Failed to allocate write buffer")
+		return nil
+	}
 	return writeBuffer
 }
 
