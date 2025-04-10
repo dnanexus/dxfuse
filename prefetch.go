@@ -7,7 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"math/bits"
 	"net/http"
@@ -160,7 +160,7 @@ func (pgs *PrefetchGlobalState) releaseIOvecMemory(data []byte) {
 	}
 }
 
-// Add a newIovec constructor to centralize memory allocation
+// Iovec constructor to centralize memory allocation
 func (pgs *PrefetchGlobalState) newIovec(ioSize, startByte, endByte int64) *Iovec {
 	data := pgs.allocateIOvecMemory(ioSize)
 	if data == nil {
@@ -392,6 +392,17 @@ func (pgs *PrefetchGlobalState) readData(client *http.Client, ioReq IoReq) ([]by
 			ioReq.hid, ioReq.inode, ioReq.id, ioReq.startByte, expectedLen)
 	}
 
+	// Allocate buffer using MemoryManager
+	data := pgs.memoryManager.AllocateReadBuffer(expectedLen)
+	if data == nil {
+		return nil, fmt.Errorf("Memory limit exceeded, unable to allocate buffer")
+	}
+	defer func() {
+		if data != nil {
+			pgs.memoryManager.ReleaseReadBuffer(expectedLen)
+		}
+	}()
+
 	headers := make(map[string]string)
 
 	// Copy the immutable headers
@@ -415,31 +426,30 @@ func (pgs *PrefetchGlobalState) readData(client *http.Client, ioReq IoReq) ([]by
 		if err != nil {
 			return nil, err
 		}
-		// TODO: optimize by using a pre-allocated buffer
-		data, _ := ioutil.ReadAll(resp.Body)
-		resp.Body.Close()
 
-		recvLen := int64(len(data))
-		if recvLen != expectedLen {
-			// retry (only) in the case of short read
+		// Read data into the allocated buffer
+		recvLen, readErr := io.ReadFull(resp.Body, data)
+		resp.Body.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
+
+		if int64(recvLen) != expectedLen {
 			pgs.log("(inode=%d) (io=%d) received length is wrong, got %d, expected %d. Retrying.",
 				ioReq.inode, ioReq.id, recvLen, expectedLen)
 			continue
 		}
 
 		if pgs.verbose {
-			if err == nil {
-				pgs.log("(inode=%d) (io=%d) [%d -- %d] returned correctly",
-					ioReq.inode, ioReq.id, ioReq.startByte, ioReq.endByte)
-			} else {
-				pgs.log("(inode=%d) (io=%d) [%d -- %d] returned with error %s",
-					ioReq.inode, ioReq.id, ioReq.startByte, ioReq.endByte, err.Error())
-			}
+			pgs.log("(inode=%d) (io=%d) [%d -- %d] returned correctly",
+				ioReq.inode, ioReq.id, ioReq.startByte, ioReq.endByte)
 		}
-		return data, err
+		// Prevent releasing the buffer on success
+		defer func() { data = nil }()
+		return data, nil
 	}
 
-	pgs.log("Did not received the data for IO [%d -- %d]", ioReq.startByte, ioReq.endByte)
+	pgs.log("Did not receive the data for IO [%d -- %d]", ioReq.startByte, ioReq.endByte)
 	return nil, fmt.Errorf("Did not receive the data")
 }
 
@@ -516,10 +526,6 @@ func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq
 	}
 	check(pfm.cache.iovecs[iovIdx].data == nil)
 	if err == nil {
-		if !pgs.memoryManager.AllocateReadBuffer(int64(len(data))) {
-			pfm.log("Memory limit exceeded, dropping prefetch IO")
-			return
-		}
 		pfm.cache.iovecs[iovIdx].data = data
 		pfm.cache.iovecs[iovIdx].state = IOV_DONE
 
