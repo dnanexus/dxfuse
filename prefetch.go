@@ -143,6 +143,39 @@ type PrefetchGlobalState struct {
 	memoryManager         *MemoryManager // Global memory manager
 }
 
+// Ensure all IOvec memory allocations use MemoryManager
+func (pgs *PrefetchGlobalState) allocateIOvecMemory(size int64) []byte {
+	if !pgs.memoryManager.AllocateReadBuffer(size, true) {
+		pgs.log("Memory limit exceeded, dropping IOvec allocation")
+		return nil
+	}
+	return make([]byte, size)
+}
+
+// Ensure all IOvec memory releases use MemoryManager
+func (pgs *PrefetchGlobalState) releaseIOvecMemory(data []byte) {
+	if data != nil {
+		pgs.memoryManager.ReleaseReadBuffer(int64(len(data)))
+	}
+}
+
+// Add a newIovec constructor to centralize memory allocation
+func (pgs *PrefetchGlobalState) newIovec(ioSize, startByte, endByte int64) *Iovec {
+	data := pgs.allocateIOvecMemory(ioSize)
+	if data == nil {
+		pgs.log("Memory limit exceeded, dropping IOvec allocation")
+		return nil
+	}
+	return &Iovec{
+		ioSize:    ioSize,
+		startByte: startByte,
+		endByte:   endByte,
+		data:      nil,
+		state:     IOV_HOLE,
+		cond:      sync.NewCond(&pgs.mutex),
+	}
+}
+
 // presumption: there is some intersection
 func (iov Iovec) intersectBuffer(startOfs int64, endOfs int64) []byte {
 	// these are offsets in the entire file
@@ -295,6 +328,14 @@ func (pgs *PrefetchGlobalState) resetPfm(pfm *PrefetchFileMetadata) {
 	pfm.cancelIOs()
 	pfm.hiUserAccessOfs = 0
 	pfm.state = PFM_NIL
+
+	// Release memory for all IOvecs in the cache
+	for _, iovec := range pfm.cache.iovecs {
+		if iovec.data != nil {
+			pgs.releaseIOvecMemory(iovec.data)
+		}
+	}
+
 	pfm.cache = Cache{}
 }
 
@@ -474,7 +515,7 @@ func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq
 	}
 	check(pfm.cache.iovecs[iovIdx].data == nil)
 	if err == nil {
-		if !pgs.memoryManager.Allocate(int64(len(data)), false) { // Lower priority for prefetching
+		if !pgs.memoryManager.AllocateReadBuffer(int64(len(data)), false) {
 			pfm.log("Memory limit exceeded, dropping prefetch IO")
 			return
 		}
@@ -487,7 +528,7 @@ func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq
 	} else {
 		// Release memory in case of an error
 		if data != nil {
-			pgs.memoryManager.Release(int64(len(data)))
+			pgs.releaseIOvecMemory(data)
 		}
 		pfm.log("(#io=%d) prefetch io error [%d -- %d] %s",
 			ioReq.id, ioReq.startByte, ioReq.endByte, err.Error())
@@ -638,24 +679,19 @@ func (pgs *PrefetchGlobalState) firstAccessToStream(pfm *PrefetchFileMetadata, o
 	pageSize := int64(4 * KiB)
 	startOfs := (ofs / pageSize) * pageSize
 
-	iov1 := &Iovec{
-		ioSize:    prefetchMinIoSize,
-		startByte: startOfs,
-		endByte:   startOfs + prefetchMinIoSize - 1,
-		touched:   0,
-		data:      nil,
-		state:     IOV_HOLE,
-		cond:      sync.NewCond(&pfm.mutex),
+	// Update IOvec creation to support dynamic buffer sizes
+	iov1 := pgs.newIovec(prefetchMinIoSize, startOfs, startOfs+prefetchMinIoSize-1)
+	if iov1 == nil {
+		pfm.log("Memory limit exceeded, dropping prefetch IO")
+		return
 	}
-	iov2 := &Iovec{
-		ioSize:    prefetchMinIoSize,
-		startByte: iov1.startByte + prefetchMinIoSize,
-		endByte:   iov1.endByte + prefetchMinIoSize,
-		touched:   0,
-		data:      nil,
-		state:     IOV_HOLE,
-		cond:      sync.NewCond(&pfm.mutex),
+
+	iov2 := pgs.newIovec(prefetchMinIoSize, iov1.startByte+prefetchMinIoSize, iov1.endByte+prefetchMinIoSize)
+	if iov2 == nil {
+		pfm.log("Memory limit exceeded, dropping prefetch IO")
+		return
 	}
+
 	pfm.cache = Cache{
 		prefetchIoSize: prefetchMinIoSize,
 		maxNumIovecs:   2,
@@ -807,15 +843,12 @@ func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIn
 				break
 			}
 			endByte := MinInt64(startByte+int64(pfm.cache.prefetchIoSize)-1, lastByteInFile)
-			iov := &Iovec{
-				ioSize:    endByte - startByte + 1,
-				startByte: startByte,
-				endByte:   endByte,
-				touched:   0,
-				data:      nil,
-				state:     IOV_IN_FLIGHT,
-				cond:      sync.NewCond(&pfm.mutex),
+			iov := pgs.newIovec(endByte-startByte+1, startByte, endByte)
+			if iov == nil {
+				pfm.log("Memory limit exceeded, dropping prefetch IO")
+				continue
 			}
+
 			uniqueId := atomic.AddUint64(&pgs.ioCounter, 1)
 			pgs.ioQueue <- IoReq{
 				hid:       pfm.hid,
@@ -856,7 +889,7 @@ func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIn
 		if nRemoved > 0 {
 			for i := 0; i < nRemoved; i++ {
 				if pfm.cache.iovecs[i].data != nil {
-					pgs.memoryManager.Release(int64(len(pfm.cache.iovecs[i].data)))
+					pgs.releaseIOvecMemory(pfm.cache.iovecs[i].data)
 				}
 			}
 			pfm.cache.iovecs = pfm.cache.iovecs[nRemoved:]

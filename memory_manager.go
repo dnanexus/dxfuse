@@ -21,8 +21,41 @@ func NewMemoryManager(maxMemory int64) *MemoryManager {
 	return mm
 }
 
-// Try to allocate memory. Dynamically rebalance priorities if needed.
-func (mm *MemoryManager) Allocate(size int64, priority bool) bool {
+// Separate functions for read and write buffer allocation
+func (mm *MemoryManager) AllocateReadBuffer(size int64, priority bool) bool {
+	return mm.allocate(size, priority, false)
+}
+
+func (mm *MemoryManager) AllocateWriteBuffer(size int64, priority bool) bool {
+	return mm.allocate(size, priority, true)
+}
+
+// Separate functions for read and write buffer release
+func (mm *MemoryManager) ReleaseReadBuffer(size int64) {
+	mm.release(size, false)
+}
+
+func (mm *MemoryManager) ReleaseWriteBuffer(size int64) {
+	mm.release(size, true)
+}
+
+// Add a helper function to allocate memory for buffers
+func (mm *MemoryManager) AllocateBuffer(size int64) []byte {
+	if !mm.allocate(size, true, false) {
+		return nil
+	}
+	return make([]byte, size)
+}
+
+// Add a helper function to release memory for buffers
+func (mm *MemoryManager) ReleaseBuffer(data []byte) {
+	if data != nil {
+		mm.release(int64(len(data)), false)
+	}
+}
+
+// Internal helper functions for allocation and release
+func (mm *MemoryManager) allocate(size int64, priority bool, isWriteBuffer bool) bool {
 	mm.mutex.Lock()
 	defer mm.mutex.Unlock()
 
@@ -32,15 +65,14 @@ func (mm *MemoryManager) Allocate(size int64, priority bool) bool {
 	}
 
 	for mm.usedMemory+size > mm.maxMemory || (!priority && mm.prefetchWaiting > 0) {
-		// Dynamic rebalancing: prioritize uploads if prefetching uses too much memory
-		if mm.prefetchMemory > mm.uploadMemory && priority {
-			mm.prefetchWaiting = 0 // Allow uploads to proceed
+		if isWriteBuffer || (mm.prefetchMemory > mm.uploadMemory && priority) {
+			mm.prefetchWaiting = 0
 		}
 		mm.cond.Wait()
 	}
 
 	mm.usedMemory += size
-	if priority {
+	if isWriteBuffer {
 		mm.uploadMemory += size
 	} else {
 		mm.prefetchMemory += size
@@ -48,13 +80,12 @@ func (mm *MemoryManager) Allocate(size int64, priority bool) bool {
 	return true
 }
 
-// Release memory back to the pool and adjust usage tracking.
-func (mm *MemoryManager) Release(size int64, priority bool) {
+func (mm *MemoryManager) release(size int64, isWriteBuffer bool) {
 	mm.mutex.Lock()
 	defer mm.mutex.Unlock()
 
 	mm.usedMemory -= size
-	if priority {
+	if isWriteBuffer {
 		mm.uploadMemory -= size
 	} else {
 		mm.prefetchMemory -= size
