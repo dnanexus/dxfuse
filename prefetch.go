@@ -266,29 +266,23 @@ func NewPrefetchGlobalState(verboseLevel int, dxEnv dxda.DXEnvironment, memoryMa
 	// 2) not have more than two workers per CPU
 	// 3) not go over an overall limit, regardless of machine size
 	numCPUs := runtime.NumCPU()
-	numPrefetchThreads := MinInt(numCPUs*2, maxNumPrefetchThreads)
+	numPrefetchThreads := MinInt(MaxInt(10, numCPUs*2), 150)
 	log.Printf("Number of prefetch threads=%d", numPrefetchThreads)
 
-	// The number of read-ahead should be limited to 8
-	maxNumChunksReadAhead := MinInt(8, numPrefetchThreads-1)
-	maxNumChunksReadAhead = MaxInt(1, maxNumChunksReadAhead)
-
-	// determine the maximal size of a prefetch IO.N
-	//
-	// TODO: make this dynamic based on network performance.
+	// determine the maximal size of a prefetch IO
 	var prefetchMaxIoSize int64
 	if dxEnv.DxJobId == "" {
-		// on a remote machine the timeouts are too great
-		// for large IO sizes. It is common to see 90 second
-		// IOs.
 		prefetchMaxIoSize = 16 * MiB
 	} else {
-		// on a worker we can use large sizes, because
-		// we have a good network connection to S3 and dnanexus servers
-		prefetchMaxIoSize = 96 * MiB
+		prefetchMaxIoSize = 64 * MiB
 	}
 
-	// calculate how much memory will be used in the worst cast.
+	// Calculate the maximum number of read-ahead chunks based on memory usage
+	maxReadMemoryUsage := memoryManager.maxMemoryUsagePerModule
+	maxNumChunksReadAhead := int(maxReadMemoryUsage / prefetchMaxIoSize)
+	maxNumChunksReadAhead = MaxInt(maxNumChunksReadAhead-2, 1)
+
+	// calculate how much memory will be used in the worst case.
 	// - Each stream uses two chunks.
 	// - In addition, we are spreading around [maxNumChunksReadAhead] chunks.
 	// Each chunk could be as large as [prefetchMaxIoSize].

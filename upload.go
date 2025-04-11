@@ -25,9 +25,15 @@ func (uploader *FileUploader) AllocateWriteBuffer(partId int, block bool) []byte
 		computedCapacity := math.Min(InitialUploadPartSize*math.Pow(1.1, float64(partId)), MaxUploadPartSize)
 		writeBufferCapacity = int(math.Round(computedCapacity))
 	}
+
+	// Ensure the write buffer size does not exceed MemoryManager.maxMemoryUsagePerModule
+	if int64(writeBufferCapacity) > uploader.memoryManager.maxMemoryUsagePerModule {
+		writeBufferCapacity = int(uploader.memoryManager.maxMemoryUsagePerModule)
+	}
+
 	// This is a blocking call, so it will wait until memory for a write buffer is available
 	// according to shared read/write memory buffer limits
-	uploader.log("Allocating %.2f MiB for write buffer", float64(writeBufferCapacity/1024/1024))
+	uploader.log("Allocating %.2f MiB for write buffer", float64(writeBufferCapacity)/1024/1024)
 	writeBuffer := uploader.memoryManager.AllocateWriteBuffer(int64(writeBufferCapacity))
 	if writeBuffer == nil {
 		uploader.log("Failed to allocate write buffer")
