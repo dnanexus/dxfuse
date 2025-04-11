@@ -56,10 +56,10 @@ func (mm *MemoryManager) allocate(size int64, isWriteBuffer bool, waitIndefinite
 	mm.mutex.Lock()
 	if isWriteBuffer {
 		mm.writesWaiting++
-		mm.log("Allocating %.2f bytes for write buffer", float64(size/1024/1024))
+		mm.log("Allocating %.2f MiB for write buffer", float64(size/1024/1024))
 	} else {
 		mm.readsWaiting++
-		mm.log("Allocating %.2f bytes for read buffer", float64(size/1024/1024))
+		mm.log("Allocating %.2f MiB for read buffer", float64(size/1024/1024))
 	}
 	mm.log("Memory stats before allocation: used=%d, write=%d, read=%d, readsWaiting=%d, writesWaiting=%d",
 		mm.usedMemory, mm.writeMemory, mm.readMemory, mm.readsWaiting, mm.writesWaiting)
