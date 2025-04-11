@@ -56,14 +56,9 @@ func (mm *MemoryManager) allocate(size int64, isWriteBuffer bool, waitIndefinite
 	mm.mutex.Lock()
 	if isWriteBuffer {
 		mm.writesWaiting++
-		mm.log("Allocating %.2f MiB for write buffer", float64(size/1024/1024))
 	} else {
 		mm.readsWaiting++
-		mm.log("Allocating %.2f MiB for read buffer", float64(size/1024/1024))
 	}
-	mm.log("Memory stats before allocation: used=%d, write=%d, read=%d, readsWaiting=%d, writesWaiting=%d",
-		mm.usedMemory, mm.writeMemory, mm.readMemory, mm.readsWaiting, mm.writesWaiting)
-
 	defer func() {
 		if isWriteBuffer {
 			mm.writesWaiting--
@@ -92,7 +87,7 @@ func (mm *MemoryManager) allocate(size int64, isWriteBuffer bool, waitIndefinite
 	}
 
 	// Log memory usage in MiB
-	mm.log("Memory stats: used=%.2f MiB, write=%.2f MiB, read=%.2f MiB, readsWaiting=%d, writesWaiting=%d",
+	mm.log("Memory stats after allocate: used=%.2f MiB, write=%.2f MiB, read=%.2f MiB, readsWaiting=%d, writesWaiting=%d",
 		float64(mm.usedMemory)/1024/1024,
 		float64(mm.writeMemory)/1024/1024,
 		float64(mm.readMemory)/1024/1024,
@@ -120,11 +115,11 @@ func (mm *MemoryManager) release(buf []byte, isWriteBuffer bool) {
 	}
 
 	// Log memory usage in MiB
-	mm.log("Memory stats after release: used=%.2f MiB, write=%.2f MiB, read=%.2f MiB, readsWaiting=%d",
+	mm.log("Memory stats after release: used=%.2f MiB, write=%.2f MiB, read=%.2f MiB, readsWaiting=%d, writesWaiting=%d",
 		float64(mm.usedMemory)/1024/1024,
 		float64(mm.writeMemory)/1024/1024,
 		float64(mm.readMemory)/1024/1024,
-		mm.readsWaiting)
+		mm.readsWaiting, mm.writesWaiting)
 	mm.cond.Broadcast()
 }
 

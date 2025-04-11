@@ -3,6 +3,7 @@ package dxfuse
 import (
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestMemoryManager_AllocateAndReleaseWriteBuffer(t *testing.T) {
@@ -67,5 +68,34 @@ func TestMemoryManager_ExceedMaxMemory(t *testing.T) {
 
 	if mm.GetUsedMemory() != 0 {
 		t.Errorf("Expected used memory to be 0 after failed allocation, got %d", mm.GetUsedMemory())
+	}
+}
+
+func TestMemoryManager_ParallelAllocationAndRelease(t *testing.T) {
+	maxMemory := int64(14 * 1024 * 1024 * 1024) // 14 GiB
+	maxModuleMemory := int64(64 * 1024 * 1024)  // 64 MiB
+	mm := NewMemoryManager(maxMemory, maxModuleMemory)
+
+	var wg sync.WaitGroup
+	numGoroutines := 100
+	bufferSize := int64(64 * 1024 * 1024) // 64 MiB
+
+	wg.Add(numGoroutines)
+	for i := 0; i < numGoroutines; i++ {
+		go func() {
+			defer wg.Done()
+			buf := mm.AllocateWriteBuffer(bufferSize)
+			if buf != nil {
+				// Simulate some work with the buffer
+				time.Sleep(10 * time.Millisecond)
+				mm.ReleaseWriteBuffer(buf)
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	if mm.GetUsedMemory() != 0 {
+		t.Errorf("Expected used memory to be 0 after all releases, got %d", mm.GetUsedMemory())
 	}
 }
