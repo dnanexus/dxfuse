@@ -1547,10 +1547,9 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 		if sliceUpperBound > cap(fh.writeBuffer) {
 			sliceUpperBound = cap(fh.writeBuffer)
 		}
-		// expand slice
-		fh.writeBuffer = fh.writeBuffer[:sliceUpperBound]
-		// copy data into slice
+		// copy data into buffer
 		bytesCopied := copy(fh.writeBuffer[fh.writeBufferOffset:sliceUpperBound], bytesToWrite)
+		// update file size
 		fh.size += int64(bytesCopied)
 		// increment next write offset
 		fh.nextWriteOffset += int64(bytesCopied)
@@ -1646,6 +1645,9 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	// upload last part
 	fh.lastPartId++
 	partId := fh.lastPartId
+	// Resize the writeBuffer to its used capacity before setting it to nil
+	fh.writeBuffer = fsys.uploader.memoryManager.ResizeWriteBuffer(fh.writeBuffer, int64(fh.writeBufferOffset))
+
 	uploadReq := UploadRequest{
 		fh:          fh,
 		fileId:      fh.Id,
@@ -1654,6 +1656,7 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	}
 	fh.wg.Add(1)
 	fsys.uploader.uploadQueue <- uploadReq
+
 	fh.writeBuffer = nil
 	<-fsys.uploader.writeBufferChan
 

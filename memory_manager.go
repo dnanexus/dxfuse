@@ -131,13 +131,14 @@ func (mm *MemoryManager) ResizeWriteBuffer(buf []byte, newSize int64) []byte {
 
 	sizeDiff := newSize - int64(len(buf))
 	if sizeDiff <= 0 {
-		// If the buffer is being shrunk, decrement memory usage
+		// Shrink the buffer first, then decrement memory usage
+		buf = buf[:newSize]
 		mm.usedMemory += sizeDiff // sizeDiff is negative, so this reduces usedMemory
 		mm.writeMemory += sizeDiff
 		mm.log("Shrinking write buffer to %d bytes", newSize)
 		mm.log("Memory stats after shrink: used=%d, write=%d, read=%d, readsWaiting=%d, writesWaiting=%d",
 			mm.usedMemory, mm.writeMemory, mm.readMemory, mm.readsWaiting, mm.writesWaiting)
-		return buf[:newSize]
+		return buf
 	}
 
 	// Check if we have enough memory to resize
