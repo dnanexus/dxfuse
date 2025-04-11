@@ -96,6 +96,8 @@ func (uploader *FileUploader) uploadWorker() {
 			uploader.wg.Done()
 			return
 		}
+		uploader.log("Uploading %s, part %d, size %.2f MiB", uploadReq.fileId, uploadReq.partId, float64(len(uploadReq.writeBuffer))/1024/1024)
+		// Upload the part
 		err := uploader.ops.DxFileUploadPart(context.TODO(), httpClient, uploadReq.fileId, uploadReq.partId, uploadReq.writeBuffer)
 		// Release the memory back to the pool
 		uploader.memoryManager.ReleaseWriteBuffer(uploadReq.writeBuffer)

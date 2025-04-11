@@ -1553,6 +1553,7 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 		bytesCopied := copy(fh.writeBuffer[fh.writeBufferOffset:sliceUpperBound], bytesToWrite)
 		// update file size
 		fh.size += int64(bytesCopied)
+		fsys.log("fh.size %d, bytesCopied %d", fh.size, bytesCopied)
 		// increment next write offset
 		fh.nextWriteOffset += int64(bytesCopied)
 		// increment current buffer slice offset
