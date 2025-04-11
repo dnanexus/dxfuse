@@ -1558,7 +1558,7 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 		fh.nextWriteOffset += int64(bytesCopied)
 		// increment current buffer slice offset
 		fh.writeBufferOffset += bytesCopied
-		if len(fh.writeBuffer) == cap(fh.writeBuffer) {
+		if fh.writeBufferOffset >= cap(fh.writeBuffer) {
 			fsys.log("WriteFile: buffer is full, uploading part %d", fh.lastPartId)
 			fsys.log("WriteFile: buffer size %d, offset %d", cap(fh.writeBuffer), fh.writeBufferOffset)
 			// increment part id
