@@ -43,7 +43,7 @@ func (mm *MemoryManager) AllocateWriteBuffer(size int64) []byte {
 	return make([]byte, size)
 }
 
-func (mm *MemoryManager) AllocateReadBufferIndefinitely(size int64) []byte {
+func (mm *MemoryManager) AllocateReadBufferWait(size int64) []byte {
 	if !mm.allocate(size, false, true) {
 		return nil
 	}
@@ -98,10 +98,11 @@ func (mm *MemoryManager) allocate(size int64, isWriteBuffer bool, waitIndefinite
 		mm.mutex.Unlock()
 	}()
 
+	// Adjust the condition to exclude the current thread's incremented value for readsWaiting
 	for mm.usedMemory+size > mm.maxMemory ||
 		(isWriteBuffer && mm.writeMemory+size > mm.maxMemoryUsagePerModule) ||
 		(!isWriteBuffer && mm.readMemory+size > mm.maxMemoryUsagePerModule) ||
-		(!isWriteBuffer && mm.readsWaiting > 0) {
+		(!isWriteBuffer && mm.readsWaiting > 1) { // Exclude the current thread's incremented value
 		if !waitIndefinitely {
 			return false
 		}
