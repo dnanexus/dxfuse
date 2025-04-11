@@ -230,8 +230,7 @@ func NewDxfuse(
 		return fsys, nil
 	}
 
-	fsys.uploader = NewFileUploader(options.VerboseLevel, options, dxEnv)
-	fsys.uploader.memoryManager = memoryManager
+	fsys.uploader = NewFileUploader(options.VerboseLevel, options, dxEnv, memoryManager)
 	// initialize sync daemon
 	//fsys.sybx = NewSyncDbDx(options, dxEnv, projId2Desc, mdb, fsys.mutex)
 
