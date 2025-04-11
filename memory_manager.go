@@ -6,8 +6,6 @@ type MemoryManager struct {
 	mutex                   sync.Mutex // Lock for thread-safe updates to counters
 	cond                    *sync.Cond // Condition variable for waiting
 	maxMemory               int64      // Maximum memory allowed (in bytes)
-	minReadMemory           int64      // Minimum reserved memory for reads
-	minWriteMemory          int64      // Minimum reserved memory for writes
 	maxMemoryUsagePerModule int64      // Maximum memory (in bytes) a single module can use
 	usedMemory              int64      // Currently used memory (in bytes)
 	prefetchWaiting         int        // Number of prefetch threads waiting for memory
@@ -15,12 +13,11 @@ type MemoryManager struct {
 	readMemory              int64      // Memory allocated for read cache and prefetch
 }
 
-func NewMemoryManager(maxMemory, minReadMemory, minWriteMemory int64) *MemoryManager {
+func NewMemoryManager(maxMemory int64, maxMemoryUsagePerModule int64) *MemoryManager {
 	mm := &MemoryManager{
-		maxMemory:      maxMemory,
-		minReadMemory:  minReadMemory,
-		minWriteMemory: minWriteMemory,
-		usedMemory:     0,
+		maxMemory:               maxMemory,
+		maxMemoryUsagePerModule: maxMemoryUsagePerModule,
+		usedMemory:              0,
 	}
 	mm.cond = sync.NewCond(&mm.mutex)
 	return mm

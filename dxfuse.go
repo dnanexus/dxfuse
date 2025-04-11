@@ -197,17 +197,13 @@ func NewDxfuse(
 	if options.MaxMemoryUsageMiB > 0 {
 		maxMemory = int64(options.MaxMemoryUsageMiB) * MiB
 	}
-	// 10% of maxMemory
-	reservedReadMemory := maxMemory / 10
-	reservedWriteMemory := int64(0)
-	// 10% of maxMemory if -limitedWrite mode
+	maxMemoryUsagePerModule := maxMemory
 	if !options.ReadOnly {
-		reservedWriteMemory = maxMemory / 10
+		maxMemoryUsagePerModule = maxMemory * 90 / 100
 	}
-	fsys.log("Max memory usage: %d MiB", maxMemory/MiB)
-	fsys.log("Reserved read memory: %d MiB", reservedReadMemory/MiB)
-	fsys.log("Reserved write memory: %d MiB", reservedWriteMemory/MiB)
-	memoryManager := NewMemoryManager(maxMemory, reservedReadMemory, reservedWriteMemory)
+	fsys.log("Max memory used: %d MiB", maxMemory/MiB)
+	fsys.log("Max memory used per module: %d MiB", maxMemoryUsagePerModule/MiB)
+	memoryManager := NewMemoryManager(maxMemory, maxMemoryUsagePerModule)
 
 	fsys.pgs = NewPrefetchGlobalState(options.VerboseLevel, dxEnv, memoryManager)
 
