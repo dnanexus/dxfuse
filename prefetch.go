@@ -347,11 +347,7 @@ func (pgs *PrefetchGlobalState) Shutdown() {
 	pgs.mutex.Unlock()
 
 	for _, hid := range allHandles {
-		pfm, err := pgs.getAndLockPfmWithTimeout(hid, 5*time.Second)
-		if err != nil {
-			pgs.log("Failed to lock global mutex for handle %d: %s", hid, err)
-			continue
-		}
+		pfm := pgs.getAndLockPfm(hid)
 		if pfm != nil {
 			pgs.resetPfm(pfm)
 			pfm.mutex.Unlock()
@@ -561,36 +557,6 @@ func (pgs *PrefetchGlobalState) getAndLockPfm(hid fuseops.HandleID) *PrefetchFil
 	return pfm
 }
 
-// Add timeout and logging for mutex locking
-func (pgs *PrefetchGlobalState) getAndLockPfmWithTimeout(hid fuseops.HandleID, timeout time.Duration) (*PrefetchFileMetadata, error) {
-	pgs.log("Attempting to lock global mutex for handle %d with timeout %s", hid, timeout)
-	locked := make(chan struct{})
-	go func() {
-		pgs.mutex.Lock()
-		close(locked)
-	}()
-
-	select {
-	case <-locked:
-		// Find the file this IO belongs to
-		pfm, ok := pgs.handlesInfo[hid]
-		if !ok {
-			pgs.mutex.Unlock()
-			pgs.log("Handle %d not found in global state", hid)
-			return nil, fmt.Errorf("handle %d not found", hid)
-		}
-
-		pgs.log("Locking per-file mutex for handle %d", hid)
-		pfm.mutex.Lock()
-		pgs.mutex.Unlock()
-		return pfm, nil
-
-	case <-time.After(timeout):
-		pgs.log("Timeout while attempting to lock global mutex for handle %d", hid)
-		return nil, fmt.Errorf("timeout while locking global mutex for handle %d", hid)
-	}
-}
-
 func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 	pgs.log("Starting prefetch IO worker")
 	// reuse this http client. The idea is to be able to reuse http connections.
@@ -613,12 +579,8 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 		if pgs.verboseLevel >= 2 {
 			pgs.log("(inode=%d) (io=%d) adding returned data to file", ioReq.inode, ioReq.id)
 		}
-		pfm, err := pgs.getAndLockPfmWithTimeout(ioReq.hid, 5*time.Second)
+		pfm := pgs.getAndLockPfm(ioReq.hid)
 
-		if err != nil {
-			pgs.log("Failed to lock global mutex for handle %d: %s", ioReq.hid, err)
-			continue
-		}
 		if pfm == nil {
 			// file is not tracked anymore
 			pgs.log("(inode=%d) (io=%d) dropping prefetch IO [%d -- %d], file is no longer tracked",
@@ -672,11 +634,7 @@ func (pgs *PrefetchGlobalState) tableCleanupWorker() {
 		// go over the table, and find all the files not worth tracking
 		now := time.Now()
 		for _, fh := range candidates {
-			pfm, err := pgs.getAndLockPfmWithTimeout(fh, 5*time.Second)
-			if err != nil {
-				pgs.log("Failed to lock global mutex for handle %d: %s", fh, err)
-				continue
-			}
+			pfm := pgs.getAndLockPfm(fh)
 			if pfm != nil {
 				// print a report for each stream
 				pfm.logReport(now)
@@ -777,11 +735,7 @@ func (pgs *PrefetchGlobalState) CreateStreamEntry(hid fuseops.HandleID, f File, 
 }
 
 func (pgs *PrefetchGlobalState) RemoveStreamEntry(hid fuseops.HandleID) {
-	pfm, err := pgs.getAndLockPfmWithTimeout(hid, 5*time.Second)
-	if err != nil {
-		pgs.log("Failed to lock global mutex for handle %d: %s", hid, err)
-		return
-	}
+	pfm := pgs.getAndLockPfm(hid)
 	if pfm != nil {
 		if pgs.verbose {
 			pgs.log("RemoveStreamEntry (%d, inode=%d)", hid, pfm.inode)
@@ -1161,11 +1115,7 @@ func (pgs *PrefetchGlobalState) getDataFromCache(
 // This is done on behalf of a user read request. If this range has been prefetched, copy the data.
 // Return how much data was copied. Return zero length if the data isn't in cache.
 func (pgs *PrefetchGlobalState) CacheLookup(hid fuseops.HandleID, startOfs int64, endOfs int64, data []byte) int {
-	pfm, err := pgs.getAndLockPfmWithTimeout(hid, 5*time.Second)
-	if err != nil {
-		pgs.log("Failed to lock global mutex for handle %d: %s", hid, err)
-		return 0
-	}
+	pfm := pgs.getAndLockPfm(hid)
 	if pfm == nil {
 		// file is not tracked, no prefetch data is available
 		return 0

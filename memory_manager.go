@@ -77,7 +77,8 @@ func (mm *MemoryManager) allocate(size int64, isWriteBuffer bool, waitIndefinite
 		(isWriteBuffer && mm.writeMemory+size > mm.maxMemoryUsagePerModule) ||
 		(!isWriteBuffer && mm.readMemory+size > mm.maxMemoryUsagePerModule) ||
 		(!isWriteBuffer && mm.readsWaiting > 1) {
-		if !waitIndefinitely {
+		if !waitIndefinitely || size > mm.maxMemory {
+			// If we can't wait indefinitely or the requested buffer size exceeds maxMemory, return nil
 			return nil
 		}
 		mm.cond.Wait()
