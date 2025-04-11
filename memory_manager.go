@@ -1,7 +1,11 @@
 package dxfuse
 
 import (
+	"runtime"
 	"sync"
+	"time"
+
+	"github.com/shirou/gopsutil/mem"
 )
 
 type MemoryManager struct {
@@ -23,6 +27,34 @@ func NewMemoryManager(maxMemory int64, maxMemoryUsagePerModule int64) *MemoryMan
 		usedMemory:              0,
 	}
 	mm.cond = sync.NewCond(&mm.mutex)
+
+	// Periodically log system and Go runtime memory usage
+	go func() {
+		for {
+			// Use gopsutil to get system memory stats
+			vmStat, err := mem.VirtualMemory()
+			if err == nil {
+				mm.log("System memory: total=%.2f MiB, free=%.2f MiB, used=%.2f MiB",
+					float64(vmStat.Total)/1024/1024,
+					float64(vmStat.Free)/1024/1024,
+					float64(vmStat.Used)/1024/1024)
+			} else {
+				mm.log("Error fetching system memory stats: %v", err)
+			}
+
+			// Log Go runtime memory usage
+			var memStats runtime.MemStats
+			runtime.ReadMemStats(&memStats)
+			mm.log("Go runtime memory: Alloc=%.2f MiB, Sys=%.2f MiB, HeapAlloc=%.2f MiB, HeapSys=%.2f MiB",
+				float64(memStats.Alloc)/1024/1024,
+				float64(memStats.Sys)/1024/1024,
+				float64(memStats.HeapAlloc)/1024/1024,
+				float64(memStats.HeapSys)/1024/1024)
+
+			time.Sleep(5 * time.Second) // Log every 5 seconds
+		}
+	}()
+
 	return mm
 }
 
