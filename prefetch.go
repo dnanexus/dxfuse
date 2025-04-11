@@ -33,7 +33,7 @@ const (
 
 	// An active stream can use a significant amount of memory to store prefetched data.
 	// Limit the total number of streams we are tracking and prefetching.
-	maxNumEntriesInTable = 10
+	minNumEntriesInTable = 10
 
 	// maximum number of prefetch threads, regardless of machine size
 	maxNumPrefetchThreads = 32
@@ -277,14 +277,13 @@ func NewPrefetchGlobalState(verboseLevel int, dxEnv dxda.DXEnvironment, memoryMa
 		prefetchMaxIoSize = 64 * MiB
 	}
 
-	// Calculate the maximum number of read-ahead chunks based on memory usage
-	maxNumChunksReadAhead := 8
-
 	// calculate how much memory will be used in the worst case.
 	// - Each stream uses two chunks.
 	// - In addition, we are spreading around [maxNumChunksReadAhead] chunks.
 	// Each chunk could be as large as [prefetchMaxIoSize].
-	totalMemoryBytes := 2 * maxNumEntriesInTable * prefetchMaxIoSize
+	maxNumEntriesInTable := MinInt(minNumEntriesInTable, numPrefetchThreads)
+	maxNumChunksReadAhead := maxNumEntriesInTable
+	totalMemoryBytes := 2 * int64(maxNumEntriesInTable) * prefetchMaxIoSize
 	totalMemoryBytes += int64(maxNumChunksReadAhead) * prefetchMaxIoSize
 
 	log.Printf("Maximum prefetch memory usage: %dMiB", totalMemoryBytes/MiB)
