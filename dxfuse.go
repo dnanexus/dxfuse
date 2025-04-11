@@ -1525,6 +1525,7 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 	}
 	if fh.writeBuffer == nil {
 		// Allocate write buffer
+		fsys.log("Filesys: Allocate write buffer for part %d", fh.lastPartId)
 		fh.writeBuffer = fsys.uploader.AllocateWriteBuffer(fh.lastPartId, true)
 		if fh.writeBuffer == nil {
 			return syscall.ENOMEM
