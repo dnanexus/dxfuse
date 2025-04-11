@@ -3,15 +3,16 @@ package dxfuse
 import "sync"
 
 type MemoryManager struct {
-	mutex           sync.Mutex // Lock for thread-safe updates to counters
-	cond            *sync.Cond // Condition variable for waiting
-	maxMemory       int64      // Maximum memory allowed (in bytes)
-	minReadMemory   int64      // Minimum reserved memory for reads
-	minWriteMemory  int64      // Minimum reserved memory for writes
-	usedMemory      int64      // Currently used memory (in bytes)
-	prefetchWaiting int        // Number of prefetch threads waiting for memory
-	uploadMemory    int64      // Memory allocated for uploads
-	prefetchMemory  int64      // Memory allocated for prefetching
+	mutex                   sync.Mutex // Lock for thread-safe updates to counters
+	cond                    *sync.Cond // Condition variable for waiting
+	maxMemory               int64      // Maximum memory allowed (in bytes)
+	minReadMemory           int64      // Minimum reserved memory for reads
+	minWriteMemory          int64      // Minimum reserved memory for writes
+	maxMemoryUsagePerModule int64      // Maximum memory (in bytes) a single module can use
+	usedMemory              int64      // Currently used memory (in bytes)
+	prefetchWaiting         int        // Number of prefetch threads waiting for memory
+	writeMemory             int64      // Memory allocated for writes and uploads
+	readMemory              int64      // Memory allocated for read cache and prefetch
 }
 
 func NewMemoryManager(maxMemory, minReadMemory, minWriteMemory int64) *MemoryManager {
@@ -23,6 +24,10 @@ func NewMemoryManager(maxMemory, minReadMemory, minWriteMemory int64) *MemoryMan
 	}
 	mm.cond = sync.NewCond(&mm.mutex)
 	return mm
+}
+
+func (pgs *MemoryManager) log(a string, args ...interface{}) {
+	LogMsg("mem", a, args...)
 }
 
 // Separate functions for read and write buffer allocation
@@ -69,6 +74,12 @@ func (mm *MemoryManager) ReleaseBuffer(data []byte) {
 // Internal helper functions for allocation and release
 func (mm *MemoryManager) allocate(size int64, isWriteBuffer bool) bool {
 	mm.mutex.Lock()
+	if isWriteBuffer {
+		mm.log("Allocating %d bytes for write buffer", size)
+	} else {
+		mm.log("Allocating %d bytes for read buffer", size)
+	}
+
 	defer mm.mutex.Unlock()
 
 	if !isWriteBuffer {
@@ -76,16 +87,20 @@ func (mm *MemoryManager) allocate(size int64, isWriteBuffer bool) bool {
 		defer func() { mm.prefetchWaiting-- }()
 	}
 
-	for mm.usedMemory+size > mm.maxMemory || (!isWriteBuffer && mm.prefetchWaiting > 0) {
-		mm.cond.Wait()
+	for mm.usedMemory+size > mm.maxMemory ||
+		(isWriteBuffer && mm.writeMemory+size > mm.maxMemoryUsagePerModule) ||
+		(!isWriteBuffer && mm.readMemory+size > mm.maxMemoryUsagePerModule) ||
+		(!isWriteBuffer && mm.prefetchWaiting > 0) {
+		mm.cond.Wait() // Wait until memory is available
 	}
 
 	mm.usedMemory += size
 	if isWriteBuffer {
-		mm.uploadMemory += size
+		mm.writeMemory += size
 	} else {
-		mm.prefetchMemory += size
+		mm.readMemory += size
 	}
+
 	return true
 }
 
@@ -95,9 +110,9 @@ func (mm *MemoryManager) release(size int64, isWriteBuffer bool) {
 
 	mm.usedMemory -= size
 	if isWriteBuffer {
-		mm.uploadMemory -= size
+		mm.writeMemory -= size
 	} else {
-		mm.prefetchMemory -= size
+		mm.readMemory -= size
 	}
 
 	if mm.usedMemory < 0 {
