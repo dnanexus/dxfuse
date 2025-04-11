@@ -1,6 +1,8 @@
 package dxfuse
 
-import "sync"
+import (
+	"sync"
+)
 
 type MemoryManager struct {
 	mutex                   sync.Mutex // Lock for thread-safe updates to counters
@@ -30,54 +32,27 @@ func (pgs *MemoryManager) log(a string, args ...interface{}) {
 
 // Separate functions for read and write buffer allocation
 func (mm *MemoryManager) AllocateReadBuffer(size int64) []byte {
-	if !mm.allocate(size, false, false) {
-		return nil
-	}
-	return make([]byte, size)
+	return mm.allocate(size, false, false)
 }
 
 func (mm *MemoryManager) AllocateWriteBuffer(size int64) []byte {
-	if !mm.allocate(size, true, true) {
-		return nil
-	}
-	return make([]byte, size)
+	return mm.allocate(size, true, true)
 }
 
 func (mm *MemoryManager) AllocateReadBufferWait(size int64) []byte {
-	if !mm.allocate(size, false, true) {
-		return nil
-	}
-	return make([]byte, size)
+	return mm.allocate(size, false, true)
 }
 
-// Separate functions for read and write buffer release
-func (mm *MemoryManager) ReleaseReadBuffer(size int64) {
-	mm.release(size, false)
+func (mm *MemoryManager) ReleaseReadBuffer(buf []byte) {
+	mm.release(buf, false)
 }
 
-func (mm *MemoryManager) ReleaseWriteBuffer(size int64) {
-	mm.release(size, true)
-}
-
-// Add a helper function to allocate memory for buffers
-func (mm *MemoryManager) AllocateBuffer(size int64) []byte {
-	if !mm.allocate(size, true, true) {
-		return nil
-	}
-	return make([]byte, size)
-}
-
-// Add a helper function to release memory for buffers
-func (mm *MemoryManager) ReleaseBuffer(data []byte) {
-	if data != nil {
-		mm.release(int64(len(data)), false)
-		// Set the buffer to nil to allow garbage collection
-		data = nil
-	}
+func (mm *MemoryManager) ReleaseWriteBuffer(buf []byte) {
+	mm.release(buf, true)
 }
 
 // Internal helper functions for allocation and release
-func (mm *MemoryManager) allocate(size int64, isWriteBuffer bool, waitIndefinitely bool) bool {
+func (mm *MemoryManager) allocate(size int64, isWriteBuffer bool, waitIndefinitely bool) []byte {
 	mm.mutex.Lock()
 	if isWriteBuffer {
 		mm.writesWaiting++
@@ -98,15 +73,14 @@ func (mm *MemoryManager) allocate(size int64, isWriteBuffer bool, waitIndefinite
 		mm.mutex.Unlock()
 	}()
 
-	// Adjust the condition to exclude the current thread's incremented value for readsWaiting
 	for mm.usedMemory+size > mm.maxMemory ||
 		(isWriteBuffer && mm.writeMemory+size > mm.maxMemoryUsagePerModule) ||
 		(!isWriteBuffer && mm.readMemory+size > mm.maxMemoryUsagePerModule) ||
-		(!isWriteBuffer && mm.readsWaiting > 1) { // Exclude the current thread's incremented value
+		(!isWriteBuffer && mm.readsWaiting > 1) {
 		if !waitIndefinitely {
-			return false
+			return nil
 		}
-		mm.cond.Wait() // Wait until memory is available
+		mm.cond.Wait()
 	}
 
 	mm.usedMemory += size
@@ -119,13 +93,15 @@ func (mm *MemoryManager) allocate(size int64, isWriteBuffer bool, waitIndefinite
 	mm.log("Memory stats: used=%d, write=%d, read=%d, readsWaiting=%d, writesWaiting=%d",
 		mm.usedMemory, mm.writeMemory, mm.readMemory, mm.readsWaiting, mm.writesWaiting)
 
-	return true
+	return make([]byte, size)
 }
 
-func (mm *MemoryManager) release(size int64, isWriteBuffer bool) {
+func (mm *MemoryManager) release(buf []byte, isWriteBuffer bool) {
 	mm.mutex.Lock()
 	defer mm.mutex.Unlock()
-
+	size := int64(len(buf))
+	// Release the buffer
+	buf = nil
 	mm.usedMemory -= size
 	if isWriteBuffer {
 		mm.writeMemory -= size
@@ -136,6 +112,7 @@ func (mm *MemoryManager) release(size int64, isWriteBuffer bool) {
 	if mm.usedMemory < 0 {
 		mm.usedMemory = 0
 	}
+
 	mm.log("Memory stats after release: used=%d, write=%d, read=%d, readsWaiting=%d",
 		mm.usedMemory, mm.writeMemory, mm.readMemory, mm.readsWaiting)
 	mm.cond.Broadcast()

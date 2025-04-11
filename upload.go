@@ -90,7 +90,7 @@ func (uploader *FileUploader) Shutdown() {
 func (uploader *FileUploader) uploadWorker() {
 	// reuse this http client
 	httpClient := dxda.NewHttpClient()
-	for true {
+	for {
 		uploadReq, ok := <-uploader.uploadQueue
 		if !ok {
 			uploader.wg.Done()
@@ -98,7 +98,7 @@ func (uploader *FileUploader) uploadWorker() {
 		}
 		err := uploader.ops.DxFileUploadPart(context.TODO(), httpClient, uploadReq.fileId, uploadReq.partId, uploadReq.writeBuffer)
 		// Release the memory back to the pool
-		uploader.memoryManager.ReleaseWriteBuffer(int64(cap(uploadReq.writeBuffer)))
+		uploader.memoryManager.ReleaseWriteBuffer(uploadReq.writeBuffer)
 		if err != nil {
 			// Record upload error in FileHandle
 			uploader.log("Error uploading %s, part %d, %s", uploadReq.fileId, uploadReq.partId, err.Error())

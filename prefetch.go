@@ -156,7 +156,7 @@ func (pgs *PrefetchGlobalState) allocateIOvecMemory(size int64) []byte {
 // Ensure all IOvec memory releases use MemoryManager
 func (pgs *PrefetchGlobalState) releaseIOvecMemory(data []byte) {
 	if data != nil {
-		pgs.memoryManager.ReleaseReadBuffer(int64(len(data)))
+		pgs.memoryManager.ReleaseReadBuffer(data)
 	}
 }
 
@@ -399,7 +399,7 @@ func (pgs *PrefetchGlobalState) readData(client *http.Client, ioReq IoReq) ([]by
 	}
 	defer func() {
 		if data != nil {
-			pgs.memoryManager.ReleaseReadBuffer(expectedLen)
+			pgs.memoryManager.ReleaseReadBuffer(data)
 		}
 	}()
 
@@ -445,7 +445,6 @@ func (pgs *PrefetchGlobalState) readData(client *http.Client, ioReq IoReq) ([]by
 				ioReq.inode, ioReq.id, ioReq.startByte, ioReq.endByte)
 		}
 		// Prevent releasing the buffer on success
-		defer func() { data = nil }()
 		return data, nil
 	}
 
