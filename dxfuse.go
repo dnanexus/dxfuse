@@ -1556,6 +1556,8 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 		// increment current buffer slice offset
 		fh.writeBufferOffset += bytesCopied
 		if len(fh.writeBuffer) == cap(fh.writeBuffer) {
+			fsys.log("WriteFile: buffer is full, uploading part %d", fh.lastPartId)
+			fsys.log("WriteFile: buffer size %d, offset %d", cap(fh.writeBuffer), fh.writeBufferOffset)
 			// increment part id
 			fh.lastPartId++
 			partId := fh.lastPartId
@@ -1646,6 +1648,7 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	fh.lastPartId++
 	partId := fh.lastPartId
 	// Resize the writeBuffer to its used capacity before setting it to nil
+	fsys.log("FlushFile: Resizing writeBuffer to %d", fh.writeBufferOffset)
 	fh.writeBuffer = fsys.uploader.memoryManager.ResizeWriteBuffer(fh.writeBuffer, int64(fh.writeBufferOffset))
 
 	uploadReq := UploadRequest{

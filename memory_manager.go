@@ -56,10 +56,10 @@ func (mm *MemoryManager) allocate(size int64, isWriteBuffer bool, waitIndefinite
 	mm.mutex.Lock()
 	if isWriteBuffer {
 		mm.writesWaiting++
-		mm.log("Allocating %d bytes for write buffer", size)
+		mm.log("Allocating %.2f bytes for write buffer", float64(size/1024/1024))
 	} else {
 		mm.readsWaiting++
-		mm.log("Allocating %d bytes for read buffer", size)
+		mm.log("Allocating %.2f bytes for read buffer", float64(size/1024/1024))
 	}
 	mm.log("Memory stats before allocation: used=%d, write=%d, read=%d, readsWaiting=%d, writesWaiting=%d",
 		mm.usedMemory, mm.writeMemory, mm.readMemory, mm.readsWaiting, mm.writesWaiting)
@@ -90,8 +90,13 @@ func (mm *MemoryManager) allocate(size int64, isWriteBuffer bool, waitIndefinite
 		mm.readMemory += size
 	}
 
-	mm.log("Memory stats: used=%d, write=%d, read=%d, readsWaiting=%d, writesWaiting=%d",
-		mm.usedMemory, mm.writeMemory, mm.readMemory, mm.readsWaiting, mm.writesWaiting)
+	// Log memory usage in MiB
+	mm.log("Memory stats: used=%.2f MiB, write=%.2f MiB, read=%.2f MiB, readsWaiting=%d, writesWaiting=%d",
+		float64(mm.usedMemory)/1024/1024,
+		float64(mm.writeMemory)/1024/1024,
+		float64(mm.readMemory)/1024/1024,
+		mm.readsWaiting,
+		mm.writesWaiting)
 
 	return make([]byte, size)
 }
@@ -113,8 +118,12 @@ func (mm *MemoryManager) release(buf []byte, isWriteBuffer bool) {
 		mm.usedMemory = 0
 	}
 
-	mm.log("Memory stats after release: used=%d, write=%d, read=%d, readsWaiting=%d",
-		mm.usedMemory, mm.writeMemory, mm.readMemory, mm.readsWaiting)
+	// Log memory usage in MiB
+	mm.log("Memory stats after release: used=%.2f MiB, write=%.2f MiB, read=%.2f MiB, readsWaiting=%d",
+		float64(mm.usedMemory)/1024/1024,
+		float64(mm.writeMemory)/1024/1024,
+		float64(mm.readMemory)/1024/1024,
+		mm.readsWaiting)
 	mm.cond.Broadcast()
 }
 
@@ -136,8 +145,13 @@ func (mm *MemoryManager) ResizeWriteBuffer(buf []byte, newSize int64) []byte {
 		mm.usedMemory += sizeDiff // sizeDiff is negative, so this reduces usedMemory
 		mm.writeMemory += sizeDiff
 		mm.log("Shrinking write buffer to %d bytes", newSize)
-		mm.log("Memory stats after shrink: used=%d, write=%d, read=%d, readsWaiting=%d, writesWaiting=%d",
-			mm.usedMemory, mm.writeMemory, mm.readMemory, mm.readsWaiting, mm.writesWaiting)
+		// Log memory usage in MiB
+		mm.log("Memory stats after shrink: used=%.2f MiB, write=%.2f MiB, read=%.2f MiB, readsWaiting=%d, writesWaiting=%d",
+			float64(mm.usedMemory)/1024/1024,
+			float64(mm.writeMemory)/1024/1024,
+			float64(mm.readMemory)/1024/1024,
+			mm.readsWaiting,
+			mm.writesWaiting)
 		return buf
 	}
 
@@ -151,8 +165,13 @@ func (mm *MemoryManager) ResizeWriteBuffer(buf []byte, newSize int64) []byte {
 	mm.writeMemory += sizeDiff
 
 	mm.log("Resizing write buffer to %d bytes", newSize)
-	mm.log("Memory stats after resize: used=%d, write=%d, read=%d, readsWaiting=%d, writesWaiting=%d",
-		mm.usedMemory, mm.writeMemory, mm.readMemory, mm.readsWaiting, mm.writesWaiting)
+	// Log memory usage in MiB
+	mm.log("Memory stats after resize: used=%.2f MiB, write=%.2f MiB, read=%.2f MiB, readsWaiting=%d, writesWaiting=%d",
+		float64(mm.usedMemory)/1024/1024,
+		float64(mm.writeMemory)/1024/1024,
+		float64(mm.readMemory)/1024/1024,
+		mm.readsWaiting,
+		mm.writesWaiting)
 
 	// Create a new buffer with the new size and copy the old data
 	newBuf := make([]byte, newSize)
