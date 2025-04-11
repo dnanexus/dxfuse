@@ -1,9 +1,13 @@
 package dxfuse
 
 import (
+	"log"
+	"net/http"
 	"runtime"
 	"sync"
 	"time"
+
+	_ "net/http/pprof"
 
 	"github.com/shirou/gopsutil/mem"
 )
@@ -27,6 +31,14 @@ func NewMemoryManager(maxMemory int64, maxMemoryUsagePerModule int64) *MemoryMan
 		usedMemory:              0,
 	}
 	mm.cond = sync.NewCond(&mm.mutex)
+
+	// Start a pprof server for profiling
+	go func() {
+		log.Println("Starting pprof server on :6060")
+		if err := http.ListenAndServe("localhost:6060", nil); err != nil {
+			log.Fatalf("Failed to start pprof server: %v", err)
+		}
+	}()
 
 	// Periodically log system and Go runtime memory usage
 	go func() {

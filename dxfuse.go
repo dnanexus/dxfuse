@@ -22,20 +22,8 @@ import (
 	"github.com/shirou/gopsutil/mem"
 
 	// for the sqlite driver
-	_ "net/http/pprof"
-
 	_ "github.com/mattn/go-sqlite3"
 )
-
-func init() {
-	// Start a pprof server for profiling
-	go func() {
-		log.Println("Starting pprof server on :6060")
-		if err := http.ListenAndServe("localhost:6060", nil); err != nil {
-			log.Fatalf("Failed to start pprof server: %v", err)
-		}
-	}()
-}
 
 const (
 	// namespace for xattrs
