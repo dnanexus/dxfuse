@@ -1547,20 +1547,16 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 		sliceUpperBound := fh.writeBufferOffset + len(bytesToWrite)
 		if sliceUpperBound > cap(fh.writeBuffer) {
 			sliceUpperBound = cap(fh.writeBuffer)
-			fsys.log("WriteFile: sliceUpperBound %d, cap %d", sliceUpperBound, cap(fh.writeBuffer))
 		}
 		// copy data into buffer
 		bytesCopied := copy(fh.writeBuffer[fh.writeBufferOffset:sliceUpperBound], bytesToWrite)
 		// update file size
 		fh.size += int64(bytesCopied)
-		fsys.log("fh.size %d, bytesCopied %d", fh.size, bytesCopied)
 		// increment next write offset
 		fh.nextWriteOffset += int64(bytesCopied)
 		// increment current buffer slice offset
 		fh.writeBufferOffset += bytesCopied
 		if fh.writeBufferOffset >= cap(fh.writeBuffer) {
-			fsys.log("WriteFile: buffer is full, uploading part %d", fh.lastPartId)
-			fsys.log("WriteFile: buffer size %d, offset %d", cap(fh.writeBuffer), fh.writeBufferOffset)
 			// increment part id
 			fh.lastPartId++
 			partId := fh.lastPartId

@@ -389,7 +389,7 @@ func (pgs *PrefetchGlobalState) readData(client *http.Client, ioReq IoReq) ([]by
 	// Allocate buffer using MemoryManager
 	data := pgs.memoryManager.AllocateReadBuffer(expectedLen)
 	if data == nil {
-		return nil, fmt.Errorf("Memory limit exceeded, unable to allocate buffer")
+		return nil, fmt.Errorf("memory limit exceeded, unable to allocate buffer")
 	}
 	defer func() {
 		if data != nil {
@@ -443,7 +443,7 @@ func (pgs *PrefetchGlobalState) readData(client *http.Client, ioReq IoReq) ([]by
 	}
 
 	pgs.log("Did not receive the data for IO [%d -- %d]", ioReq.startByte, ioReq.endByte)
-	return nil, fmt.Errorf("Did not receive the data")
+	return nil, fmt.Errorf("did not receive the data")
 }
 
 // Download an entire file, and write it to disk.
@@ -486,7 +486,7 @@ func (pgs *PrefetchGlobalState) DownloadEntireFile(
 			return err
 		}
 		if int64(n) != iovLen {
-			return errors.New("Length of local io-write is wrong")
+			return errors.New("length of local io-write is wrong")
 		}
 
 		startByte += pgs.prefetchMaxIoSize
@@ -509,6 +509,7 @@ func findIovecIndex(pfm *PrefetchFileMetadata, ioReq IoReq) int {
 // We are holding the pfm lock at this point.
 // Wake up waiting IOs, if any.
 func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq IoReq, data []byte, err error) {
+	pgs.log("Adding IO request to cache: handle=%d, startByte=%d, endByte=%d", ioReq.hid, ioReq.startByte, ioReq.endByte)
 	// Find the index for this chunk in the cache. The chunks may be different
 	// size, so we need to scan.
 	iovIdx := findIovecIndex(pfm, ioReq)
@@ -525,6 +526,7 @@ func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq
 		// statistics
 		pfm.mw.numBytesPrefetched += int64(len(data))
 		pfm.mw.numPrefetchIOs++
+		pgs.log("IO request completed successfully: handle=%d, startByte=%d, endByte=%d", ioReq.hid, ioReq.startByte, ioReq.endByte)
 	} else {
 		// Release memory in case of an error
 		if data != nil {
@@ -533,6 +535,7 @@ func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq
 		pfm.log("(#io=%d) prefetch io error [%d -- %d] %s",
 			ioReq.id, ioReq.startByte, ioReq.endByte, err.Error())
 		pfm.cache.iovecs[iovIdx].state = IOV_ERRORED
+		pgs.log("IO request failed: handle=%d, startByte=%d, endByte=%d, error=%s", ioReq.hid, ioReq.startByte, ioReq.endByte, err.Error())
 	}
 
 	// wake up waiting user IOs
@@ -540,31 +543,37 @@ func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq
 }
 
 func (pgs *PrefetchGlobalState) getAndLockPfm(hid fuseops.HandleID) *PrefetchFileMetadata {
+	pgs.log("Attempting to lock global mutex for handle %d", hid)
 	pgs.mutex.Lock()
+	defer pgs.mutex.Unlock()
 
 	// Find the file this IO belongs to
 	pfm, ok := pgs.handlesInfo[hid]
 	if !ok {
-		pgs.mutex.Unlock()
+		pgs.log("Handle %d not found in global state", hid)
 		return nil
 	}
-	pgs.mutex.Unlock()
 
+	pgs.log("Locking per-file mutex for handle %d", hid)
 	pfm.mutex.Lock()
 	return pfm
 }
 
 func (pgs *PrefetchGlobalState) prefetchIoWorker() {
+	pgs.log("Starting prefetch IO worker")
 	// reuse this http client. The idea is to be able to reuse http connections.
 	client := dxda.NewHttpClient()
 
-	for true {
+	for {
+		pgs.log("Waiting for IO request from queue")
 		ioReq, ok := <-pgs.ioQueue
 		if !ok {
+			pgs.log("IO queue closed, exiting worker")
 			pgs.wg.Done()
 			return
 		}
 
+		pgs.log("Processing IO request: handle=%d, startByte=%d, endByte=%d", ioReq.hid, ioReq.startByte, ioReq.endByte)
 		// perform the IO. We don't want to hold any locks while we
 		// are doing this, because this request could take a long time.
 		data, err := pgs.readData(client, ioReq)
@@ -606,7 +615,7 @@ func (pgs *PrefetchGlobalState) isWorthIt(pfm *PrefetchFileMetadata, now time.Ti
 }
 
 func (pgs *PrefetchGlobalState) tableCleanupWorker() {
-	for true {
+	for {
 		time.Sleep(periodicTime)
 		if pgs.verbose {
 			pgs.log("periodic sweep [")
