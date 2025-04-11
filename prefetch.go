@@ -760,7 +760,7 @@ func (pgs *PrefetchGlobalState) CreateStreamEntry(hid fuseops.HandleID, f File, 
 	defer pgs.mutex.Unlock()
 
 	// if the table is at the size limit, do not create a new entry
-	if len(pgs.handlesInfo) >= maxNumEntriesInTable {
+	if len(pgs.handlesInfo) >= pgs.numPrefetchThreads {
 		return
 	}
 
