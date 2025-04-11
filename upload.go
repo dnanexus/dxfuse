@@ -9,23 +9,19 @@ import (
 	"github.com/dnanexus/dxda"
 )
 
-const (
-	// Upload up to 4 parts concurrently
-	maxUploadRoutines = 4
-)
-
-// TODO replace this with a more reasonble buffer pool for managing memory use
 func (uploader *FileUploader) AllocateWriteBuffer(partId int, block bool) []byte {
 	if partId < 1 {
 		partId = 1
 	}
-	// Wait for available buffer
+	// This is a blocking call, so it will wait until a write buffer is available
+	// according to the number of concurrent write buffers
 	if block {
 		uploader.writeBufferChan <- struct{}{}
 	}
 	writeBufferCapacity := math.Min(InitialUploadPartSize*math.Pow(1.1, float64(partId)), MaxUploadPartSize)
 	writeBufferCapacity = math.Round(writeBufferCapacity)
-
+	// This is a blocking call, so it will wait until memory for a write buffer is available
+	// according to shared read/write memory buffer limits
 	writeBuffer := uploader.memoryManager.AllocateWriteBuffer(int64(writeBufferCapacity))
 	if writeBuffer == nil {
 		uploader.log("Failed to allocate write buffer")
@@ -42,10 +38,9 @@ type UploadRequest struct {
 }
 
 type FileUploader struct {
-	verbose           bool
-	uploadQueue       chan UploadRequest
-	wg                sync.WaitGroup
-	numUploadRoutines int
+	verbose     bool
+	uploadQueue chan UploadRequest
+	wg          sync.WaitGroup
 	// Max concurrent write buffers to reduce memory consumption
 	writeBufferChan chan struct{}
 	// API to dx
@@ -65,16 +60,15 @@ func NewFileUploader(verboseLevel int, options Options, dxEnv dxda.DXEnvironment
 	}
 
 	uploader := &FileUploader{
-		verbose:           verboseLevel >= 1,
-		uploadQueue:       make(chan UploadRequest),
-		writeBufferChan:   make(chan struct{}, concurrentWriteBufferLimit),
-		numUploadRoutines: maxUploadRoutines,
-		ops:               NewDxOps(dxEnv, options),
-		memoryManager:     memoryManager,
+		verbose:         verboseLevel >= 1,
+		uploadQueue:     make(chan UploadRequest),
+		writeBufferChan: make(chan struct{}, concurrentWriteBufferLimit),
+		ops:             NewDxOps(dxEnv, options),
+		memoryManager:   memoryManager,
 	}
 
-	uploader.wg.Add(maxUploadRoutines)
-	for i := 0; i < maxUploadRoutines; i++ {
+	uploader.wg.Add(concurrentWriteBufferLimit)
+	for i := 0; i < concurrentWriteBufferLimit; i++ {
 		go uploader.uploadWorker()
 	}
 	return uploader
