@@ -36,7 +36,7 @@ const (
 	maxNumEntriesInTable = 10
 
 	// maximum number of prefetch threads, regardless of machine size
-	maxNumPrefetchThreads = 100
+	maxNumPrefetchThreads = 32
 
 	minFileSize = 1 * MiB // do not track files smaller than this size
 
@@ -278,9 +278,7 @@ func NewPrefetchGlobalState(verboseLevel int, dxEnv dxda.DXEnvironment, memoryMa
 	}
 
 	// Calculate the maximum number of read-ahead chunks based on memory usage
-	maxReadMemoryUsage := memoryManager.maxMemoryUsagePerModule
-	maxNumChunksReadAhead := int(maxReadMemoryUsage / prefetchMaxIoSize)
-	maxNumChunksReadAhead = MaxInt(maxNumChunksReadAhead-2, 1)
+	maxNumChunksReadAhead := 8
 
 	// calculate how much memory will be used in the worst case.
 	// - Each stream uses two chunks.
