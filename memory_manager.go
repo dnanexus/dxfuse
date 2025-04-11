@@ -8,7 +8,8 @@ type MemoryManager struct {
 	maxMemory               int64      // Maximum memory allowed (in bytes)
 	maxMemoryUsagePerModule int64      // Maximum memory (in bytes) a single module can use
 	usedMemory              int64      // Currently used memory (in bytes)
-	prefetchWaiting         int        // Number of prefetch threads waiting for memory
+	readsWaiting            int        // Number of prefetch threads waiting for memory
+	writesWaiting           int        // Number of write threads waiting for memory
 	writeMemory             int64      // Memory allocated for writes and uploads
 	readMemory              int64      // Memory allocated for read cache and prefetch
 }
@@ -29,14 +30,21 @@ func (pgs *MemoryManager) log(a string, args ...interface{}) {
 
 // Separate functions for read and write buffer allocation
 func (mm *MemoryManager) AllocateReadBuffer(size int64) []byte {
-	if !mm.allocate(size, false) {
+	if !mm.allocate(size, false, false) {
 		return nil
 	}
 	return make([]byte, size)
 }
 
 func (mm *MemoryManager) AllocateWriteBuffer(size int64) []byte {
-	if !mm.allocate(size, true) {
+	if !mm.allocate(size, true, true) {
+		return nil
+	}
+	return make([]byte, size)
+}
+
+func (mm *MemoryManager) AllocateReadBufferIndefinitely(size int64) []byte {
+	if !mm.allocate(size, false, true) {
 		return nil
 	}
 	return make([]byte, size)
@@ -53,7 +61,7 @@ func (mm *MemoryManager) ReleaseWriteBuffer(size int64) {
 
 // Add a helper function to allocate memory for buffers
 func (mm *MemoryManager) AllocateBuffer(size int64) []byte {
-	if !mm.allocate(size, true) {
+	if !mm.allocate(size, true, true) {
 		return nil
 	}
 	return make([]byte, size)
@@ -69,25 +77,32 @@ func (mm *MemoryManager) ReleaseBuffer(data []byte) {
 }
 
 // Internal helper functions for allocation and release
-func (mm *MemoryManager) allocate(size int64, isWriteBuffer bool) bool {
+func (mm *MemoryManager) allocate(size int64, isWriteBuffer bool, waitIndefinitely bool) bool {
 	mm.mutex.Lock()
 	if isWriteBuffer {
+		mm.writesWaiting++
 		mm.log("Allocating %d bytes for write buffer", size)
 	} else {
+		mm.readsWaiting++
 		mm.log("Allocating %d bytes for read buffer", size)
 	}
 
-	defer mm.mutex.Unlock()
-
-	if !isWriteBuffer {
-		mm.prefetchWaiting++
-		defer func() { mm.prefetchWaiting-- }()
-	}
+	defer func() {
+		if isWriteBuffer {
+			mm.writesWaiting--
+		} else {
+			mm.readsWaiting--
+		}
+		mm.mutex.Unlock()
+	}()
 
 	for mm.usedMemory+size > mm.maxMemory ||
 		(isWriteBuffer && mm.writeMemory+size > mm.maxMemoryUsagePerModule) ||
 		(!isWriteBuffer && mm.readMemory+size > mm.maxMemoryUsagePerModule) ||
-		(!isWriteBuffer && mm.prefetchWaiting > 0) {
+		(!isWriteBuffer && mm.readsWaiting > 0) {
+		if !waitIndefinitely {
+			return false
+		}
 		mm.cond.Wait() // Wait until memory is available
 	}
 
@@ -97,6 +112,9 @@ func (mm *MemoryManager) allocate(size int64, isWriteBuffer bool) bool {
 	} else {
 		mm.readMemory += size
 	}
+
+	mm.log("Memory stats: used=%d, write=%d, read=%d, readsWaiting=%d, writesWaiting=%d",
+		mm.usedMemory, mm.writeMemory, mm.readMemory, mm.readsWaiting, mm.writesWaiting)
 
 	return true
 }
@@ -115,6 +133,8 @@ func (mm *MemoryManager) release(size int64, isWriteBuffer bool) {
 	if mm.usedMemory < 0 {
 		mm.usedMemory = 0
 	}
+	mm.log("Memory stats after release: used=%d, write=%d, read=%d, readsWaiting=%d",
+		mm.usedMemory, mm.writeMemory, mm.readMemory, mm.readsWaiting)
 	mm.cond.Broadcast()
 }
 
