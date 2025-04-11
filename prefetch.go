@@ -36,7 +36,7 @@ const (
 	maxNumEntriesInTable = 10
 
 	// maximum number of prefetch threads, regardless of machine size
-	maxNumPrefetchThreads = 32
+	maxNumPrefetchThreads = 100
 
 	minFileSize = 1 * MiB // do not track files smaller than this size
 
@@ -266,7 +266,7 @@ func NewPrefetchGlobalState(verboseLevel int, dxEnv dxda.DXEnvironment, memoryMa
 	// 2) not have more than two workers per CPU
 	// 3) not go over an overall limit, regardless of machine size
 	numCPUs := runtime.NumCPU()
-	numPrefetchThreads := MinInt(MaxInt(10, numCPUs*2), 150)
+	numPrefetchThreads := MinInt(MaxInt(10, numCPUs*2), maxNumPrefetchThreads)
 	log.Printf("Number of prefetch threads=%d", numPrefetchThreads)
 
 	// determine the maximal size of a prefetch IO
