@@ -124,3 +124,37 @@ func (mm *MemoryManager) GetUsedMemory() int64 {
 	defer mm.mutex.Unlock()
 	return mm.usedMemory
 }
+
+func (mm *MemoryManager) ResizeWriteBuffer(buf []byte, newSize int64) []byte {
+	mm.mutex.Lock()
+	defer mm.mutex.Unlock()
+
+	sizeDiff := newSize - int64(len(buf))
+	if sizeDiff <= 0 {
+		// If the buffer is being shrunk, decrement memory usage
+		mm.usedMemory += sizeDiff // sizeDiff is negative, so this reduces usedMemory
+		mm.writeMemory += sizeDiff
+		mm.log("Shrinking write buffer to %d bytes", newSize)
+		mm.log("Memory stats after shrink: used=%d, write=%d, read=%d, readsWaiting=%d, writesWaiting=%d",
+			mm.usedMemory, mm.writeMemory, mm.readMemory, mm.readsWaiting, mm.writesWaiting)
+		return buf[:newSize]
+	}
+
+	// Check if we have enough memory to resize
+	for mm.usedMemory+sizeDiff > mm.maxMemory || mm.writeMemory+sizeDiff > mm.maxMemoryUsagePerModule {
+		mm.cond.Wait()
+	}
+
+	// Update memory usage
+	mm.usedMemory += sizeDiff
+	mm.writeMemory += sizeDiff
+
+	mm.log("Resizing write buffer to %d bytes", newSize)
+	mm.log("Memory stats after resize: used=%d, write=%d, read=%d, readsWaiting=%d, writesWaiting=%d",
+		mm.usedMemory, mm.writeMemory, mm.readMemory, mm.readsWaiting, mm.writesWaiting)
+
+	// Create a new buffer with the new size and copy the old data
+	newBuf := make([]byte, newSize)
+	copy(newBuf, buf)
+	return newBuf
+}
