@@ -277,15 +277,17 @@ func NewPrefetchGlobalState(verboseLevel int, dxEnv dxda.DXEnvironment, memoryMa
 		prefetchMaxIoSize = 64 * MiB
 	}
 
-	// calculate how much memory will be used in the worst case.
-	// - Each stream uses two chunks.
-	// - In addition, we are spreading around [maxNumChunksReadAhead] chunks.
-	// Each chunk could be as large as [prefetchMaxIoSize].
-	maxNumEntriesInTable := MinInt(minNumEntriesInTable, numPrefetchThreads)
-	maxNumChunksReadAhead := maxNumEntriesInTable
-	totalMemoryBytes := 2 * int64(maxNumEntriesInTable) * prefetchMaxIoSize
-	totalMemoryBytes += int64(maxNumChunksReadAhead) * prefetchMaxIoSize
+	// Use memoryManager.maxMemoryUsagePerModule as the overall memory limit for prefetch calculations
+	maxMemoryUsage := memoryManager.maxMemoryUsagePerModule
 
+	// Simplify calculations using Min() function
+	maxNumChunksReadAhead := MinInt64(maxMemoryUsage/(2*prefetchMaxIoSize), maxMemoryUsage/(4*prefetchMaxIoSize)+1)
+	maxNumEntriesInTable := MinInt64(maxMemoryUsage/(4*prefetchMaxIoSize), minNumEntriesInTable)
+
+	// Adjust the calculation for maximum prefetch memory usage to include initial IOvecs per stream
+	totalMemoryBytes := int64(maxNumEntriesInTable)*prefetchMaxIoSize + int64(maxNumChunksReadAhead)*prefetchMaxIoSize + int64(maxNumEntriesInTable)*2*prefetchMinIoSize
+
+	log.Printf("maxMemoryUsagePerModule=%dMiB", maxMemoryUsage/MiB)
 	log.Printf("Maximum prefetch memory usage: %dMiB", totalMemoryBytes/MiB)
 	log.Printf("Number of prefetch worker threads: %d", numPrefetchThreads)
 	log.Printf("Maximum number of read-ahead chunks: %d", maxNumChunksReadAhead)
@@ -297,7 +299,7 @@ func NewPrefetchGlobalState(verboseLevel int, dxEnv dxda.DXEnvironment, memoryMa
 		ioQueue:               make(chan IoReq),
 		prefetchMaxIoSize:     prefetchMaxIoSize,
 		numPrefetchThreads:    numPrefetchThreads,
-		maxNumChunksReadAhead: maxNumChunksReadAhead,
+		maxNumChunksReadAhead: int(maxNumChunksReadAhead),
 		memoryManager:         memoryManager,
 	}
 
