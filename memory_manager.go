@@ -86,6 +86,8 @@ func (mm *MemoryManager) allocate(size int64, isWriteBuffer bool, waitIndefinite
 		mm.readsWaiting++
 		mm.log("Allocating %d bytes for read buffer", size)
 	}
+	mm.log("Memory stats before allocation: used=%d, write=%d, read=%d, readsWaiting=%d, writesWaiting=%d",
+		mm.usedMemory, mm.writeMemory, mm.readMemory, mm.readsWaiting, mm.writesWaiting)
 
 	defer func() {
 		if isWriteBuffer {
