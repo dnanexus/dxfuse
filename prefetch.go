@@ -532,6 +532,7 @@ func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq
 		pfm.mw.numPrefetchIOs++
 		pgs.log("IO request completed successfully: handle=%d, startByte=%d, endByte=%d", ioReq.hid, ioReq.startByte, ioReq.endByte)
 	} else {
+		pfm.log("prefetch error: handle=%d, startByte=%d, endByte=%d, error=%s", ioReq.hid, ioReq.startByte, ioReq.endByte, err.Error())
 		// Release memory in case of an error
 		if data != nil {
 			pgs.releaseIOvecMemory(data)
@@ -616,6 +617,7 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 			pgs.log("(inode=%d) (io=%d) adding returned data to file", ioReq.inode, ioReq.id)
 		}
 		pfm, err := pgs.getAndLockPfmWithTimeout(ioReq.hid, 5*time.Second)
+
 		if err != nil {
 			pgs.log("Failed to lock global mutex for handle %d: %s", ioReq.hid, err)
 			continue
@@ -626,11 +628,13 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 				ioReq.inode, ioReq.id, ioReq.startByte, ioReq.endByte)
 			continue
 		}
+		pgs.log("(inode=%d) (io=%d) Holding the PFM lock", ioReq.inode, ioReq.id)
 
-		if pgs.verboseLevel >= 2 {
-			pgs.log("(inode=%d) (%d) holding the PFM lock", ioReq.inode, ioReq.id)
-		}
+		// if pgs.verboseLevel >= 2 {
+		// 	pgs.log("(inode=%d) (%d) holding the PFM lock", ioReq.inode, ioReq.id)
+		// }
 		pgs.addIoReqToCache(pfm, ioReq, data, err)
+		pgs.log("(inode=%d) (io=%d) added releasing the PFM lock", ioReq.inode, ioReq.id)
 		pfm.mutex.Unlock()
 
 		if pgs.verboseLevel >= 2 {
