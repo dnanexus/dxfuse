@@ -18,8 +18,13 @@ func (uploader *FileUploader) AllocateWriteBuffer(partId int, block bool) []byte
 	if block {
 		uploader.writeBufferChan <- struct{}{}
 	}
-	writeBufferCapacity := math.Min(InitialUploadPartSize*math.Pow(1.1, float64(partId)), MaxUploadPartSize)
-	writeBufferCapacity = math.Round(writeBufferCapacity)
+	writeBufferCapacity := InitialUploadPartSize
+	// If the partId is greater than 1, we need to increase the size of the write buffer
+	// to avoid the overhead of multiple small writes
+	if partId > 1 {
+		computedCapacity := math.Min(InitialUploadPartSize*math.Pow(1.1, float64(partId)), MaxUploadPartSize)
+		writeBufferCapacity = int(math.Round(computedCapacity))
+	}
 	// This is a blocking call, so it will wait until memory for a write buffer is available
 	// according to shared read/write memory buffer limits
 	uploader.log("Allocating %.2f MiB for write buffer", float64(writeBufferCapacity/1024/1024))

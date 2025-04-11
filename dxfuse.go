@@ -1547,6 +1547,7 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 		sliceUpperBound := fh.writeBufferOffset + len(bytesToWrite)
 		if sliceUpperBound > cap(fh.writeBuffer) {
 			sliceUpperBound = cap(fh.writeBuffer)
+			fsys.log("WriteFile: sliceUpperBound %d, cap %d", sliceUpperBound, cap(fh.writeBuffer))
 		}
 		// copy data into buffer
 		bytesCopied := copy(fh.writeBuffer[fh.writeBufferOffset:sliceUpperBound], bytesToWrite)
