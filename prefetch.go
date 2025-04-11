@@ -207,7 +207,7 @@ func (iov Iovec) stateString() string {
 
 // write a log message, and add a header
 func (pfm *PrefetchFileMetadata) log(a string, args ...interface{}) {
-	hdr := fmt.Sprintf("prefetch(%d,%d)", pfm.hid, pfm.inode)
+	hdr := fmt.Sprintf("prefetchfm(%d,%d)", pfm.hid, pfm.inode)
 	LogMsg(hdr, a, args...)
 }
 
@@ -257,7 +257,7 @@ func (pfm *PrefetchFileMetadata) cancelIOs() {
 
 // write a log message, and add a header
 func (pgs *PrefetchGlobalState) log(a string, args ...interface{}) {
-	LogMsg("prefetch", a, args...)
+	LogMsg("prefetchgs", a, args...)
 }
 
 func NewPrefetchGlobalState(verboseLevel int, dxEnv dxda.DXEnvironment, memoryManager *MemoryManager) *PrefetchGlobalState {
