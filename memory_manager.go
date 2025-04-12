@@ -154,10 +154,10 @@ func (mm *MemoryManager) release(buf []byte, isWriteBuffer bool) {
 		mm.readsWaiting, mm.writesWaiting)
 
 	// Log how long the garbage collection takes to execute
-	start := time.Now()
-	runtime.GC()
-	duration := time.Since(start)
-	mm.log("Garbage collection took %s", duration)
+	// start := time.Now()
+	// runtime.GC()
+	// duration := time.Since(start)
+	// mm.log("Garbage collection took %s", duration)
 
 	mm.cond.Broadcast()
 }

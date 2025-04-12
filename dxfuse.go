@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -205,6 +206,7 @@ func NewDxfuse(
 	if options.MaxMemoryUsageMiB > 0 {
 		maxMemory = int64(options.MaxMemoryUsageMiB) * MiB
 	}
+	debug.SetMemoryLimit(maxMemory)
 	maxMemoryUsagePerModule := maxMemory
 	if !options.ReadOnly {
 		maxMemoryUsagePerModule = maxMemory * 90 / 100
