@@ -250,7 +250,6 @@ func (ops *DxOps) DxFileCloseAndWait(
 	start := time.Now()
 	deadline := start.Add(fileCloseMaxWaitTime)
 	time.Sleep(400 * time.Millisecond)
-	runtime.GC()
 	// Log Go runtime memory usage
 	var memStats runtime.MemStats
 	runtime.ReadMemStats(&memStats)

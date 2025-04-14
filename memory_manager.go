@@ -30,7 +30,13 @@ func NewMemoryManager(maxMemory int64, maxMemoryUsagePerModule int64) *MemoryMan
 
 	// Periodically log system and Go runtime memory usage
 	go func() {
+		i := 0
 		for {
+			if i%6 == 0 {
+				runtime.GC() // Trigger garbage collection every 30 seconds
+				mm.log("Garbage collection triggered")
+				i = 0
+			}
 			// Use gopsutil to get system memory stats
 			vmStat, err := mem.VirtualMemory()
 			if err == nil {
@@ -50,7 +56,7 @@ func NewMemoryManager(maxMemory int64, maxMemoryUsagePerModule int64) *MemoryMan
 				float64(memStats.Sys)/1024/1024,
 				float64(memStats.HeapAlloc)/1024/1024,
 				float64(memStats.HeapSys)/1024/1024)
-
+			i++
 			time.Sleep(5 * time.Second) // Log every 5 seconds
 		}
 	}()
