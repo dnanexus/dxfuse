@@ -28,6 +28,7 @@ const (
 	MaxNumFileHandles         = 1000 * 1000
 	NumRetriesDefault         = 10
 	InitialUploadPartSize     = 16 * MiB
+	MinUploadPartSize         = 5 * MiB
 	MaxUploadPartSize         = 512 * MiB
 	Version                   = "v1.5.0"
 )
