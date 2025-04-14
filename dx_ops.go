@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"runtime"
 	"time"
 
 	"github.com/dnanexus/dxda"
@@ -276,6 +277,7 @@ func (ops *DxOps) DxFileCloseAndWait(
 			return fmt.Errorf("data object %s has bad state %s", fid, fDesc.State)
 		}
 	}
+	runtime.GC()
 	return nil
 }
 
