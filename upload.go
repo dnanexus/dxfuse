@@ -2,39 +2,43 @@ package dxfuse
 
 import (
 	"context"
-	"math"
 	"runtime"
 	"sync"
 
 	"github.com/dnanexus/dxda"
 )
 
+// Support uploading up to a 5TiB file in 10,000 parts
+func calculatePartSize(partId int) int64 {
+	switch {
+	case partId <= 5:
+		return 1 * MiB
+	case partId <= 10:
+		return 16 * MiB
+	case partId <= 50:
+		return 128 * MiB
+	case partId <= 500:
+		return 256 * MiB
+	default:
+		return MaxUploadPartSize
+	}
+}
+
 func (uploader *FileUploader) AllocateWriteBuffer(partId int, block bool) []byte {
 	if partId < 1 {
 		partId = 1
 	}
-	// This is a blocking call, so it will wait until a write buffer is available
-	// according to the number of concurrent write buffers
 	if block {
 		uploader.writeBufferChan <- struct{}{}
 	}
-	writeBufferCapacity := InitialUploadPartSize
-	// If the partId is greater than 1, we need to increase the size of the write buffer
-	// to avoid the overhead of multiple small writes
-	if partId > 1 {
-		computedCapacity := math.Min(InitialUploadPartSize*math.Pow(1.1, float64(partId)), MaxUploadPartSize)
-		writeBufferCapacity = int(math.Round(computedCapacity))
-	}
 
-	// Ensure the write buffer size does not exceed MemoryManager.maxMemoryUsagePerModule
-	if int64(writeBufferCapacity) > uploader.memoryManager.maxMemoryUsagePerModule {
-		writeBufferCapacity = int(uploader.memoryManager.maxMemoryUsagePerModule)
-	}
+	writeBufferCapacity := calculatePartSize(partId)
+	writeBufferCapacity = MinInt64(writeBufferCapacity, uploader.memoryManager.maxMemoryUsagePerModule)
 
-	// This is a blocking call, so it will wait until memory for a write buffer is available
-	// according to shared read/write memory buffer limits
-	uploader.log("Allocating %.2f MiB for write buffer", float64(writeBufferCapacity)/1024/1024)
-	writeBuffer := uploader.memoryManager.AllocateWriteBuffer(int64(writeBufferCapacity))
+	if uploader.verbose {
+		uploader.log("Allocating %.2f MiB for write buffer", float64(writeBufferCapacity)/MiB)
+	}
+	writeBuffer := uploader.memoryManager.AllocateWriteBuffer(writeBufferCapacity)
 	if writeBuffer == nil {
 		uploader.log("Failed to allocate write buffer")
 		return nil
