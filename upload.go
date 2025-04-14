@@ -12,7 +12,7 @@ import (
 func calculatePartSize(partId int) int64 {
 	switch {
 	case partId <= 5:
-		return MinUploadPartSize * MiB
+		return MinUploadPartSize
 	case partId <= 10:
 		return 16 * MiB
 	case partId <= 50:
