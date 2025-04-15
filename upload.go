@@ -70,10 +70,8 @@ func (uploader *FileUploader) log(a string, args ...interface{}) {
 }
 
 func NewFileUploader(verboseLevel int, options Options, dxEnv dxda.DXEnvironment, memoryManager *MemoryManager) *FileUploader {
-	concurrentWriteBufferLimit := 15
-	if runtime.NumCPU()*3 > concurrentWriteBufferLimit {
-		concurrentWriteBufferLimit = runtime.NumCPU() * 3
-	}
+	concurrentWriteBufferLimit := MaxInt(runtime.NumCPU(), MinNumWriteBuffers)
+	concurrentWriteBufferLimit = MinInt(concurrentWriteBufferLimit, MaxNumWriteBuffers)
 
 	uploader := &FileUploader{
 		verbose:         verboseLevel >= 1,

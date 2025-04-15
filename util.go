@@ -30,6 +30,8 @@ const (
 	InitialUploadPartSize     = 16 * MiB
 	MinUploadPartSize         = 5 * MiB
 	MaxUploadPartSize         = 512 * MiB
+	MinNumWriteBuffers        = 8
+	MaxNumWriteBuffers        = 144
 	Version                   = "v1.5.0"
 )
 const (
