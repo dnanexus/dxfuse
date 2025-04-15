@@ -255,9 +255,14 @@ func (pfm *PrefetchFileMetadata) cancelIOs() {
 	}
 }
 
-// write a log message, and add a header
 func (pgs *PrefetchGlobalState) log(a string, args ...interface{}) {
 	LogMsg("prefetch_state", a, args...)
+}
+
+func (pgs *PrefetchGlobalState) debug(a string, args ...interface{}) {
+	if pgs.verboseLevel > 1 {
+		LogMsg("prefetch_state", a, args...)
+	}
 }
 
 func NewPrefetchGlobalState(verboseLevel int, dxEnv dxda.DXEnvironment, memoryManager *MemoryManager) *PrefetchGlobalState {
@@ -441,7 +446,7 @@ func (pgs *PrefetchGlobalState) readData(client *http.Client, ioReq IoReq) ([]by
 		return data, nil
 	}
 
-	pgs.log("Did not receive the data for IO [%d -- %d]", ioReq.startByte, ioReq.endByte)
+	pgs.debug("Did not receive the data for IO [%d -- %d]", ioReq.startByte, ioReq.endByte)
 	return nil, fmt.Errorf("did not receive the data")
 }
 
@@ -453,9 +458,7 @@ func (pgs *PrefetchGlobalState) DownloadEntireFile(
 	url DxDownloadURL,
 	fd *os.File,
 	localPath string) error {
-	if pgs.verbose {
-		pgs.log("Downloading entire file (inode=%d) to %s", inode, localPath)
-	}
+	pgs.debug("Downloading entire file (inode=%d) to %s", inode, localPath)
 
 	endOfs := size - 1
 	startByte := int64(0)
@@ -508,7 +511,7 @@ func findIovecIndex(pfm *PrefetchFileMetadata, ioReq IoReq) int {
 // We are holding the pfm lock at this point.
 // Wake up waiting IOs, if any.
 func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq IoReq, data []byte, err error) {
-	pgs.log("Adding IO request to cache: handle=%d, startByte=%d, endByte=%d", ioReq.hid, ioReq.startByte, ioReq.endByte)
+	pgs.debug("Adding IO request to cache: handle=%d, startByte=%d, endByte=%d", ioReq.hid, ioReq.startByte, ioReq.endByte)
 	// Find the index for this chunk in the cache. The chunks may be different
 	// size, so we need to scan.
 	iovIdx := findIovecIndex(pfm, ioReq)
@@ -525,7 +528,7 @@ func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq
 		// statistics
 		pfm.mw.numBytesPrefetched += int64(len(data))
 		pfm.mw.numPrefetchIOs++
-		pgs.log("IO request completed successfully: handle=%d, startByte=%d, endByte=%d", ioReq.hid, ioReq.startByte, ioReq.endByte)
+		pgs.debug("IO request completed successfully: handle=%d, startByte=%d, endByte=%d", ioReq.hid, ioReq.startByte, ioReq.endByte)
 	} else {
 		pfm.log("prefetch error: handle=%d, startByte=%d, endByte=%d, error=%s", ioReq.hid, ioReq.startByte, ioReq.endByte, err.Error())
 		// Release memory in case of an error
@@ -555,9 +558,7 @@ func (pgs *PrefetchGlobalState) getAndLockPfm(hid fuseops.HandleID) *PrefetchFil
 		}
 		return nil
 	}
-	if pgs.verboseLevel >= 2 {
-		pgs.log("Locking per-file mutex for handle %d", hid)
-	}
+	pgs.debug("Locking per-file mutex for handle %d", hid)
 	// Lock the per-file mutex to access the file metadata
 	pfm.mutex.Lock()
 	return pfm
@@ -569,22 +570,18 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 	client := dxda.NewHttpClient()
 
 	for {
-		pgs.log("Waiting for IO request from queue")
 		ioReq, ok := <-pgs.ioQueue
 		if !ok {
-			pgs.log("IO queue closed, exiting worker")
 			pgs.wg.Done()
 			return
 		}
 
-		pgs.log("Processing IO request: handle=%d, startByte=%d, endByte=%d", ioReq.hid, ioReq.startByte, ioReq.endByte)
+		pgs.debug("Processing IO request: handle=%d, startByte=%d, endByte=%d", ioReq.hid, ioReq.startByte, ioReq.endByte)
 		// perform the IO. We don't want to hold any locks while we
 		// are doing this, because this request could take a long time.
 		data, err := pgs.readData(client, ioReq)
 
-		if pgs.verboseLevel >= 2 {
-			pgs.log("(inode=%d) (io=%d) adding returned data to file", ioReq.inode, ioReq.id)
-		}
+		pgs.debug("(inode=%d) (io=%d) adding returned data to file", ioReq.inode, ioReq.id)
 		pfm := pgs.getAndLockPfm(ioReq.hid)
 
 		if pfm == nil {
@@ -593,18 +590,12 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 				ioReq.inode, ioReq.id, ioReq.startByte, ioReq.endByte)
 			continue
 		}
-		pgs.log("(inode=%d) (io=%d) Holding the PFM lock", ioReq.inode, ioReq.id)
+		pgs.debug("(inode=%d) (io=%d) Holding the PFM lock", ioReq.inode, ioReq.id)
 
-		// if pgs.verboseLevel >= 2 {
-		// 	pgs.log("(inode=%d) (%d) holding the PFM lock", ioReq.inode, ioReq.id)
-		// }
 		pgs.addIoReqToCache(pfm, ioReq, data, err)
-		pgs.log("(inode=%d) (io=%d) added releasing the PFM lock", ioReq.inode, ioReq.id)
 		pfm.mutex.Unlock()
 
-		if pgs.verboseLevel >= 2 {
-			pgs.log("(inode=%d) (%d) Done", ioReq.inode, ioReq.id)
-		}
+		pgs.debug("(inode=%d) (%d) Done", ioReq.inode, ioReq.id)
 	}
 }
 

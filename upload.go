@@ -69,6 +69,12 @@ func (uploader *FileUploader) log(a string, args ...interface{}) {
 	LogMsg("uploader", a, args...)
 }
 
+func (uploader *FileUploader) debug(a string, args ...interface{}) {
+	if uploader.verbose {
+		LogMsg("uploader", a, args...)
+	}
+}
+
 func NewFileUploader(verboseLevel int, options Options, dxEnv dxda.DXEnvironment, memoryManager *MemoryManager) *FileUploader {
 	concurrentWriteBufferLimit := MaxInt(runtime.NumCPU(), MinNumWriteBuffers)
 	concurrentWriteBufferLimit = MinInt(concurrentWriteBufferLimit, MaxNumWriteBuffers)
@@ -104,14 +110,15 @@ func (uploader *FileUploader) uploadWorker() {
 			uploader.wg.Done()
 			return
 		}
-		uploader.log("Uploading %s, part %d, size %.2f MiB", uploadReq.fileId, uploadReq.partId, float64(len(uploadReq.writeBuffer))/1024/1024)
+		uploader.debug("Uploading %s, part %d, size %.2f MiB", uploadReq.fileId, uploadReq.partId, float64(len(uploadReq.writeBuffer))/MiB)
 		// Upload the part
 		err := uploader.ops.DxFileUploadPart(context.TODO(), httpClient, uploadReq.fileId, uploadReq.partId, uploadReq.writeBuffer)
-		// Release the memory back to the pool
+		// Release the write buffer
 		uploader.memoryManager.ReleaseWriteBuffer(uploadReq.writeBuffer)
 		if err != nil {
 			// Record upload error in FileHandle
 			uploader.log("Error uploading %s, part %d, %s", uploadReq.fileId, uploadReq.partId, err.Error())
+			uploader.log("httpClient: %v", httpClient)
 			uploadReq.fh.writeError = err
 		}
 		uploadReq.fh.wg.Done()

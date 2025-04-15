@@ -167,30 +167,21 @@ func (mm *MemoryManager) GetUsedMemory() int64 {
 	return mm.usedMemory
 }
 
-func (mm *MemoryManager) ResizeWriteBuffer(buf []byte, newSize int64) []byte {
+func (mm *MemoryManager) TrimWriteBuffer(buf []byte, newSize int64) []byte {
 	mm.mutex.Lock()
 	defer mm.mutex.Unlock()
 
 	sizeDiff := newSize - int64(len(buf))
-	if sizeDiff <= 0 {
-		// Shrink the buffer first, then decrement memory usage
-		buf = buf[:newSize]
-		mm.usedMemory += sizeDiff // sizeDiff is negative, so this reduces usedMemory
-		mm.writeMemory += sizeDiff
+
+	if sizeDiff > 0 {
+		mm.log("Cannot shrink buffer to a larger size. Current size: %d, New size: %d", len(buf), newSize)
 		return buf
 	}
 
-	// Check if we have enough memory to resize
-	for mm.usedMemory+sizeDiff > mm.maxMemory || mm.writeMemory+sizeDiff > mm.maxMemoryUsagePerModule {
-		mm.cond.Wait()
-	}
-
-	// Update memory usage
-	mm.usedMemory += sizeDiff
+	// Shrink the buffer first, then decrement memory usage
+	buf = buf[:newSize]
+	mm.usedMemory += sizeDiff // sizeDiff is negative, so this reduces usedMemory
 	mm.writeMemory += sizeDiff
+	return buf
 
-	// Create a new buffer with the new size and copy the old data
-	newBuf := make([]byte, newSize)
-	copy(newBuf, buf)
-	return newBuf
 }

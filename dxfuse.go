@@ -1642,7 +1642,7 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 		return fsys.translateError(fh.writeError)
 	}
 
-	// Empty files are handled by ReleaseFileHandle
+	// Empty files are an edge case handled by ReleaseFileHandle
 	if len(fh.writeBuffer) == 0 && fh.size == 0 {
 		if fsys.ops.options.VerboseLevel > 1 {
 			fsys.log("Ignoring FlushFile: file is empty")
@@ -1653,8 +1653,8 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	// upload last part
 	fh.lastPartId++
 	partId := fh.lastPartId
-	// Resize the writeBuffer to its used capacity before setting it to nil
-	fh.writeBuffer = fsys.uploader.memoryManager.ResizeWriteBuffer(fh.writeBuffer, int64(fh.writeBufferOffset))
+	// Resize the writeBuffer to its used capacity before uploading the final part
+	fh.writeBuffer = fsys.uploader.memoryManager.TrimWriteBuffer(fh.writeBuffer, int64(fh.writeBufferOffset))
 
 	uploadReq := UploadRequest{
 		fh:          fh,
@@ -1814,7 +1814,7 @@ func (fsys *Filesys) lookupFileByInode(ctx context.Context, oph *OpHandle, inode
 		file = node.(File)
 	case Dir:
 		// directories do not have attributes
-		return File{}, true, syscall.EINVAL
+		return File{}, true, fuse.EINVAL
 	}
 	return file, false, nil
 }
@@ -2083,7 +2083,7 @@ func (fsys *Filesys) SetXattr(ctx context.Context, op *fuseops.SetXattrOp) error
 		// Note: we may want to change this for directories
 		// representing projects. This would allow reporting project
 		// tags and properties.
-		return syscall.EINVAL
+		return fuse.EINVAL
 	}
 	if !fsys.checkProjectPermissions(file.ProjId, PERM_CONTRIBUTE) {
 		return syscall.EPERM

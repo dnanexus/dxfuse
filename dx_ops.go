@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
-	"runtime"
-	"runtime/debug"
 	"time"
 
 	"github.com/dnanexus/dxda"
@@ -250,21 +248,6 @@ func (ops *DxOps) DxFileCloseAndWait(
 	start := time.Now()
 	deadline := start.Add(fileCloseMaxWaitTime)
 	time.Sleep(400 * time.Millisecond)
-	// Log Go runtime memory usage
-	var memStats runtime.MemStats
-	runtime.ReadMemStats(&memStats)
-	ops.log("Go runtime memory gc.runtime: Alloc=%.2f MiB, Sys=%.2f MiB, HeapAlloc=%.2f MiB, HeapSys=%.2f MiB",
-		float64(memStats.Alloc)/1024/1024,
-		float64(memStats.Sys)/1024/1024,
-		float64(memStats.HeapAlloc)/1024/1024,
-		float64(memStats.HeapSys)/1024/1024)
-	debug.FreeOSMemory()
-	runtime.ReadMemStats(&memStats)
-	ops.log("Go runtime memory debug.freeosmemory: Alloc=%.2f MiB, Sys=%.2f MiB, HeapAlloc=%.2f MiB, HeapSys=%.2f MiB",
-		float64(memStats.Alloc)/1024/1024,
-		float64(memStats.Sys)/1024/1024,
-		float64(memStats.HeapAlloc)/1024/1024,
-		float64(memStats.HeapSys)/1024/1024)
 	for true {
 		fDesc, err := DxDescribe(ctx, httpClient, &ops.dxEnv, projectId, fid)
 		if err != nil {
