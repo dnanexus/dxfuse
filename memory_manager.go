@@ -146,8 +146,6 @@ func (mm *MemoryManager) allocate(size int64, isWriteBuffer bool, waitIndefinite
 }
 
 func (mm *MemoryManager) release(buf []byte, isWriteBuffer bool) {
-	mm.mutex.Lock()
-	defer mm.mutex.Unlock()
 	size := int64(len(buf))
 	// Release the buffer
 	buf = nil
