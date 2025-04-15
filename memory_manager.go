@@ -18,9 +18,10 @@ type MemoryManager struct {
 	writesWaiting           int        // Number of write threads waiting for memory
 	writeMemory             int64      // Memory allocated for writes and uploads
 	readMemory              int64      // Memory allocated for read cache and prefetch
+	verboseLevel            int        // Verbose level for logging
 }
 
-func NewMemoryManager(maxMemory int64, maxMemoryUsagePerModule int64) *MemoryManager {
+func NewMemoryManager(verboseLevel int, maxMemory int64, maxMemoryUsagePerModule int64) *MemoryManager {
 	mm := &MemoryManager{
 		maxMemory:               maxMemory,
 		maxMemoryUsagePerModule: maxMemoryUsagePerModule,
@@ -33,29 +34,27 @@ func NewMemoryManager(maxMemory int64, maxMemoryUsagePerModule int64) *MemoryMan
 		i := 0
 		for {
 			if i%6 == 0 {
-				runtime.GC() // Trigger garbage collection every 30 seconds
-				mm.log("Garbage collection triggered")
+				runtime.GC() // Trigger garbage collection every ~30 seconds
 				i = 0
 			}
-			// Use gopsutil to get system memory stats
-			vmStat, err := mem.VirtualMemory()
-			if err == nil {
-				mm.log("System memory: total=%.2f MiB, free=%.2f MiB, used=%.2f MiB",
-					float64(vmStat.Total)/1024/1024,
-					float64(vmStat.Free)/1024/1024,
-					float64(vmStat.Used)/1024/1024)
-			} else {
-				mm.log("Error fetching system memory stats: %v", err)
-			}
+			if verboseLevel > 1 {
+				vmStat, err := mem.VirtualMemory()
+				if err == nil {
+					mm.debug("System memory: total=%.2f MiB, free=%.2f MiB, used=%.2f MiB",
+						float64(vmStat.Total)/1024/1024,
+						float64(vmStat.Free)/1024/1024,
+						float64(vmStat.Used)/1024/1024)
+				}
 
-			// Log Go runtime memory usage
-			var memStats runtime.MemStats
-			runtime.ReadMemStats(&memStats)
-			mm.log("Go runtime memory: Alloc=%.2f MiB, Sys=%.2f MiB, HeapAlloc=%.2f MiB, HeapSys=%.2f MiB",
-				float64(memStats.Alloc)/1024/1024,
-				float64(memStats.Sys)/1024/1024,
-				float64(memStats.HeapAlloc)/1024/1024,
-				float64(memStats.HeapSys)/1024/1024)
+				// Log Go runtime memory usage
+				var memStats runtime.MemStats
+				runtime.ReadMemStats(&memStats)
+				mm.debug("Go runtime memory: Alloc=%.2f MiB, Sys=%.2f MiB, HeapAlloc=%.2f MiB, HeapSys=%.2f MiB",
+					float64(memStats.Alloc)/1024/1024,
+					float64(memStats.Sys)/1024/1024,
+					float64(memStats.HeapAlloc)/1024/1024,
+					float64(memStats.HeapSys)/1024/1024)
+			}
 			i++
 			time.Sleep(5 * time.Second) // Log every 5 seconds
 		}
@@ -64,8 +63,14 @@ func NewMemoryManager(maxMemory int64, maxMemoryUsagePerModule int64) *MemoryMan
 	return mm
 }
 
-func (pgs *MemoryManager) log(a string, args ...interface{}) {
+func (mm *MemoryManager) log(a string, args ...interface{}) {
 	LogMsg("mem", a, args...)
+}
+
+func (mm *MemoryManager) debug(a string, args ...interface{}) {
+	if mm.verboseLevel > 1 {
+		LogMsg("mem", a, args...)
+	}
 }
 
 // Separate functions for read and write buffer allocation
@@ -125,7 +130,7 @@ func (mm *MemoryManager) allocate(size int64, isWriteBuffer bool, waitIndefinite
 	}
 
 	// Log memory usage in MiB
-	mm.log("Memory stats after allocate: used=%.2f MiB, write=%.2f MiB, read=%.2f MiB, readsWaiting=%d, writesWaiting=%d",
+	mm.debug("Memory stats after allocate: used=%.2f MiB, write=%.2f MiB, read=%.2f MiB, readsWaiting=%d, writesWaiting=%d",
 		float64(mm.usedMemory)/1024/1024,
 		float64(mm.writeMemory)/1024/1024,
 		float64(mm.readMemory)/1024/1024,
@@ -152,19 +157,6 @@ func (mm *MemoryManager) release(buf []byte, isWriteBuffer bool) {
 		mm.usedMemory = 0
 	}
 
-	// Log memory usage in MiB
-	mm.log("Memory stats after release: used=%.2f MiB, write=%.2f MiB, read=%.2f MiB, readsWaiting=%d, writesWaiting=%d",
-		float64(mm.usedMemory)/1024/1024,
-		float64(mm.writeMemory)/1024/1024,
-		float64(mm.readMemory)/1024/1024,
-		mm.readsWaiting, mm.writesWaiting)
-
-	// Log how long the garbage collection takes to execute
-	// start := time.Now()
-	// runtime.GC()
-	// duration := time.Since(start)
-	// mm.log("Garbage collection took %s", duration)
-
 	mm.cond.Broadcast()
 }
 
@@ -185,14 +177,6 @@ func (mm *MemoryManager) ResizeWriteBuffer(buf []byte, newSize int64) []byte {
 		buf = buf[:newSize]
 		mm.usedMemory += sizeDiff // sizeDiff is negative, so this reduces usedMemory
 		mm.writeMemory += sizeDiff
-		mm.log("Shrinking write buffer to %d bytes", newSize)
-		// Log memory usage in MiB
-		mm.log("Memory stats after shrink: used=%.2f MiB, write=%.2f MiB, read=%.2f MiB, readsWaiting=%d, writesWaiting=%d",
-			float64(mm.usedMemory)/1024/1024,
-			float64(mm.writeMemory)/1024/1024,
-			float64(mm.readMemory)/1024/1024,
-			mm.readsWaiting,
-			mm.writesWaiting)
 		return buf
 	}
 
@@ -204,15 +188,6 @@ func (mm *MemoryManager) ResizeWriteBuffer(buf []byte, newSize int64) []byte {
 	// Update memory usage
 	mm.usedMemory += sizeDiff
 	mm.writeMemory += sizeDiff
-
-	mm.log("Resizing write buffer to %d bytes", newSize)
-	// Log memory usage in MiB
-	mm.log("Memory stats after resize: used=%.2f MiB, write=%.2f MiB, read=%.2f MiB, readsWaiting=%d, writesWaiting=%d",
-		float64(mm.usedMemory)/1024/1024,
-		float64(mm.writeMemory)/1024/1024,
-		float64(mm.readMemory)/1024/1024,
-		mm.readsWaiting,
-		mm.writesWaiting)
 
 	// Create a new buffer with the new size and copy the old data
 	newBuf := make([]byte, newSize)

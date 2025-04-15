@@ -207,7 +207,7 @@ func (iov Iovec) stateString() string {
 
 // write a log message, and add a header
 func (pfm *PrefetchFileMetadata) log(a string, args ...interface{}) {
-	hdr := fmt.Sprintf("prefetchfm(%d,%d)", pfm.hid, pfm.inode)
+	hdr := fmt.Sprintf("prefetch_file(%d,%d)", pfm.hid, pfm.inode)
 	LogMsg(hdr, a, args...)
 }
 
@@ -257,7 +257,7 @@ func (pfm *PrefetchFileMetadata) cancelIOs() {
 
 // write a log message, and add a header
 func (pgs *PrefetchGlobalState) log(a string, args ...interface{}) {
-	LogMsg("prefetchgs", a, args...)
+	LogMsg("prefetch_state", a, args...)
 }
 
 func NewPrefetchGlobalState(verboseLevel int, dxEnv dxda.DXEnvironment, memoryManager *MemoryManager) *PrefetchGlobalState {
@@ -543,18 +543,22 @@ func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq
 }
 
 func (pgs *PrefetchGlobalState) getAndLockPfm(hid fuseops.HandleID) *PrefetchFileMetadata {
-	pgs.log("Attempting to lock global mutex for handle %d", hid)
+	// Lock the global state mutex to access the handlesInfo map
 	pgs.mutex.Lock()
 	defer pgs.mutex.Unlock()
 
 	// Find the file this IO belongs to
 	pfm, ok := pgs.handlesInfo[hid]
 	if !ok {
-		pgs.log("Handle %d not found in global state", hid)
+		if pgs.verbose {
+			pgs.log("Handle %d not found in global state", hid)
+		}
 		return nil
 	}
-
-	pgs.log("Locking per-file mutex for handle %d", hid)
+	if pgs.verboseLevel >= 2 {
+		pgs.log("Locking per-file mutex for handle %d", hid)
+	}
+	// Lock the per-file mutex to access the file metadata
 	pfm.mutex.Lock()
 	return pfm
 }

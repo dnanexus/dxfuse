@@ -213,7 +213,7 @@ func NewDxfuse(
 	}
 	fsys.log("Max memory used: %d MiB", maxMemory/MiB)
 	fsys.log("Max memory used per module: %d MiB", maxMemoryUsagePerModule/MiB)
-	memoryManager := NewMemoryManager(maxMemory, maxMemoryUsagePerModule)
+	memoryManager := NewMemoryManager(options.VerboseLevel, maxMemory, maxMemoryUsagePerModule)
 
 	fsys.pgs = NewPrefetchGlobalState(options.VerboseLevel, dxEnv, memoryManager)
 
@@ -1657,7 +1657,6 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	fh.lastPartId++
 	partId := fh.lastPartId
 	// Resize the writeBuffer to its used capacity before setting it to nil
-	fsys.log("FlushFile: Resizing writeBuffer to %d", fh.writeBufferOffset)
 	fh.writeBuffer = fsys.uploader.memoryManager.ResizeWriteBuffer(fh.writeBuffer, int64(fh.writeBufferOffset))
 
 	uploadReq := UploadRequest{
