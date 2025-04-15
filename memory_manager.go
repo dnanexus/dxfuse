@@ -150,15 +150,18 @@ func (mm *MemoryManager) release(buf []byte, isWriteBuffer bool) {
 	// Release the buffer
 	buf = nil
 	atomic.AddInt64(&mm.usedMemory, -size)
+	mm.debug("Added used mem")
 	if isWriteBuffer {
 		atomic.AddInt64(&mm.writeMemory, -size)
 	} else {
 		atomic.AddInt64(&mm.readMemory, -size)
+		mm.debug("Added read mem")
 	}
 
 	if atomic.LoadInt64(&mm.usedMemory) < 0 {
 		atomic.StoreInt64(&mm.usedMemory, 0)
 	}
+	mm.debug("Released buffer of size %d, usedMemory=%d, writeMemory=%d, readMemory=%d", size, mm.GetUsedMemory(), mm.GetUsedWriteMemory(), mm.GetUsedReadMemory())
 
 	mm.notify() // Notify waiting allocate()
 }
@@ -170,6 +173,7 @@ func (mm *MemoryManager) notify() {
 	default:
 		// Do nothing if the channel is already full
 	}
+	mm.debug("Notified routines waiting for memory allocation")
 }
 
 func (mm *MemoryManager) GetUsedMemory() int64 {
