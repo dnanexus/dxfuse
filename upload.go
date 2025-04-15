@@ -24,12 +24,9 @@ func calculatePartSize(partId int) int64 {
 	}
 }
 
-func (uploader *FileUploader) AllocateWriteBuffer(partId int, block bool) []byte {
+func (uploader *FileUploader) AllocateWriteBuffer(partId int) []byte {
 	if partId < 1 {
 		partId = 1
-	}
-	if block {
-		uploader.writeBufferChan <- struct{}{}
 	}
 
 	writeBufferCapacity := calculatePartSize(partId)
@@ -54,12 +51,9 @@ type UploadRequest struct {
 }
 
 type FileUploader struct {
-	verbose     bool
-	uploadQueue chan UploadRequest
-	wg          sync.WaitGroup
-	// Max concurrent write buffers to reduce memory consumption
-	writeBufferChan chan struct{}
-	// API to dx
+	verbose       bool
+	uploadQueue   chan UploadRequest
+	wg            sync.WaitGroup
 	ops           *DxOps
 	memoryManager *MemoryManager
 }
@@ -80,11 +74,10 @@ func NewFileUploader(verboseLevel int, options Options, dxEnv dxda.DXEnvironment
 	concurrentWriteBufferLimit = MinInt(concurrentWriteBufferLimit, MaxNumWriteBuffers)
 
 	uploader := &FileUploader{
-		verbose:         verboseLevel >= 1,
-		uploadQueue:     make(chan UploadRequest),
-		writeBufferChan: make(chan struct{}, concurrentWriteBufferLimit),
-		ops:             NewDxOps(dxEnv, options),
-		memoryManager:   memoryManager,
+		verbose:       verboseLevel >= 1,
+		uploadQueue:   make(chan UploadRequest),
+		ops:           NewDxOps(dxEnv, options),
+		memoryManager: memoryManager,
 	}
 
 	uploader.wg.Add(concurrentWriteBufferLimit)
@@ -97,7 +90,6 @@ func NewFileUploader(verboseLevel int, options Options, dxEnv dxda.DXEnvironment
 func (uploader *FileUploader) Shutdown() {
 	// Close channel and wait for goroutines to complete
 	close(uploader.uploadQueue)
-	close(uploader.writeBufferChan)
 	uploader.wg.Wait()
 }
 

@@ -211,8 +211,8 @@ func NewDxfuse(
 	if !options.ReadOnly {
 		maxMemoryUsagePerModule = maxMemory * 90 / 100
 	}
-	fsys.log("Max memory used: %d MiB", maxMemory/MiB)
-	fsys.log("Max memory used per module: %d MiB", maxMemoryUsagePerModule/MiB)
+	fsys.log("Soft max memory limit: %d MiB", maxMemory/MiB)
+	fsys.debug("Max memory used for reads or writes: %d MiB", maxMemoryUsagePerModule/MiB)
 	memoryManager := NewMemoryManager(options.VerboseLevel, maxMemory, maxMemoryUsagePerModule)
 
 	fsys.pgs = NewPrefetchGlobalState(options.VerboseLevel, dxEnv, memoryManager)
@@ -254,6 +254,13 @@ func NewDxfuse(
 // write a log message, and add a header
 func (fsys *Filesys) log(a string, args ...interface{}) {
 	LogMsg("dxfuse", a, args...)
+}
+
+// write a log message, and add a header
+func (fsys *Filesys) debug(a string, args ...interface{}) {
+	if fsys.options.VerboseLevel > 1 {
+		LogMsg("dxfuse", a, args...)
+	}
 }
 
 func (fsys *Filesys) Shutdown() {
@@ -1534,7 +1541,7 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 		return syscall.ENOTSUP
 	}
 	if fh.writeBuffer == nil {
-		fh.writeBuffer = fsys.uploader.AllocateWriteBuffer(fh.lastPartId, true)
+		fh.writeBuffer = fsys.uploader.AllocateWriteBuffer(fh.lastPartId)
 		if fh.writeBuffer == nil {
 			return syscall.ENOMEM
 		}
@@ -1587,7 +1594,7 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 			}
 			fsys.opClose(oph)
 			fsys.mutex.Unlock()
-			fh.writeBuffer = fsys.uploader.AllocateWriteBuffer(partId, true)
+			fh.writeBuffer = fsys.uploader.AllocateWriteBuffer(partId)
 			if fh.writeBuffer == nil {
 				return syscall.ENOMEM
 			}
@@ -1620,9 +1627,7 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	}
 	if fh.accessMode != AM_AO_Remote {
 		// This isn't a writeable file
-		if fsys.ops.options.VerboseLevel > 1 {
-			fsys.log("Ignoring flush of inode %d, file is not writeable", op.Inode)
-		}
+		fsys.debug("Ignoring flush of inode %d, file is not writeable", op.Inode)
 		return nil
 	}
 
@@ -1645,9 +1650,7 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 
 	// Empty files are an edge case handled by ReleaseFileHandle
 	if len(fh.writeBuffer) == 0 && fh.size == 0 {
-		if fsys.ops.options.VerboseLevel > 1 {
-			fsys.log("Ignoring FlushFile: file is empty")
-		}
+		fsys.debug("Ignoring FlushFile: file is empty")
 		return nil
 	}
 
@@ -1667,7 +1670,6 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	fsys.uploader.uploadQueue <- uploadReq
 
 	fh.writeBuffer = nil
-	<-fsys.uploader.writeBufferChan
 
 	fh.wg.Wait()
 	// Check if there was an error uploading the last part
@@ -1948,9 +1950,7 @@ func (fsys *Filesys) GetXattr(ctx context.Context, op *fuseops.GetXattrOp) error
 	oph := fsys.opOpen()
 	defer fsys.opClose(oph)
 
-	if fsys.options.VerboseLevel > 1 {
-		fsys.log("GetXattr %v", op)
-	}
+	fsys.debug("GetXattr %v", op)
 
 	// Grab the inode.
 	file, isDir, err := fsys.lookupFileByInode(ctx, oph, int64(op.Inode))
