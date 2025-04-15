@@ -1534,8 +1534,6 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 		return syscall.ENOTSUP
 	}
 	if fh.writeBuffer == nil {
-		// Allocate write buffer
-		fsys.log("Filesys: Allocate write buffer for part %d", fh.lastPartId)
 		fh.writeBuffer = fsys.uploader.AllocateWriteBuffer(fh.lastPartId, true)
 		if fh.writeBuffer == nil {
 			return syscall.ENOMEM
@@ -1567,7 +1565,6 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 		// increment current buffer slice offset
 		fh.writeBufferOffset += bytesCopied
 		if fh.writeBufferOffset >= cap(fh.writeBuffer) {
-			// increment part id
 			fh.lastPartId++
 			partId := fh.lastPartId
 			uploadReq := UploadRequest{
@@ -1580,7 +1577,6 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 			fsys.uploader.uploadQueue <- uploadReq
 			fh.writeBuffer = nil
 			fh.writeBufferOffset = 0
-			// Update the file attributes in the database (size, mtime)
 			fsys.mutex.Lock()
 			oph := fsys.opOpenNoHttpClient()
 			if err := fsys.mdb.UpdateFileAttrs(ctx, oph, fh.inode, fh.size, time.Now(), nil); err != nil {
@@ -1591,15 +1587,16 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 			}
 			fsys.opClose(oph)
 			fsys.mutex.Unlock()
-			fh.writeBuffer = fsys.uploader.AllocateWriteBuffer(partId, false)
-		}
+			fh.writeBuffer = fsys.uploader.AllocateWriteBuffer(partId, true)
+			if fh.writeBuffer == nil {
+				return syscall.ENOMEM
+			}
 		// all data copied into buffer slice, break
 		if bytesCopied == len(bytesToWrite) {
 			break
 		}
 		// trim data if it was only partially copied
 		bytesToWrite = bytesToWrite[bytesCopied:]
-
 	}
 	return nil
 }
