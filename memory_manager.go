@@ -11,15 +11,15 @@ import (
 
 type MemoryManager struct {
 	mutex                   sync.Mutex
-	cond                    *sync.Cond // Condition variable for waiting
-	maxMemory               int64      // Maximum memory allowed (in bytes)
-	maxMemoryUsagePerModule int64      // Maximum memory (in bytes) a single module can use
-	usedMemory              int64      // Currently used memory (in bytes)
-	readsWaiting            int32      // Number of prefetch threads waiting for memory
-	writesWaiting           int32      // Number of write threads waiting for memory
-	writeMemory             int64      // Memory allocated for writes and uploads
-	readMemory              int64      // Memory allocated for read cache and prefetch
-	verboseLevel            int        // Verbose level for logging
+	maxMemory               int64         // Maximum memory allowed (in bytes)
+	maxMemoryUsagePerModule int64         // Maximum memory (in bytes) a single module can use
+	usedMemory              int64         // Currently used memory (in bytes)
+	readsWaiting            int32         // Number of prefetch threads waiting for memory
+	writesWaiting           int32         // Number of write threads waiting for memory
+	writeMemory             int64         // Memory allocated for writes and uploads
+	readMemory              int64         // Memory allocated for read cache and prefetch
+	verboseLevel            int           // Verbose level for logging
+	notifyChan              chan struct{} // Channel for notifying waiting goroutines
 }
 
 func NewMemoryManager(verboseLevel int, maxMemory int64, maxMemoryUsagePerModule int64) *MemoryManager {
@@ -28,8 +28,8 @@ func NewMemoryManager(verboseLevel int, maxMemory int64, maxMemoryUsagePerModule
 		maxMemoryUsagePerModule: maxMemoryUsagePerModule,
 		usedMemory:              0,
 		verboseLevel:            verboseLevel,
+		notifyChan:              make(chan struct{}, 1), // Buffered channel to avoid blocking
 	}
-	mm.cond = sync.NewCond(&mm.mutex)
 
 	// Trigger garbage collection and log memory usage every 30 seconds
 	go func() {
@@ -129,9 +129,9 @@ func (mm *MemoryManager) allocate(size int64, isWriteBuffer bool, waitIndefinite
 			return nil
 		}
 
-		// Unlock the mutex before waiting and re-lock it after being signaled
+		// Wait for notification without holding the mutex
 		mm.mutex.Unlock()
-		mm.cond.Wait()
+		<-mm.notifyChan
 		mm.mutex.Lock()
 	}
 
@@ -162,7 +162,16 @@ func (mm *MemoryManager) release(buf []byte, isWriteBuffer bool) {
 		atomic.StoreInt64(&mm.usedMemory, 0)
 	}
 
-	mm.cond.Broadcast()
+	mm.notify() // Notify waiting allocate()
+}
+
+func (mm *MemoryManager) notify() {
+	select {
+	case mm.notifyChan <- struct{}{}:
+		// Notify a waiting goroutine
+	default:
+		// Do nothing if the channel is already full
+	}
 }
 
 func (mm *MemoryManager) GetUsedMemory() int64 {
@@ -192,6 +201,6 @@ func (mm *MemoryManager) TrimWriteBuffer(buf []byte, newSize int64) []byte {
 	buf = buf[:newSize]
 	atomic.AddInt64(&mm.usedMemory, sizeDiff) // sizeDiff is negative, so this reduces usedMemory
 	atomic.AddInt64(&mm.writeMemory, sizeDiff)
-	mm.cond.Broadcast()
+	mm.notify()
 	return buf
 }
