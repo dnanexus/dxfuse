@@ -94,6 +94,7 @@ func (mm *MemoryManager) AllocateReadBufferWait(size int64) []byte {
 }
 
 func (mm *MemoryManager) ReleaseReadBuffer(buf []byte) {
+	mm.debug("Releasing read buffer of size %d", len(buf))
 	mm.release(buf, false)
 }
 

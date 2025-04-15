@@ -548,16 +548,17 @@ func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq
 func (pgs *PrefetchGlobalState) getAndLockPfm(hid fuseops.HandleID) *PrefetchFileMetadata {
 	// Lock the global state mutex to access the handlesInfo map
 	pgs.mutex.Lock()
-	defer pgs.mutex.Unlock()
 
 	// Find the file this IO belongs to
 	pfm, ok := pgs.handlesInfo[hid]
 	if !ok {
+		pgs.mutex.Unlock()
 		if pgs.verbose {
 			pgs.log("Handle %d not found in global state", hid)
 		}
 		return nil
 	}
+	pgs.mutex.Unlock()
 	pgs.debug("Locking per-file mutex for handle %d", hid)
 	// Lock the per-file mutex to access the file metadata
 	pfm.mutex.Lock()
