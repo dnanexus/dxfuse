@@ -36,7 +36,8 @@ const (
 	minNumEntriesInTable = 10
 
 	// maximum number of prefetch threads, regardless of machine size
-	maxNumPrefetchThreads = 32
+	maxNumPrefetchThreads        = 32
+	maxNumChunksReadAheadPerFile = 8
 
 	minFileSize = 1 * MiB // do not track files smaller than this size
 
@@ -511,7 +512,6 @@ func findIovecIndex(pfm *PrefetchFileMetadata, ioReq IoReq) int {
 // We are holding the pfm lock at this point.
 // Wake up waiting IOs, if any.
 func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq IoReq, data []byte, err error) {
-	pgs.debug("Adding IO request to cache: handle=%d, startByte=%d, endByte=%d", ioReq.hid, ioReq.startByte, ioReq.endByte)
 	// Find the index for this chunk in the cache. The chunks may be different
 	// size, so we need to scan.
 	iovIdx := findIovecIndex(pfm, ioReq)
@@ -559,7 +559,6 @@ func (pgs *PrefetchGlobalState) getAndLockPfm(hid fuseops.HandleID) *PrefetchFil
 		return nil
 	}
 	pgs.mutex.Unlock()
-	pgs.debug("Locking per-file mutex for handle %d", hid)
 	// Lock the per-file mutex to access the file metadata
 	pfm.mutex.Lock()
 	return pfm
@@ -576,26 +575,19 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 			pgs.wg.Done()
 			return
 		}
-
-		pgs.debug("Processing IO request: handle=%d, startByte=%d, endByte=%d", ioReq.hid, ioReq.startByte, ioReq.endByte)
 		// perform the IO. We don't want to hold any locks while we
 		// are doing this, because this request could take a long time.
 		data, err := pgs.readData(client, ioReq)
 
-		pgs.debug("(inode=%d) (io=%d) adding returned data to file", ioReq.inode, ioReq.id)
 		pfm := pgs.getAndLockPfm(ioReq.hid)
-
 		if pfm == nil {
 			// file is not tracked anymore
 			pgs.log("(inode=%d) (io=%d) dropping prefetch IO [%d -- %d], file is no longer tracked",
 				ioReq.inode, ioReq.id, ioReq.startByte, ioReq.endByte)
 			continue
 		}
-		pgs.debug("(inode=%d) (io=%d) Holding the PFM lock", ioReq.inode, ioReq.id)
-
 		pgs.addIoReqToCache(pfm, ioReq, data, err)
 		pfm.mutex.Unlock()
-
 		pgs.debug("(inode=%d) (%d) Done", ioReq.inode, ioReq.id)
 	}
 }
@@ -634,6 +626,8 @@ func (pgs *PrefetchGlobalState) tableCleanupWorker() {
 		for _, fh := range candidates {
 			pfm := pgs.getAndLockPfm(fh)
 			if pfm != nil {
+				defer pfm.mutex.Unlock()
+
 				// print a report for each stream
 				pfm.logReport(now)
 				if !pgs.isWorthIt(pfm, now) {
@@ -641,7 +635,6 @@ func (pgs *PrefetchGlobalState) tableCleanupWorker() {
 					// the cache resources
 					pgs.resetPfm(pfm)
 				}
-				pfm.mutex.Unlock()
 			}
 		}
 
@@ -735,13 +728,14 @@ func (pgs *PrefetchGlobalState) CreateStreamEntry(hid fuseops.HandleID, f File, 
 func (pgs *PrefetchGlobalState) RemoveStreamEntry(hid fuseops.HandleID) {
 	pfm := pgs.getAndLockPfm(hid)
 	if pfm != nil {
+		defer pfm.mutex.Unlock()
+
 		if pgs.verbose {
 			pgs.log("RemoveStreamEntry (%d, inode=%d)", hid, pfm.inode)
 		}
 
 		// wake up any waiting synchronous user IOs
 		pgs.resetPfm(pfm)
-		pfm.mutex.Unlock()
 
 		// remove from the table
 		pgs.mutex.Lock()
@@ -879,7 +873,6 @@ func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIn
 			}
 		}
 	}
-
 	// we want to limit the amount of cached data.
 	nIovecs = len(pfm.cache.iovecs)
 	if nIovecs > pfm.cache.maxNumIovecs {
@@ -964,13 +957,11 @@ func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 		nStreams := len(pgs.handlesInfo)
 		nReadAhead := pgs.maxNumChunksReadAhead / nStreams
 		nReadAhead = MaxInt(1, nReadAhead)
-
-		pfm.cache.maxNumIovecs = nReadAhead + 1
+		pfm.cache.maxNumIovecs = MinInt(nReadAhead, maxNumChunksReadAheadPerFile)
 	}
 
 	if pfm.state == PFM_PREFETCH_IN_PROGRESS {
 		pgs.moveCacheWindow(pfm, last)
-
 		// Have we reached the end of the file?
 		if pfm.cache.endByte >= pfm.size-1 {
 			pfm.state = PFM_EOF
@@ -1080,6 +1071,7 @@ func (pgs *PrefetchGlobalState) getDataFromCache(
 	numTries := 3
 	for i := 0; i < numTries; i++ {
 		retCode := pgs.isDataInCache(pfm, startOfs, endOfs)
+
 		if pgs.verboseLevel >= 2 {
 			pfm.log("isDataInCache=%s", cacheCode2string(retCode))
 		}
@@ -1116,6 +1108,7 @@ func (pgs *PrefetchGlobalState) CacheLookup(hid fuseops.HandleID, startOfs int64
 	pfm := pgs.getAndLockPfm(hid)
 	if pfm == nil {
 		// file is not tracked, no prefetch data is available
+		pgs.debug("File not tracked, no prefetch data available")
 		return 0
 	}
 	// the PFM is locked now.
