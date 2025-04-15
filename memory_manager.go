@@ -45,6 +45,14 @@ func NewMemoryManager(verboseLevel int, maxMemory int64, maxMemoryUsagePerModule
 						float64(vmStat.Used)/1024/1024)
 				}
 
+				// log MemoryManager usage
+				mm.debug("MemoryManager: usedMemory=%.2f MiB, writeMemory=%.2f MiB, readMemory=%.2f MiB, readsWaiting=%d, writesWaiting=%d",
+					float64(mm.GetUsedMemory())/1024/1024,
+					float64(mm.GetUsedWriteMemory())/1024/1024,
+					float64(mm.GetUsedReadMemory())/1024/1024,
+					atomic.LoadInt32(&mm.readsWaiting),
+					atomic.LoadInt32(&mm.writesWaiting))
+
 				// Log Go runtime memory usage
 				var memStats runtime.MemStats
 				runtime.ReadMemStats(&memStats)
