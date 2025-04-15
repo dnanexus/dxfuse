@@ -1591,6 +1591,7 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 			if fh.writeBuffer == nil {
 				return syscall.ENOMEM
 			}
+		}
 		// all data copied into buffer slice, break
 		if bytesCopied == len(bytesToWrite) {
 			break
