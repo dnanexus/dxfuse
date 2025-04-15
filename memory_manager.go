@@ -26,17 +26,15 @@ func NewMemoryManager(verboseLevel int, maxMemory int64, maxMemoryUsagePerModule
 		maxMemory:               maxMemory,
 		maxMemoryUsagePerModule: maxMemoryUsagePerModule,
 		usedMemory:              0,
+		verboseLevel:            verboseLevel,
 	}
 	mm.cond = sync.NewCond(&mm.mutex)
 
-	// Periodically log system and Go runtime memory usage
+	// Trigger garbage collection and log memory usage every 30 seconds
 	go func() {
 		i := 0
 		for {
-			if i%6 == 0 {
-				runtime.GC() // Trigger garbage collection every ~30 seconds
-				i = 0
-			}
+			runtime.GC()
 			if verboseLevel > 1 {
 				vmStat, err := mem.VirtualMemory()
 				if err == nil {
@@ -56,7 +54,7 @@ func NewMemoryManager(verboseLevel int, maxMemory int64, maxMemoryUsagePerModule
 					float64(memStats.HeapSys)/1024/1024)
 			}
 			i++
-			time.Sleep(5 * time.Second) // Log every 5 seconds
+			time.Sleep(30 * time.Second)
 		}
 	}()
 
