@@ -188,16 +188,11 @@ func (mm *MemoryManager) GetUsedWriteMemory() int64 {
 	return atomic.LoadInt64(&mm.writeMemory)
 }
 
-func (mm *MemoryManager) TrimWriteBuffer(buf []byte, newSize int64) []byte {
+func (mm *MemoryManager) TrimWriteBuffer(buf []byte) []byte {
 	mm.mutex.Lock()
 	defer mm.mutex.Unlock()
-
-	sizeDiff := newSize - int64(len(buf))
-
-	if sizeDiff > 0 {
-		mm.log("Cannot shrink buffer to a larger size. Current size: %d, New size: %d", len(buf), newSize)
-		return buf
-	}
+	newSize := int64(len(buf))
+	sizeDiff := newSize - int64(cap(buf))
 
 	// Shrink the buffer first, then decrement memory usage
 	buf = buf[:newSize]

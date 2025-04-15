@@ -1658,7 +1658,7 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	fh.lastPartId++
 	partId := fh.lastPartId
 	// Resize the writeBuffer to its used capacity before uploading the final part
-	fh.writeBuffer = fsys.uploader.memoryManager.TrimWriteBuffer(fh.writeBuffer, int64(fh.writeBufferOffset))
+	fh.writeBuffer = fsys.uploader.memoryManager.TrimWriteBuffer(fh.writeBuffer)
 
 	uploadReq := UploadRequest{
 		fh:          fh,
