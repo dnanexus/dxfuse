@@ -155,19 +155,19 @@ func (pgs *PrefetchGlobalState) allocateIOvecMemory(size int64) []byte {
 }
 
 // Ensure all IOvec memory releases use MemoryManager
-func (pgs *PrefetchGlobalState) releaseIOvecMemory(data []byte) {
-	if data != nil {
-		pgs.memoryManager.ReleaseReadBuffer(data)
-	}
-}
+// func (pgs *PrefetchGlobalState) releaseIOvecMemory(data []byte) {
+// 	if data != nil {
+// 		pgs.memoryManager.ReleaseReadBuffer(data)
+// 	}
+// }
 
 // Iovec constructor to centralize memory allocation
 func (pgs *PrefetchGlobalState) newIovec(ioSize, startByte, endByte int64) *Iovec {
-	data := pgs.allocateIOvecMemory(ioSize)
-	if data == nil {
-		pgs.log("Memory limit exceeded, dropping IOvec allocation")
-		return nil
-	}
+	// data := pgs.allocateIOvecMemory(ioSize)
+	// if data == nil {
+	// 	pgs.log("Memory limit exceeded, dropping IOvec allocation")
+	// 	return nil
+	// }
 	return &Iovec{
 		ioSize:    ioSize,
 		startByte: startByte,
@@ -302,7 +302,7 @@ func NewPrefetchGlobalState(verboseLevel int, dxEnv dxda.DXEnvironment, memoryMa
 		verbose:               verboseLevel >= 1,
 		verboseLevel:          verboseLevel,
 		handlesInfo:           make(map[fuseops.HandleID](*PrefetchFileMetadata)),
-		ioQueue:               make(chan IoReq),
+		ioQueue:               make(chan IoReq, maxNumChunksReadAhead),
 		prefetchMaxIoSize:     prefetchMaxIoSize,
 		numPrefetchThreads:    numPrefetchThreads,
 		maxNumChunksReadAhead: int(maxNumChunksReadAhead),
@@ -323,7 +323,7 @@ func NewPrefetchGlobalState(verboseLevel int, dxEnv dxda.DXEnvironment, memoryMa
 
 func (pgs *PrefetchGlobalState) resetPfm(pfm *PrefetchFileMetadata) {
 	if pgs.verbose {
-		pfm.log("access is not sequential, resetting stream state inode=%d", pfm.inode)
+		pfm.log("Resetting stream state inode=%d", pfm.inode)
 	}
 	pfm.cancelIOs()
 	pfm.hiUserAccessOfs = 0
@@ -332,7 +332,7 @@ func (pgs *PrefetchGlobalState) resetPfm(pfm *PrefetchFileMetadata) {
 	// Release memory for all IOvecs in the cache
 	for _, iovec := range pfm.cache.iovecs {
 		if iovec.data != nil {
-			pgs.releaseIOvecMemory(iovec.data)
+			pgs.memoryManager.ReleaseReadBuffer(iovec.data)
 		}
 	}
 
@@ -392,15 +392,12 @@ func (pgs *PrefetchGlobalState) readData(client *http.Client, ioReq IoReq) ([]by
 	}
 
 	// Allocate buffer using MemoryManager
+	pgs.debug("allocating read buffer of size %d", expectedLen)
 	data := pgs.memoryManager.AllocateReadBuffer(expectedLen)
+	pgs.debug("Allocated read buffer of size %d", expectedLen)
 	if data == nil {
 		return nil, fmt.Errorf("memory limit exceeded, unable to allocate buffer")
 	}
-	defer func() {
-		if data != nil {
-			pgs.memoryManager.ReleaseReadBuffer(data)
-		}
-	}()
 
 	headers := make(map[string]string)
 
@@ -430,6 +427,9 @@ func (pgs *PrefetchGlobalState) readData(client *http.Client, ioReq IoReq) ([]by
 		recvLen, readErr := io.ReadFull(resp.Body, data)
 		resp.Body.Close()
 		if readErr != nil {
+			if data != nil {
+				pgs.memoryManager.ReleaseReadBuffer(data)
+			}
 			return nil, readErr
 		}
 
@@ -444,6 +444,7 @@ func (pgs *PrefetchGlobalState) readData(client *http.Client, ioReq IoReq) ([]by
 				ioReq.inode, ioReq.id, ioReq.startByte, ioReq.endByte)
 		}
 		// Prevent releasing the buffer on success
+		pgs.debug("Returning readData buffer of size %d", len(data))
 		return data, nil
 	}
 
@@ -533,7 +534,7 @@ func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq
 		pfm.log("prefetch error: handle=%d, startByte=%d, endByte=%d, error=%s", ioReq.hid, ioReq.startByte, ioReq.endByte, err.Error())
 		// Release memory in case of an error
 		if data != nil {
-			pgs.releaseIOvecMemory(data)
+			pgs.memoryManager.ReleaseReadBuffer(data)
 		}
 		pfm.log("(#io=%d) prefetch io error [%d -- %d] %s",
 			ioReq.id, ioReq.startByte, ioReq.endByte, err.Error())
@@ -571,6 +572,7 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 
 	for {
 		ioReq, ok := <-pgs.ioQueue
+		pgs.debug("Got prefetch IO ioreq=%d", ioReq.id)
 		if !ok {
 			pgs.wg.Done()
 			return
@@ -578,8 +580,10 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 		// perform the IO. We don't want to hold any locks while we
 		// are doing this, because this request could take a long time.
 		data, err := pgs.readData(client, ioReq)
+		pgs.debug("(inode=%d) (ioreq=%d) readData done", ioReq.inode, ioReq.id)
 
 		pfm := pgs.getAndLockPfm(ioReq.hid)
+		pgs.debug("(inode=%d) (ioreq=%d) got pfm", ioReq.inode, ioReq.id)
 		if pfm == nil {
 			// file is not tracked anymore
 			pgs.log("(inode=%d) (io=%d) dropping prefetch IO [%d -- %d], file is no longer tracked",
@@ -587,8 +591,10 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 			continue
 		}
 		pgs.addIoReqToCache(pfm, ioReq, data, err)
+		pgs.debug("(inode=%d) (ioreq=%d) added to cache", ioReq.inode, ioReq.id)
 		pfm.mutex.Unlock()
-		pgs.debug("(inode=%d) (%d) Done", ioReq.inode, ioReq.id)
+
+		pgs.debug("(inode=%d) (ioreq=%d) Done", ioReq.inode, ioReq.id)
 	}
 }
 
@@ -831,6 +837,9 @@ func (pgs *PrefetchGlobalState) findCoveredRange(
 func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIndex int) {
 	nIovecs := len(pfm.cache.iovecs)
 	nReadAheadChunks := iovIndex + pfm.cache.maxNumIovecs - nIovecs
+	// log the above 2 values
+	pfm.log("moveCacheWindow: iovIndex=%d nIovecs=%d nReadAheadChunks=%d",
+		iovIndex, nIovecs, nReadAheadChunks)
 	if nReadAheadChunks > 0 {
 		// We need to slide the cache window forward
 		//
@@ -852,6 +861,8 @@ func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIn
 			}
 
 			uniqueId := atomic.AddUint64(&pgs.ioCounter, 1)
+			pfm.log("Adding prefetch IO [%d -- %d] (io=%d)",
+				iov.startByte, iov.endByte, uniqueId)
 			pgs.ioQueue <- IoReq{
 				hid:       pfm.hid,
 				inode:     pfm.inode,
@@ -862,6 +873,7 @@ func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIn
 				endByte:   iov.endByte,
 				id:        uniqueId,
 			}
+			pfm.log("Added prefech IO")
 			check(iov.ioSize <= pgs.prefetchMaxIoSize)
 			pfm.cache.iovecs = append(pfm.cache.iovecs, iov)
 
@@ -890,7 +902,7 @@ func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIn
 		if nRemoved > 0 {
 			for i := 0; i < nRemoved; i++ {
 				if pfm.cache.iovecs[i].data != nil {
-					pgs.releaseIOvecMemory(pfm.cache.iovecs[i].data)
+					pgs.memoryManager.ReleaseReadBuffer(pfm.cache.iovecs[i].data)
 				}
 			}
 			pfm.cache.iovecs = pfm.cache.iovecs[nRemoved:]
@@ -958,10 +970,15 @@ func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 		nReadAhead := pgs.maxNumChunksReadAhead / nStreams
 		nReadAhead = MaxInt(1, nReadAhead)
 		pfm.cache.maxNumIovecs = MinInt(nReadAhead, maxNumChunksReadAheadPerFile)
+		// log the 3 above values
+		pfm.log("maxNumIovecs=%d  maxNumChunksReadAhead=%d  nStreams=%d",
+			pfm.cache.maxNumIovecs, pgs.maxNumChunksReadAhead, nStreams)
 	}
 
 	if pfm.state == PFM_PREFETCH_IN_PROGRESS {
+		pgs.debug("Moving cache window")
 		pgs.moveCacheWindow(pfm, last)
+		pgs.debug("Moved cached window")
 		// Have we reached the end of the file?
 		if pfm.cache.endByte >= pfm.size-1 {
 			pfm.state = PFM_EOF

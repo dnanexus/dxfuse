@@ -2,6 +2,7 @@ package dxfuse
 
 import (
 	"runtime"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -11,15 +12,15 @@ import (
 
 type MemoryManager struct {
 	mutex                   sync.Mutex
-	maxMemory               int64         // Maximum memory allowed (in bytes)
-	maxMemoryUsagePerModule int64         // Maximum memory (in bytes) a single module can use
-	usedMemory              int64         // Currently used memory (in bytes)
-	readsWaiting            int32         // Number of prefetch threads waiting for memory
-	writesWaiting           int32         // Number of write threads waiting for memory
-	writeMemory             int64         // Memory allocated for writes and uploads
-	readMemory              int64         // Memory allocated for read cache and prefetch
-	verboseLevel            int           // Verbose level for logging
-	notifyChan              chan struct{} // Channel for notifying waiting goroutines
+	cond                    *sync.Cond // Condition variable for signaling
+	maxMemory               int64      // Maximum memory allowed (in bytes)
+	maxMemoryUsagePerModule int64      // Maximum memory (in bytes) a single module can use
+	usedMemory              int64      // Currently used memory (in bytes)
+	readsWaiting            int32      // Number of prefetch threads waiting for memory
+	writesWaiting           int32      // Number of write threads waiting for memory
+	writeMemory             int64      // Memory allocated for writes and uploads
+	readMemory              int64      // Memory allocated for read cache and prefetch
+	verboseLevel            int        // Verbose level for logging
 }
 
 func NewMemoryManager(verboseLevel int, maxMemory int64, maxMemoryUsagePerModule int64) *MemoryManager {
@@ -28,14 +29,13 @@ func NewMemoryManager(verboseLevel int, maxMemory int64, maxMemoryUsagePerModule
 		maxMemoryUsagePerModule: maxMemoryUsagePerModule,
 		usedMemory:              0,
 		verboseLevel:            verboseLevel,
-		notifyChan:              make(chan struct{}, 1), // Buffered channel to avoid blocking
 	}
+	mm.cond = sync.NewCond(&mm.mutex) // Initialize the condition variable
 
 	// Trigger garbage collection and log memory usage every 30 seconds
 	go func() {
 		i := 0
 		for {
-			runtime.GC()
 			if verboseLevel > 1 {
 				vmStat, err := mem.VirtualMemory()
 				if err == nil {
@@ -64,6 +64,12 @@ func NewMemoryManager(verboseLevel int, maxMemory int64, maxMemoryUsagePerModule
 			}
 			i++
 			time.Sleep(30 * time.Second)
+
+			if i%3 == 0 {
+				debug.FreeOSMemory()
+			} else {
+				runtime.GC()
+			}
 		}
 	}()
 
@@ -82,7 +88,7 @@ func (mm *MemoryManager) debug(a string, args ...interface{}) {
 
 // Separate functions for read and write buffer allocation
 func (mm *MemoryManager) AllocateReadBuffer(size int64) []byte {
-	return mm.allocate(size, false, false)
+	return mm.allocate(size, false, true)
 }
 
 func (mm *MemoryManager) AllocateWriteBuffer(size int64) []byte {
@@ -104,7 +110,9 @@ func (mm *MemoryManager) ReleaseWriteBuffer(buf []byte) {
 
 // Internal helper functions for allocation and release
 func (mm *MemoryManager) allocate(size int64, isWriteBuffer bool, waitIndefinitely bool) []byte {
+	mm.debug("Getting lock: isWriteBuffer=%v, size=%d, maxMemory=%d, usedMemory=%d, writeMemory=%d, readMemory=%d", isWriteBuffer, size, mm.maxMemory, mm.GetUsedMemory(), mm.GetUsedWriteMemory(), mm.GetUsedReadMemory())
 	mm.mutex.Lock()
+	mm.debug("Got lock for allocation: size=%d, isWriteBuffer=%v, maxMemory=%d, usedMemory=%d, writeMemory=%d, readMemory=%d", size, isWriteBuffer, mm.maxMemory, mm.GetUsedMemory(), mm.GetUsedWriteMemory(), mm.GetUsedReadMemory())
 	if isWriteBuffer {
 		atomic.AddInt32(&mm.writesWaiting, 1)
 	} else {
@@ -121,18 +129,17 @@ func (mm *MemoryManager) allocate(size int64, isWriteBuffer bool, waitIndefinite
 
 	for atomic.LoadInt64(&mm.usedMemory)+size > mm.maxMemory ||
 		(isWriteBuffer && atomic.LoadInt64(&mm.writeMemory)+size > mm.maxMemoryUsagePerModule) ||
-		(!isWriteBuffer && atomic.LoadInt64(&mm.readMemory)+size > mm.maxMemoryUsagePerModule) ||
-		(!isWriteBuffer && atomic.LoadInt32(&mm.readsWaiting) > 1) {
+		(!isWriteBuffer && atomic.LoadInt64(&mm.readMemory)+size > mm.maxMemoryUsagePerModule) {
 		if !waitIndefinitely || size > mm.maxMemory {
 			// If we can't wait indefinitely or the requested buffer size exceeds maxMemory, return nil
 			mm.debug("Memory allocation failed: waitIndefinitely=%v, isWriteBuffer=%v size=%d, maxMemory=%d, usedMemory=%d, writeMemory=%d, readMemory=%d", waitIndefinitely, isWriteBuffer, size, mm.maxMemory, mm.GetUsedMemory(), mm.GetUsedWriteMemory(), mm.GetUsedReadMemory())
 			return nil
 		}
 
-		// Wait for notification without holding the mutex
-		mm.mutex.Unlock()
-		<-mm.notifyChan
-		mm.mutex.Lock()
+		// Wait for notification using condition variable
+		mm.debug("Waiting for memory allocation: waitIndefinitely=%v, isWriteBuffer=%v size=%d, maxMemory=%d, usedMemory=%d, writeMemory=%d, readMemory=%d", waitIndefinitely, isWriteBuffer, size, mm.maxMemory, mm.GetUsedMemory(), mm.GetUsedWriteMemory(), mm.GetUsedReadMemory())
+		mm.cond.Wait()
+		mm.debug("Received notification for memory allocation size=%d, isWriteBuffer=%v, maxMemory=%d, usedMemory=%d, writeMemory=%d, readMemory=%d", size, isWriteBuffer, mm.maxMemory, mm.GetUsedMemory(), mm.GetUsedWriteMemory(), mm.GetUsedReadMemory())
 	}
 
 	atomic.AddInt64(&mm.usedMemory, size)
@@ -150,12 +157,10 @@ func (mm *MemoryManager) release(buf []byte, isWriteBuffer bool) {
 	// Release the buffer
 	buf = nil
 	atomic.AddInt64(&mm.usedMemory, -size)
-	mm.debug("Added used mem")
 	if isWriteBuffer {
 		atomic.AddInt64(&mm.writeMemory, -size)
 	} else {
 		atomic.AddInt64(&mm.readMemory, -size)
-		mm.debug("Added read mem")
 	}
 
 	if atomic.LoadInt64(&mm.usedMemory) < 0 {
@@ -163,17 +168,7 @@ func (mm *MemoryManager) release(buf []byte, isWriteBuffer bool) {
 	}
 	mm.debug("Released buffer of size %d, usedMemory=%d, writeMemory=%d, readMemory=%d", size, mm.GetUsedMemory(), mm.GetUsedWriteMemory(), mm.GetUsedReadMemory())
 
-	mm.notify() // Notify waiting allocate()
-}
-
-func (mm *MemoryManager) notify() {
-	select {
-	case mm.notifyChan <- struct{}{}:
-		// Notify a waiting goroutine
-	default:
-		// Do nothing if the channel is already full
-	}
-	mm.debug("Notified routines waiting for memory allocation")
+	mm.cond.Broadcast()
 }
 
 func (mm *MemoryManager) GetUsedMemory() int64 {
@@ -198,6 +193,6 @@ func (mm *MemoryManager) TrimWriteBuffer(buf []byte) []byte {
 	buf = buf[:newSize]
 	atomic.AddInt64(&mm.usedMemory, sizeDiff) // sizeDiff is negative, so this reduces usedMemory
 	atomic.AddInt64(&mm.writeMemory, sizeDiff)
-	mm.notify()
+	mm.cond.Broadcast()
 	return buf
 }
