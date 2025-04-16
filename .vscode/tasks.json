@@ -1,0 +1,17 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "unmount-fuse-filesystem",
+            "type": "shell",
+            "command": "fusermount -u ${workspaceFolder}/mnt",
+            "problemMatcher": []
+        },
+        {
+            "label": "create-mount-directory",
+            "type": "shell",
+            "command": "mkdir -p ${workspaceFolder}/mnt",
+            "problemMatcher": []
+        }
+    ]
+}

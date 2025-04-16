@@ -4,4 +4,6 @@ ENV
 cmd_results.txt
 diff.txt
 dxfuse
+.dxfuse
 .vscode/settings.json
+mnt

@@ -40,7 +40,7 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "options:\n")
 	// Hide experimental options
 	flag.VisitAll(func(f *flag.Flag) {
-		if f.Name == "readOnly" || f.Name == "limitedWrite" || f.Name == "daemon" {
+		if f.Name == "readOnly" || f.Name == "limitedWrite" || f.Name == "daemon" || f.Name == "maxMemoryUsageMiB" {
 			return
 		}
 		name, usage := flag.UnquoteUsage(f)
@@ -55,14 +55,15 @@ var (
 	debugFuseFlag = flag.Bool("debugFuse", false, "Tap into FUSE debugging information")
 	daemon        = flag.Bool("daemon", false, "An internal flag, do not use it")
 	// fsSync        = flag.Bool("sync", false, "Sychronize the filesystem and exit")
-	help         = flag.Bool("help", false, "display program options")
-	readOnly     = flag.Bool("readOnly", true, "DEPRECATED, now the default behavior. Mount the filesystem in read-only mode")
-	limitedWrite = flag.Bool("limitedWrite", false, "Allow removing files and folders, creating files and appending to them. (Experimental, not recommended), default is read-only")
-	uid          = flag.Int("uid", -1, "User id (uid)")
-	gid          = flag.Int("gid", -1, "User group id (gid)")
-	verbose      = flag.Int("verbose", 0, "Enable verbose debugging")
-	version      = flag.Bool("version", false, "Print the version and exit")
-	stateFolder  = flag.String("stateFolder", getDefaultStateFolder(), "Directory to use for dxfuse's internal state (log file, database, etc). Created if does not exist. Defaults to "+getDefaultStateFolder())
+	help              = flag.Bool("help", false, "display program options")
+	readOnly          = flag.Bool("readOnly", true, "DEPRECATED, now the default behavior. Mount the filesystem in read-only mode")
+	limitedWrite      = flag.Bool("limitedWrite", false, "Allow removing files and folders, creating files and appending to them. (Experimental, not recommended), default is read-only")
+	uid               = flag.Int("uid", -1, "User id (uid)")
+	gid               = flag.Int("gid", -1, "User group id (gid)")
+	verbose           = flag.Int("verbose", 0, "Enable verbose debugging")
+	version           = flag.Bool("version", false, "Print the version and exit")
+	stateFolder       = flag.String("stateFolder", getDefaultStateFolder(), "Directory to use for dxfuse's internal state (log file, database, etc). Created if does not exist. Defaults to "+getDefaultStateFolder())
+	maxMemoryUsageMiB = flag.Int("maxMemoryUsageMiB", 0, "Soft Maximum memory limit in MiB. Defaults to 50% of system memory. (Experimental)")
 )
 
 func lookupProject(dxEnv *dxda.DXEnvironment, projectIdOrName string) (string, error) {
@@ -300,12 +301,13 @@ func parseCmdLineArgs() Config {
 
 	uid, gid := initUidGid()
 	options := dxfuse.Options{
-		ReadOnly:     !*limitedWrite,
-		Verbose:      *verbose > 0,
-		VerboseLevel: *verbose,
-		Uid:          uid,
-		Gid:          gid,
-		StateFolder:  *stateFolder,
+		ReadOnly:          !*limitedWrite,
+		Verbose:           *verbose > 0,
+		VerboseLevel:      *verbose,
+		MaxMemoryUsageMiB: *maxMemoryUsageMiB,
+		Uid:               uid,
+		Gid:               gid,
+		StateFolder:       *stateFolder,
 	}
 
 	dxEnv, _, err := dxda.GetDxEnvironment()
@@ -427,7 +429,10 @@ func buildDaemonCommandLine(cfg Config, fullManifestPath string) []string {
 		args := []string{"-verbose", strconv.FormatInt(int64(*verbose), 10)}
 		daemonArgs = append(daemonArgs, args...)
 	}
-
+	if *maxMemoryUsageMiB > 0 {
+		args := []string{"-maxMemoryUsageMiB", strconv.FormatInt(int64(*maxMemoryUsageMiB), 10)}
+		daemonArgs = append(daemonArgs, args...)
+	}
 	positionalArgs := []string{cfg.mountpoint, fullManifestPath}
 	daemonArgs = append(daemonArgs, positionalArgs...)
 

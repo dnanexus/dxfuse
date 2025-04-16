@@ -28,7 +28,10 @@ const (
 	MaxNumFileHandles         = 1000 * 1000
 	NumRetriesDefault         = 10
 	InitialUploadPartSize     = 16 * MiB
-	MaxUploadPartSize         = 700 * MiB
+	MinUploadPartSize         = 5 * MiB
+	MaxUploadPartSize         = 512 * MiB
+	MinNumWriteBuffers        = 8
+	MaxNumWriteBuffers        = 144
 	Version                   = "v1.5.0"
 )
 const (
@@ -65,12 +68,13 @@ type DxDownloadURL struct {
 }
 
 type Options struct {
-	ReadOnly     bool
-	Verbose      bool
-	VerboseLevel int
-	Uid          uint32
-	Gid          uint32
-	StateFolder  string
+	ReadOnly          bool
+	Verbose           bool
+	VerboseLevel      int
+	Uid               uint32
+	Gid               uint32
+	StateFolder       string
+	MaxMemoryUsageMiB int // Hidden flag to override default memory usage (in MiB)
 }
 
 // A node is a generalization over files and directories
