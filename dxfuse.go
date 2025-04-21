@@ -201,9 +201,9 @@ func NewDxfuse(
 	}
 	fsys.opClose(oph)
 
-	// Default to max 50% memory usage of system memory
+	// Default to max 15% memory usage of system memory
 	sysMemory, _ := mem.VirtualMemory()
-	maxMemory := int64(sysMemory.Total / 2)
+	maxMemory := int64(sysMemory.Total * 15 / 100)
 	if options.MaxMemoryUsageMiB > 0 {
 		maxMemory = int64(options.MaxMemoryUsageMiB) * MiB
 	}
