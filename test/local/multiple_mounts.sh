@@ -45,10 +45,12 @@ function multiple_mounts {
     mkdir -p $mountpoint1
 
     # mount dxfuse with default folder path
-    $dxfuse $mountpoint0 $projName
-
+    echo "Mounting dxfuse with default state folder"
+    $dxfuse $mountpoint0 $projName 
     # mount dxfuse with a different folder path
-    $dxfuse -stateFolder $state_folder $mountpoint1 $projName
+    echo "Mounting dxfuse with custom state folder"
+    $dxfuse -stateFolder $state_folder $mountpoint1 $projName || true
+    cat $state_folder/dxfuse.log
 
     # check that two dxfuse processes are running
     dxfuse_process_count=$(pgrep -c dxfuse)
