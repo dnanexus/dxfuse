@@ -8,16 +8,32 @@ mountpoint1=${baseDir}/MNT1
 
 # cleanup sequence
 function teardown {
+    local exit_code=$?
     if [[ $teardown_complete == 1 ]]; then
         return
     fi
     teardown_complete=1
 
-
     echo "unmounting dxfuse"
     cd $HOME
-    fusermount -u $mountpoint
+    fusermount -u $mountpoint0
     fusermount -u $mountpoint1
+    
+    # If this was exited with an error, display log files
+    if [[ $exit_code -ne 0 ]]; then
+        echo "Error detected. Displaying log files:"
+        
+        echo "========== Log file from custom state folder =========="
+        if [[ -f $state_folder/dxfuse.log ]]; then
+            cat $state_folder/dxfuse.log
+        fi
+        
+        echo "========== Log file from default state folder =========="
+        if [[ -f /root/.dxfuse/dxfuse.log ]]; then
+            cat /root/.dxfuse/dxfuse.log
+        fi
+    fi
+    
     rm -rf $state_folder
 }
 
