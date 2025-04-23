@@ -8,6 +8,7 @@ rm -f /tmp/dxfuse_timing/read_*.time /tmp/dxfuse_timing/write_*.time
 pkill dxfuse || true
 umount /home/kjensen/MNT || true
 # mount dxfuse
+/home/kjensen/dxfuse --version
 /home/kjensen/dxfuse -verbose 2 -limitedWrite /home/kjensen/MNT testing
 rm -rf /home/kjensen/MNT/testing/1GiB*
 rm -rf /home/kjensen/MNT/testing/1kib*
@@ -32,9 +33,9 @@ calculate_stats() {
   echo "  Average: $avg seconds"
 }
 
-# read 25 1GiB files with timing
+# read 50 1GiB files with timing
 echo "Starting read operations..."
-for i in {1..25}; do
+for i in {1..50}; do
   (time_start=$(date +%s.%N); 
    cat /home/kjensen/MNT/testing/1gb$i >/dev/null; 
    time_end=$(date +%s.%N); 
