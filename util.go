@@ -32,7 +32,7 @@ const (
 	MaxUploadPartSize         = 512 * MiB
 	MinNumWriteBuffers        = 8
 	MaxNumWriteBuffers        = 144
-	Version                   = "v1.5.0"
+	Version                   = "v2.0.0"
 )
 const (
 	InodeInvalid = 0
