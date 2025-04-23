@@ -3,13 +3,13 @@
 
 # Create directory for timing logs
 mkdir -p /tmp/dxfuse_timing
-rm -f /tmp/dxfuse_timing/read_*.time /tmp/dxfuse_timing/write_*.time
+rm -f /tmp/dxfuse_timing/read_*.time /tmp/dxfuse_timing/write_*.time /tmp/dxfuse_timing/small_*.time
 
 pkill dxfuse || true
 umount /home/kjensen/MNT || true
 # mount dxfuse
 /home/kjensen/dxfuse --version
-/home/kjensen/dxfuse -verbose 2 -limitedWrite /home/kjensen/MNT testing
+/home/kjensen/dxfuse -limitedWrite /home/kjensen/MNT testing
 rm -rf /home/kjensen/MNT/testing/1GiB*
 rm -rf /home/kjensen/MNT/testing/1kib*
 
@@ -51,11 +51,17 @@ for i in {1..25}; do
    echo "$time_end - $time_start" | bc > /tmp/dxfuse_timing/write_$i.time) &
 done
 
-# time and create 100 1kib files in parallel (commented out)
-#for i in {1..100}; do dd if=/dev/zero of=/home/kjensen/MNT/testing/1kib$i bs=1K count=1 & done
+# time and create 100 1kib files in parallel
+echo "Starting small file creation operations..."
+for i in {1..100}; do
+  (time_start=$(date +%s.%N); 
+   dd if=/dev/zero of=/home/kjensen/MNT/testing/1kib$i bs=1K count=1 status=none; 
+   time_end=$(date +%s.%N); 
+   echo "$time_end - $time_start" | bc > /tmp/dxfuse_timing/small_$i.time) &
+done
 
 # Check that all background processes are done without errors and measure total time
-echo "Waiting for all operations to complete..."
+echo -e "Waiting for all operations to complete...\n"
 TIMEFORMAT="Overall execution time: %3R seconds"
 time wait
 
@@ -63,3 +69,4 @@ time wait
 echo -e "\n===== TIMING STATISTICS ====="
 calculate_stats "/tmp/dxfuse_timing/read_*.time" "Read operations"
 calculate_stats "/tmp/dxfuse_timing/write_*.time" "Write operations"
+calculate_stats "/tmp/dxfuse_timing/small_*.time" "Small file operations"

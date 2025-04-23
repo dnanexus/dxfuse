@@ -871,8 +871,11 @@ func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIn
 	nIovecs := len(pfm.cache.iovecs)
 	nReadAheadChunks := iovIndex + pfm.cache.maxNumIovecs - nIovecs
 	// log the above 2 values
-	pfm.log("moveCacheWindow: iovIndex=%d nIovecs=%d nReadAheadChunks=%d",
-		iovIndex, nIovecs, nReadAheadChunks)
+	if pgs.verbose {
+		pfm.log("moveCacheWindow: iovIndex=%d nIovecs=%d nReadAheadChunks=%d",
+			iovIndex, nIovecs, nReadAheadChunks)
+	}
+
 	if nReadAheadChunks > 0 {
 		// We need to slide the cache window forward
 		//
