@@ -632,8 +632,6 @@ func (pgs *PrefetchGlobalState) tableCleanupWorker() {
 		for _, fh := range candidates {
 			pfm := pgs.getAndLockPfm(fh)
 			if pfm != nil {
-				defer pfm.mutex.Unlock()
-
 				// print a report for each stream
 				pfm.logReport(now)
 				if !pgs.isWorthIt(pfm, now) {
@@ -641,6 +639,7 @@ func (pgs *PrefetchGlobalState) tableCleanupWorker() {
 					// the cache resources
 					pgs.resetPfm(pfm)
 				}
+				pfm.mutex.Unlock()
 			}
 		}
 
