@@ -1412,7 +1412,7 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 		op.KeepPageCache = true
 		op.UseDirectIO = false
 		// Create an entry in the prefetch table
-		fsys.pgs.CreateStreamEntry(fh.hid, file, *fh.url)
+		fsys.pgs.attemptCreateStreamEntry(fh.hid, file, *fh.url)
 	} else {
 		// disable page cache for writes, files being appended to are not readable
 		op.KeepPageCache = false
@@ -1440,10 +1440,20 @@ func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp,
 	endOfs = MinInt64(lastByteInFile, endOfs)
 	reqSize = endOfs - op.Offset + 1
 
+	// Try to create a stream entry for tracking this file if not already tracked
+	if fh.accessMode == AM_RO_Remote && fh.url != nil {
+		fsys.pgs.attemptCreateStreamEntry(fh.hid,
+			File{
+				Inode: fh.inode,
+				Size:  fh.size,
+				Id:    fh.Id,
+			},
+			*fh.url)
+	}
+
 	// See if the data has already been prefetched.
-	// This call will wait, if a prefetch IO is in progress.
+	// This call will wait if a prefetch IO is in progress.
 	len := fsys.pgs.CacheLookup(fh.hid, op.Offset, endOfs, op.Dst)
-	// log received length if less than requested
 	if fsys.options.Verbose && int64(len) < reqSize {
 		fsys.log("ReadFile: CacheLookup returned %d, requested %d, offset %d", len, reqSize, op.Offset)
 	}
@@ -1493,6 +1503,7 @@ func (fsys *Filesys) ReadFile(ctx context.Context, op *fuseops.ReadFileOp) error
 		fsys.mutex.Unlock()
 		return fuse.EINVAL
 	}
+
 	fsys.mutex.Unlock()
 
 	switch fh.accessMode {

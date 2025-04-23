@@ -22,8 +22,8 @@ import (
 )
 
 const (
-	maxDeltaTime = 5 * 60 * time.Second
-	periodicTime = 30 * time.Second
+	maxDeltaTime = 60 * time.Second
+	periodicTime = 10 * time.Second
 	slowIoThresh = 60 // when does a slow IO become worth reporting
 
 	prefetchMinIoSize = (1024 * KiB) // threshold for deciding the file is sequentially accessed
@@ -135,33 +135,17 @@ type PrefetchGlobalState struct {
 	verbose               bool
 	verboseLevel          int
 	handlesInfo           map[fuseops.HandleID](*PrefetchFileMetadata) // tracking state per handle
+	nonSequentialHandles  map[fuseops.HandleID]bool                    // Handles that have shown non-sequential access
 	ioQueue               chan IoReq                                   // queue of IOs to prefetch
 	wg                    sync.WaitGroup
 	prefetchMaxIoSize     int64
 	numPrefetchThreads    int
 	maxNumChunksReadAhead int
+	maxNumEntriesInTable  int // Maximum number of files that can be tracked
 	ioCounter             uint64
 	memoryManager         *MemoryManager // Global memory manager
 }
 
-// Ensure all IOvec memory allocations use MemoryManager
-func (pgs *PrefetchGlobalState) allocateIOvecMemory(size int64) []byte {
-	data := pgs.memoryManager.AllocateReadBuffer(size)
-	if data == nil {
-		pgs.log("Memory limit exceeded, dropping IOvec allocation")
-		return nil
-	}
-	return data
-}
-
-// Ensure all IOvec memory releases use MemoryManager
-// func (pgs *PrefetchGlobalState) releaseIOvecMemory(data []byte) {
-// 	if data != nil {
-// 		pgs.memoryManager.ReleaseReadBuffer(data)
-// 	}
-// }
-
-// Iovec constructor to centralize memory allocation
 func (pgs *PrefetchGlobalState) newIovec(ioSize, startByte, endByte int64) *Iovec {
 	// data := pgs.allocateIOvecMemory(ioSize)
 	// if data == nil {
@@ -286,12 +270,33 @@ func NewPrefetchGlobalState(verboseLevel int, dxEnv dxda.DXEnvironment, memoryMa
 	// Use memoryManager.maxMemoryUsagePerModule as the overall memory limit for prefetch calculations
 	maxMemoryUsage := memoryManager.maxMemoryUsagePerModule
 
+	// Calculate maxNumEntriesInTable based on available memory
+	maxNumEntriesInTable := int(MinInt64(maxMemoryUsage/(4*prefetchMaxIoSize), int64(numCPUs*4)))
+	// Ensure we never go below the minimum regardless of memory constraints
+	if maxNumEntriesInTable < minNumEntriesInTable {
+		maxNumEntriesInTable = minNumEntriesInTable
+	}
+
 	// Simplify calculations using Min() function
 	maxNumChunksReadAhead := MinInt64(maxMemoryUsage/(2*prefetchMaxIoSize), maxMemoryUsage/(4*prefetchMaxIoSize)+1)
-	maxNumEntriesInTable := MinInt64(maxMemoryUsage/(4*prefetchMaxIoSize), minNumEntriesInTable)
 
 	// Adjust the calculation for maximum prefetch memory usage to include initial IOvecs per stream
 	totalMemoryBytes := int64(maxNumEntriesInTable)*prefetchMaxIoSize + int64(maxNumChunksReadAhead)*prefetchMaxIoSize + int64(maxNumEntriesInTable)*2*prefetchMinIoSize
+
+	// Log all the memory calculations in detail
+	log.Printf("PREFETCH MEMORY CALCULATION DETAILS:")
+	log.Printf("  Number of CPUs: %d", numCPUs)
+	log.Printf("  Available memory per module: %d MiB", maxMemoryUsage/MiB)
+	log.Printf("  prefetchMaxIoSize: %d MiB", prefetchMaxIoSize/MiB)
+	log.Printf("  minNumEntriesInTable: %d", minNumEntriesInTable)
+	log.Printf("  maxNumEntriesInTable calculation: min(%d, %d) = %d", maxMemoryUsage/(4*prefetchMaxIoSize), numCPUs*4, maxNumEntriesInTable)
+	log.Printf("  maxNumEntriesInTable final value: %d", maxNumEntriesInTable)
+	log.Printf("  maxNumChunksReadAhead calculation: min(%d, %d) = %d", maxMemoryUsage/(2*prefetchMaxIoSize), maxMemoryUsage/(4*prefetchMaxIoSize)+1, maxNumChunksReadAhead)
+	log.Printf("  Total memory required: %d MiB", totalMemoryBytes/MiB)
+	log.Printf("    - File entries: %d entries * %d MiB = %d MiB", maxNumEntriesInTable, prefetchMaxIoSize/MiB, (int64(maxNumEntriesInTable)*prefetchMaxIoSize)/MiB)
+	log.Printf("    - Read-ahead chunks: %d chunks * %d MiB = %d MiB", maxNumChunksReadAhead, prefetchMaxIoSize/MiB, (int64(maxNumChunksReadAhead)*prefetchMaxIoSize)/MiB)
+	log.Printf("    - Initial IOvecs: %d entries * %d KiB * 2 = %d MiB", maxNumEntriesInTable, prefetchMinIoSize/KiB, (int64(maxNumEntriesInTable)*2*prefetchMinIoSize)/MiB)
+	log.Printf("  Memory available vs required: %d MiB vs %d MiB", maxMemoryUsage/MiB, totalMemoryBytes/MiB)
 
 	log.Printf("maxMemoryUsagePerModule=%dMiB", maxMemoryUsage/MiB)
 	log.Printf("Maximum prefetch memory usage: %dMiB", totalMemoryBytes/MiB)
@@ -302,10 +307,12 @@ func NewPrefetchGlobalState(verboseLevel int, dxEnv dxda.DXEnvironment, memoryMa
 		verbose:               verboseLevel >= 1,
 		verboseLevel:          verboseLevel,
 		handlesInfo:           make(map[fuseops.HandleID](*PrefetchFileMetadata)),
+		nonSequentialHandles:  make(map[fuseops.HandleID]bool),
 		ioQueue:               make(chan IoReq, maxNumChunksReadAhead),
 		prefetchMaxIoSize:     prefetchMaxIoSize,
 		numPrefetchThreads:    numPrefetchThreads,
 		maxNumChunksReadAhead: int(maxNumChunksReadAhead),
+		maxNumEntriesInTable:  maxNumEntriesInTable,
 		memoryManager:         memoryManager,
 	}
 
@@ -560,7 +567,6 @@ func (pgs *PrefetchGlobalState) getAndLockPfm(hid fuseops.HandleID) *PrefetchFil
 		return nil
 	}
 	pgs.mutex.Unlock()
-	// Lock the per-file mutex to access the file metadata
 	pfm.mutex.Lock()
 	return pfm
 }
@@ -572,7 +578,6 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 
 	for {
 		ioReq, ok := <-pgs.ioQueue
-		pgs.debug("Got prefetch IO ioreq=%d", ioReq.id)
 		if !ok {
 			pgs.wg.Done()
 			return
@@ -580,21 +585,29 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 		// perform the IO. We don't want to hold any locks while we
 		// are doing this, because this request could take a long time.
 		data, err := pgs.readData(client, ioReq)
-		pgs.debug("(inode=%d) (ioreq=%d) readData done", ioReq.inode, ioReq.id)
 
-		pfm := pgs.getAndLockPfm(ioReq.hid)
-		pgs.debug("(inode=%d) (ioreq=%d) got pfm", ioReq.inode, ioReq.id)
-		if pfm == nil {
-			// file is not tracked anymore
+		// Check if the file is still tracked before trying to acquire locks
+		pgs.mutex.Lock()
+		_, fileIsTracked := pgs.handlesInfo[ioReq.hid]
+		pgs.mutex.Unlock()
+
+		if !fileIsTracked {
+			// File is no longer tracked, release memory and drop the request
 			pgs.log("(inode=%d) (io=%d) dropping prefetch IO [%d -- %d], file is no longer tracked",
 				ioReq.inode, ioReq.id, ioReq.startByte, ioReq.endByte)
 			continue
 		}
+
+		pfm := pgs.getAndLockPfm(ioReq.hid)
+		if pfm == nil {
+			pgs.log("(inode=%d) (io=%d) dropping prefetch IO [%d -- %d], could not acquire lock",
+				ioReq.inode, ioReq.id, ioReq.startByte, ioReq.endByte)
+			continue
+		}
 		pgs.addIoReqToCache(pfm, ioReq, data, err)
-		pgs.debug("(inode=%d) (ioreq=%d) added to cache", ioReq.inode, ioReq.id)
 		pfm.mutex.Unlock()
 
-		pgs.debug("(inode=%d) (ioreq=%d) Done", ioReq.inode, ioReq.id)
+		pgs.debug("(inode=%d) (ioreq=%d) Completed", ioReq.inode, ioReq.id)
 	}
 }
 
@@ -709,25 +722,39 @@ func (pgs *PrefetchGlobalState) firstAccessToStream(pfm *PrefetchFileMetadata, o
 	pfm.cache.iovecs[1] = iov2
 }
 
-func (pgs *PrefetchGlobalState) CreateStreamEntry(hid fuseops.HandleID, f File, url DxDownloadURL) {
+// Attempts to create a stream entry for a file handle that isn't currently tracked
+// Only adds the file if:
+// 1. It's not already being tracked
+// 2. It's not in the nonSequentialHandles map (previously identified as non-sequential)
+// 3. There's room in the tracking table
+// 4. The file is large enough to benefit from prefetching
+func (pgs *PrefetchGlobalState) attemptCreateStreamEntry(hid fuseops.HandleID, file File, url DxDownloadURL) bool {
 	pgs.mutex.Lock()
 	defer pgs.mutex.Unlock()
 
-	// if the table is at the size limit, do not create a new entry
-	if len(pgs.handlesInfo) >= pgs.numPrefetchThreads {
-		return
+	// Quick check first - if already tracked, we can return immediately
+	if _, alreadyTracked := pgs.handlesInfo[hid]; alreadyTracked {
+		return false
 	}
 
-	// The file has to have sufficient size, to merit an entry. We
-	// don't want to waste entries on small files
-	if f.Size < minFileSize {
-		return
+	// Check if there's room in the tracking table and if the file is large enough
+	if len(pgs.handlesInfo) >= pgs.maxNumEntriesInTable || file.Size < minFileSize {
+		return false
 	}
 
+	// Finally, check if this file has been marked as non-sequential
+	if _, isNonSequential := pgs.nonSequentialHandles[hid]; isNonSequential {
+		return false
+	}
+
+	// All checks passed, add the file to tracking
 	if pgs.verbose {
-		pgs.log("CreateStreamEntry (%d, %s, %d)", hid, f.Name, f.Inode)
+		pgs.log("Adding handle %d to prefetch tracking (now %d/%d entries)",
+			hid, len(pgs.handlesInfo)+1, pgs.maxNumEntriesInTable)
 	}
-	pgs.handlesInfo[hid] = pgs.newPrefetchFileMetadata(hid, f, url)
+
+	pgs.handlesInfo[hid] = pgs.newPrefetchFileMetadata(hid, file, url)
+	return true
 }
 
 func (pgs *PrefetchGlobalState) RemoveStreamEntry(hid fuseops.HandleID) {
@@ -745,6 +772,13 @@ func (pgs *PrefetchGlobalState) RemoveStreamEntry(hid fuseops.HandleID) {
 		// remove from the table
 		pgs.mutex.Lock()
 		delete(pgs.handlesInfo, hid)
+		// Also remove from nonSequentialHandles map to prevent memory leaks
+		delete(pgs.nonSequentialHandles, hid)
+		pgs.mutex.Unlock()
+	} else {
+		// Even if the PFM is not found, we should still clean up the nonSequentialHandles map
+		pgs.mutex.Lock()
+		delete(pgs.nonSequentialHandles, hid)
 		pgs.mutex.Unlock()
 	}
 }
@@ -1147,6 +1181,8 @@ func (pgs *PrefetchGlobalState) CacheLookup(hid fuseops.HandleID, startOfs int64
 		// No data is cached. Only detecting if there is sequential access.
 		ok := pgs.markAccessedAndMaybeStartPrefetch(pfm, startOfs, endOfs)
 		if !ok {
+			// Non-sequential access detected
+			pgs.markNonSequential(pfm.hid)
 			pgs.resetPfm(pfm)
 		}
 		return 0
@@ -1157,7 +1193,8 @@ func (pgs *PrefetchGlobalState) CacheLookup(hid fuseops.HandleID, startOfs int64
 		retCode, len := pgs.getDataFromCache(pfm, startOfs, endOfs, data)
 		if retCode == DATA_OUTSIDE_CACHE {
 			// The file is not accessed sequentially.
-			// zero out the cache and start over.
+			// Mark it as non-sequential, then zero out the cache and start over.
+			pgs.markNonSequential(pfm.hid)
 			pgs.resetPfm(pfm)
 		}
 		return len
@@ -1167,12 +1204,25 @@ func (pgs *PrefetchGlobalState) CacheLookup(hid fuseops.HandleID, startOfs int64
 		retCode, len := pgs.getDataFromCache(pfm, startOfs, endOfs, data)
 		if retCode == DATA_OUTSIDE_CACHE {
 			// The file is being accessed again, perhaps reading from a different region
-			// reset the cache and start over
 			pgs.resetPfm(pfm)
 		}
 		return len
 	default:
 		log.Panicf("bad state %d for fileId=%s", pfm.state, pfm.id)
 		return 0
+	}
+}
+
+// Mark a file handle as having non-sequential access pattern
+func (pgs *PrefetchGlobalState) markNonSequential(hid fuseops.HandleID) {
+	pgs.mutex.Lock()
+	defer pgs.mutex.Unlock()
+
+	// Add to the nonSequentialHandles map to remember this file
+	// doesn't benefit from prefetching
+	pgs.nonSequentialHandles[hid] = true
+
+	if pgs.verbose {
+		pgs.log("Marked handle %d as having non-sequential access pattern", hid)
 	}
 }
