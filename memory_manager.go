@@ -3,6 +3,7 @@ package dxfuse
 import (
 	"runtime"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -61,6 +62,17 @@ func NewMemoryManager(verboseLevel int, maxMemory int64, maxMemoryUsagePerModule
 					float64(memStats.Sys)/1024/1024,
 					float64(memStats.HeapAlloc)/1024/1024,
 					float64(memStats.HeapSys)/1024/1024)
+
+				// Check if we have a significant number of waiting goroutines
+				readsWaiting := atomic.LoadInt32(&mm.readsWaiting)
+				writesWaiting := atomic.LoadInt32(&mm.writesWaiting)
+				// If there are multiple goroutines waiting, print stack traces to help diagnose deadlocks
+				stackTrace := getDumpableStackTraces()
+				waitingGoroutines := findWaitingGoroutines(stackTrace, "")
+
+				mm.log("POTENTIAL DEADLOCK: %d read threads and %d write threads waiting for memory",
+					readsWaiting, writesWaiting)
+				mm.log("Goroutines waiting on locks:\n%s", waitingGoroutines)
 			}
 			i++
 			time.Sleep(30 * time.Second)
@@ -88,7 +100,7 @@ func (mm *MemoryManager) debug(a string, args ...interface{}) {
 
 // Separate functions for read and write buffer allocation
 func (mm *MemoryManager) AllocateReadBuffer(size int64) []byte {
-	return mm.allocate(size, false, true)
+	return mm.allocate(size, false, false)
 }
 
 func (mm *MemoryManager) AllocateWriteBuffer(size int64) []byte {
@@ -195,4 +207,47 @@ func (mm *MemoryManager) TrimWriteBuffer(buf []byte) []byte {
 	atomic.AddInt64(&mm.writeMemory, sizeDiff)
 	mm.cond.Broadcast()
 	return buf
+}
+
+// getDumpableStackTraces returns formatted stack traces of all goroutines
+func getDumpableStackTraces() string {
+	buf := make([]byte, 1024*1024)
+	n := runtime.Stack(buf, true)
+	return string(buf[:n])
+}
+
+// findWaitingGoroutines analyzes stack traces to find goroutines waiting for mutex locks
+func findWaitingGoroutines(stackTrace string, mutexName string) string {
+	lines := strings.Split(stackTrace, "\n")
+	var result strings.Builder
+	var currentGoroutine string
+	isWaiting := false
+
+	for _, line := range lines {
+		if strings.HasPrefix(line, "goroutine ") {
+			// If we found a waiting goroutine in the previous iteration, add it to results
+			if isWaiting {
+				result.WriteString(currentGoroutine)
+				result.WriteString("\n")
+			}
+
+			// Start collecting a new goroutine
+			currentGoroutine = line + "\n"
+			isWaiting = false
+		} else if strings.Contains(line, "sync.(*Mutex).Lock") ||
+			strings.Contains(line, "sync.(*RWMutex).Lock") ||
+			strings.Contains(line, "sync.(*RWMutex).RLock") {
+			isWaiting = true
+			currentGoroutine += line + "\n"
+		} else if isWaiting {
+			currentGoroutine += line + "\n"
+		}
+	}
+
+	// Check the last goroutine
+	if isWaiting {
+		result.WriteString(currentGoroutine)
+	}
+
+	return result.String()
 }
