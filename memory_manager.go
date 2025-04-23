@@ -100,15 +100,11 @@ func (mm *MemoryManager) debug(a string, args ...interface{}) {
 
 // Separate functions for read and write buffer allocation
 func (mm *MemoryManager) AllocateReadBuffer(size int64) []byte {
-	return mm.allocate(size, false, false)
+	return mm.allocate(size, false, true)
 }
 
 func (mm *MemoryManager) AllocateWriteBuffer(size int64) []byte {
 	return mm.allocate(size, true, true)
-}
-
-func (mm *MemoryManager) AllocateReadBufferWait(size int64) []byte {
-	return mm.allocate(size, false, true)
 }
 
 func (mm *MemoryManager) ReleaseReadBuffer(buf []byte) {
