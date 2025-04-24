@@ -33,7 +33,7 @@ const (
 
 	// An active stream can use a significant amount of memory to store prefetched data.
 	// Limit the total number of streams we are tracking and prefetching.
-	minNumEntriesInTable = 10
+	minNumEntriesInTable = 8
 
 	// maximum number of prefetch threads, regardless of machine size
 	maxNumPrefetchThreads        = 32
@@ -277,9 +277,7 @@ func NewPrefetchGlobalState(verboseLevel int, dxEnv dxda.DXEnvironment, memoryMa
 		maxNumEntriesInTable = minNumEntriesInTable
 	}
 
-	// Simplify calculations using Min() function
-	maxNumChunksReadAhead := MinInt64(maxMemoryUsage/(2*prefetchMaxIoSize), maxMemoryUsage/(4*prefetchMaxIoSize)+1)
-
+	maxNumChunksReadAhead := MaxInt64(1, maxMemoryUsage/(2*prefetchMaxIoSize))
 	// Adjust the calculation for maximum prefetch memory usage to include initial IOvecs per stream
 	totalMemoryBytes := int64(maxNumEntriesInTable)*prefetchMaxIoSize + int64(maxNumChunksReadAhead)*prefetchMaxIoSize + int64(maxNumEntriesInTable)*2*prefetchMinIoSize
 
@@ -582,6 +580,18 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 			pgs.wg.Done()
 			return
 		}
+
+		// Set the corresponding Iovec state to IOV_IN_FLIGHT
+		pfm := pgs.getAndLockPfm(ioReq.hid)
+		var iovIdx int
+		if pfm != nil {
+			iovIdx = findIovecIndex(pfm, ioReq)
+			if iovIdx != -1 {
+				pfm.cache.iovecs[iovIdx].state = IOV_IN_FLIGHT
+			}
+			pfm.mutex.Unlock()
+		}
+
 		// perform the IO. We don't want to hold any locks while we
 		// are doing this, because this request could take a long time.
 		data, err := pgs.readData(client, ioReq)
@@ -598,12 +608,15 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 			continue
 		}
 
-		pfm := pgs.getAndLockPfm(ioReq.hid)
+		pfm = pgs.getAndLockPfm(ioReq.hid)
 		if pfm == nil {
 			pgs.log("(inode=%d) (io=%d) dropping prefetch IO [%d -- %d], could not acquire lock",
 				ioReq.inode, ioReq.id, ioReq.startByte, ioReq.endByte)
 			continue
 		}
+
+		// Add the IO request to the cache and update the state
+		// This will wake up waiting readers
 		pgs.addIoReqToCache(pfm, ioReq, data, err)
 		pfm.mutex.Unlock()
 
@@ -1074,14 +1087,13 @@ func (pgs *PrefetchGlobalState) isDataInCache(
 			// waiting for prefetch to come back with data.
 			// note: when we wake up, the IO may have come back
 			// with an error.
-			if pgs.verboseLevel >= 2 {
-				pfm.log("isDataInCache: wait")
-			}
+			//if pgs.verboseLevel >= 2 {
+			pfm.log("isDataInCache: wait")
+			//}
 			iov.cond.Wait()
 			return DATA_WAIT
 
 		case IOV_DONE:
-			// we're good
 			continue
 
 		case IOV_ERRORED:
