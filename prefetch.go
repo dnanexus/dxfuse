@@ -910,8 +910,7 @@ func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIn
 			}
 
 			uniqueId := atomic.AddUint64(&pgs.ioCounter, 1)
-			pfm.log("Adding prefetch IO [%d -- %d] (io=%d)",
-				iov.startByte, iov.endByte, uniqueId)
+
 			pgs.ioQueue <- IoReq{
 				hid:       pfm.hid,
 				inode:     pfm.inode,
@@ -922,7 +921,6 @@ func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIn
 				endByte:   iov.endByte,
 				id:        uniqueId,
 			}
-			pfm.log("Added prefech IO")
 			check(iov.ioSize <= pgs.prefetchMaxIoSize)
 			pfm.cache.iovecs = append(pfm.cache.iovecs, iov)
 
@@ -1081,6 +1079,7 @@ func (pgs *PrefetchGlobalState) isDataInCache(
 		iov := pfm.cache.iovecs[i]
 		switch iov.state {
 		case IOV_HOLE:
+			pfm.log("isDataInCache: HOLE")
 			return DATA_HOLE
 
 		case IOV_IN_FLIGHT:
@@ -1094,6 +1093,8 @@ func (pgs *PrefetchGlobalState) isDataInCache(
 			return DATA_WAIT
 
 		case IOV_DONE:
+			pfm.log("isDataInCache: DONE")
+			// we're good
 			continue
 
 		case IOV_ERRORED:

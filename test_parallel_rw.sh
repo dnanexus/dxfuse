@@ -42,23 +42,23 @@ for i in {1..50}; do
    echo "$time_end - $time_start" | bc > /tmp/dxfuse_timing/read_$i.time) &
 done
 
-# write 25 1GiB files with timing
-echo "Starting write operations..."
-for i in {1..25}; do
-  (time_start=$(date +%s.%N); 
-   dd if=/dev/zero of=/home/kjensen/MNT/testing/1GiB$i bs=1M count=1024 status=none; 
-   time_end=$(date +%s.%N); 
-   echo "$time_end - $time_start" | bc > /tmp/dxfuse_timing/write_$i.time) &
-done
+# # write 25 1GiB files with timing
+# echo "Starting write operations..."
+# for i in {1..25}; do
+#   (time_start=$(date +%s.%N); 
+#    dd if=/dev/zero of=/home/kjensen/MNT/testing/1GiB$i bs=1M count=1024 status=none; 
+#    time_end=$(date +%s.%N); 
+#    echo "$time_end - $time_start" | bc > /tmp/dxfuse_timing/write_$i.time) &
+# done
 
-# time and create 100 1kib files in parallel
-echo "Starting small file creation operations..."
-for i in {1..100}; do
-  (time_start=$(date +%s.%N); 
-   dd if=/dev/zero of=/home/kjensen/MNT/testing/1kib$i bs=1K count=1 status=none; 
-   time_end=$(date +%s.%N); 
-   echo "$time_end - $time_start" | bc > /tmp/dxfuse_timing/small_$i.time) &
-done
+# # time and create 100 1kib files in parallel
+# echo "Starting small file creation operations..."
+# for i in {1..100}; do
+#   (time_start=$(date +%s.%N); 
+#    dd if=/dev/zero of=/home/kjensen/MNT/testing/1kib$i bs=1K count=1 status=none; 
+#    time_end=$(date +%s.%N); 
+#    echo "$time_end - $time_start" | bc > /tmp/dxfuse_timing/small_$i.time) &
+# done
 
 # Check that all background processes are done without errors and measure total time
 echo -e "Waiting for all operations to complete...\n"
@@ -68,5 +68,5 @@ time wait
 # Print statistics
 echo -e "\n===== TIMING STATISTICS ====="
 calculate_stats "/tmp/dxfuse_timing/read_*.time" "Read operations"
-calculate_stats "/tmp/dxfuse_timing/write_*.time" "Write operations"
-calculate_stats "/tmp/dxfuse_timing/small_*.time" "Small file operations"
+# calculate_stats "/tmp/dxfuse_timing/write_*.time" "Write operations"
+# calculate_stats "/tmp/dxfuse_timing/small_*.time" "Small file operations"
