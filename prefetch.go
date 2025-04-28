@@ -146,7 +146,7 @@ type PrefetchGlobalState struct {
 	memoryManager         *MemoryManager // Global memory manager
 }
 
-func (pgs *PrefetchGlobalState) newIovec(ioSize, startByte, endByte int64) *Iovec {
+func (pgs *PrefetchGlobalState) newIovec(pfm *PrefetchFileMetadata, ioSize, startByte, endByte int64) *Iovec {
 	// data := pgs.allocateIOvecMemory(ioSize)
 	// if data == nil {
 	// 	pgs.log("Memory limit exceeded, dropping IOvec allocation")
@@ -158,7 +158,7 @@ func (pgs *PrefetchGlobalState) newIovec(ioSize, startByte, endByte int64) *Iove
 		endByte:   endByte,
 		data:      nil,
 		state:     IOV_HOLE,
-		cond:      sync.NewCond(&pgs.mutex),
+		cond:      sync.NewCond(&pfm.mutex),
 	}
 }
 
@@ -712,13 +712,13 @@ func (pgs *PrefetchGlobalState) firstAccessToStream(pfm *PrefetchFileMetadata, o
 	startOfs := (ofs / pageSize) * pageSize
 
 	// Update IOvec creation to support dynamic buffer sizes
-	iov1 := pgs.newIovec(prefetchMinIoSize, startOfs, startOfs+prefetchMinIoSize-1)
+	iov1 := pgs.newIovec(pfm, prefetchMinIoSize, startOfs, startOfs+prefetchMinIoSize-1)
 	if iov1 == nil {
 		pfm.log("Memory limit exceeded, dropping prefetch IO")
 		return
 	}
 
-	iov2 := pgs.newIovec(prefetchMinIoSize, iov1.startByte+prefetchMinIoSize, iov1.endByte+prefetchMinIoSize)
+	iov2 := pgs.newIovec(pfm, prefetchMinIoSize, iov1.startByte+prefetchMinIoSize, iov1.endByte+prefetchMinIoSize)
 	if iov2 == nil {
 		pfm.log("Memory limit exceeded, dropping prefetch IO")
 		return
@@ -903,7 +903,7 @@ func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIn
 				break
 			}
 			endByte := MinInt64(startByte+int64(pfm.cache.prefetchIoSize)-1, lastByteInFile)
-			iov := pgs.newIovec(endByte-startByte+1, startByte, endByte)
+			iov := pgs.newIovec(pfm, endByte-startByte+1, startByte, endByte)
 			if iov == nil {
 				pfm.log("Memory limit exceeded, dropping prefetch IO")
 				continue
