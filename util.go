@@ -6,6 +6,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"runtime"
+	"strings"
 	"time"
 
 	"github.com/jacobsa/fuse/fuseops"
@@ -346,4 +348,47 @@ func GetTgid(pid uint32) (tgid int32, err error) {
 		return -1, err
 	}
 	return tgid, nil
+}
+
+// Returns formatted stack traces of all goroutines
+func GetDumpableStackTraces() string {
+	buf := make([]byte, 1024*1024)
+	n := runtime.Stack(buf, true)
+	return string(buf[:n])
+}
+
+// Analyzes stack traces to find goroutines waiting for mutex locks
+func FindWaitingGoroutines(stackTrace string, mutexName string) string {
+	lines := strings.Split(stackTrace, "\n")
+	var result strings.Builder
+	var currentGoroutine string
+	isWaiting := false
+
+	for _, line := range lines {
+		if strings.HasPrefix(line, "goroutine ") {
+			// If we found a waiting goroutine in the previous iteration, add it to results
+			if isWaiting {
+				result.WriteString(currentGoroutine)
+				result.WriteString("\n")
+			}
+
+			// Start collecting a new goroutine
+			currentGoroutine = line + "\n"
+			isWaiting = false
+		} else if strings.Contains(line, "sync.(*Mutex).Lock") ||
+			strings.Contains(line, "sync.(*RWMutex).Lock") ||
+			strings.Contains(line, "sync.(*RWMutex).RLock") {
+			isWaiting = true
+			currentGoroutine += line + "\n"
+		} else if isWaiting {
+			currentGoroutine += line + "\n"
+		}
+	}
+
+	// Check the last goroutine
+	if isWaiting {
+		result.WriteString(currentGoroutine)
+	}
+
+	return result.String()
 }
