@@ -8,7 +8,7 @@ Bioinformatics tools, by and large, assume a Unix environment and a POSIX filesy
 
 Mount the DNAnexus storage system as a POSIX filesystem.
 
-### Challange
+### Challenge
 
 The DNAnexus storage system is not POSIX. Here are some important differences:
 
@@ -21,6 +21,7 @@ The DNAnexus storage system is not POSIX. Here are some important differences:
 7. Files are immutable, consistency between multiple writers is non standard
 8. Directories don't have atime, mtime, ctime, and size.
 9. Files don't have atime.
+10. permission?
 
 The big question is how to bridge these gaps, presenting a regular filesystem to an application. One possible approach is to mount the object system as a network filesystem, something equivalent to [Amazon EFS](https://aws.amazon.com/efs/). An alternative is to write a FUSE filesystem on the cloud workers, similar to [Google Cloud FUSE](https://cloud.google.com/storage/docs/gcs-fuse), or [S3 FUSE](https://github.com/s3fs-fuse/s3fs-fuse).
 

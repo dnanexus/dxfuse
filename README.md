@@ -8,7 +8,7 @@ A filesystem that allows users access to the DNAnexus storage system.
 
 The code uses the [FUSE](https://github.com/jacobsa/fuse)
 library, implemented in [golang](https://golang.org). The DNAnexus
-storage system is not POSIX compilant. It holds not just files and
+storage system is not POSIX compliant. It holds not just files and
 directories, but also records, databases, applets, and workflows. It
 allows things that are not POSIX, for example:
 1. Files in a directory can have the same name
@@ -49,7 +49,7 @@ There are several limitations currently:
 
 # Download benchmarks
 
-Streaming a file from DNAnexus using dxfuse performs similiarly to dx-toolkit.
+Streaming a file from DNAnexus using dxfuse performs similarly to dx-toolkit.
 The following table shows performance across several
 instance types. The benchmark was *how many seconds does it take to
 download a file of size X?* The lower the number, the better. The two
@@ -90,7 +90,7 @@ the risk of network choppiness.
 
 # Limited Write Mode
 
-`dxfuse -limitedWrite` mode was primarly designed to support spark file output over the `file:///` protocol.
+`dxfuse -limitedWrite` mode was primarily designed to support spark file output over the `file:///` protocol.
 
 Creating and writing to files is allowed when dxfuse is mounted with the `-limitedWrite` flag.
 Writing to files is **append only**. Any non-sequential writes will return `ENOTSUP`. Seeking or reading operations are not permitted while a file is being written.
@@ -137,7 +137,7 @@ close(3)                                = 0
 read(0, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"..., 1024) = 1024
 write(1, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"..., 1024) = 1024
 ```
-The example below closes the file descriptor after writing, which closes the dnanexus file, causing subsequent writes to fail.
+The example below closes the file descriptor after writing, which closes the DNAnexus file, causing subsequent writes to fail.
 ```
 # Unsupported access pattern
 openat(AT_FDCWD, "MNT/project/writefile", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
@@ -198,10 +198,10 @@ Allow regular users access to the fuse device on the local machine:
 chmod u+rw /dev/fuse
 ```
 
-In theory, it should be possible to use `suid` to achive this instead, but that does
+In theory, it should be possible to use `suid` to achieve this instead, but that does
 not currently work.
 
-To mount a dnanexus project `mammals` in local directory `/home/jonas/foo` do:
+To mount a DNAnexus project `mammals` in local directory `/home/jonas/foo` do:
 ```
 dxfuse /home/jonas/foo mammals
 ```
@@ -209,8 +209,8 @@ dxfuse /home/jonas/foo mammals
 Note that dxfuse will hide any existing content of the mount point (e.g. `/home/jonas/foo` directory in the example above) 
 until the dxfuse process is stopped.
 
-The bootstrap process has some asynchrony, so it could take it a
-second two to start up. It spawns a separate process for the filesystem
+The bootstrap process has some asynchrony, so it could take a
+second or two to start up. It spawns a separate process for the filesystem
 server, waits for it to start, and exits. To get more information, use
 the `verbose` flag. Debugging output is written to the log, which is
 placed at `$HOME/.dxfuse/dxfuse.log`. The maximal verbosity level is 2.
@@ -242,9 +242,9 @@ fusermount -u MOUNT-POINT
 
 ## Extended attributes (xattrs)
 
-DNXa data objects have properties and tags, these are exposed as POSIX extended attributes. Xattrs can be read, written, and removed. The package we use here is `attr`, it can installed with `sudo apt-get install attr` on Linux. On OSX the `xattr` package comes packaged with the base operating system, and can be used to the same effect.
+DNAx data objects have properties and tags, these are exposed as POSIX extended attributes. Xattrs can be read, written, and removed. The package we use here is `attr`, it can installed with `sudo apt-get install attr` on Linux. On OSX the `xattr` package comes packaged with the base operating system, and can be used to the same effect.
 
-DNAx tags and properties are prefixed. For example, if `zebra.txt` is a file then `attr -l zebra.txt` will print out all the tags, properties, and attributes that have no POSIX equivalent. These are split into three correspnding prefixes _tag_, _prop_, and _base_ all under the `user` Linux namespace.
+DNAx tags and properties are prefixed. For example, if `zebra.txt` is a file then `attr -l zebra.txt` will print out all the tags, properties, and attributes that have no POSIX equivalent. These are split into three corresponding prefixes _tag_, _prop_, and _base_ all under the `user` Linux namespace.
 
 Here `zebra.txt` has no properties or tags.
 ```
@@ -276,7 +276,7 @@ You cannot modify _base.*_ attributes, these are read-only. Setting and deleting
 
 For OSX you will need to install [macFUSE](https://osxfuse.github.io/). Note that Your Milage May Vary (YMMV) on this platform, we are mostly focused on Linux.
 
-Feaures such as kernel read-ahead, pagecache, mmap, and PID tracking may not work on macOS.
+Features such as kernel read-ahead, pagecache, mmap, and PID tracking may not work on macOS.
 
 ## mmap
 
@@ -291,6 +291,6 @@ mmap.mmap(fd.fileno(), 0, flags=mmap.MAP_SHARED, prot=mmap.PROT_READ)
 
 # Common problems
 
-If a project appears empty, or is missing files, it could be that the dnanexus token does not have permissions for it. Try to see if you can do `dx ls YOUR_PROJECT:`.
+If a project appears empty, or is missing files, it could be that the DNAnexus token does not have permissions for it. Try to see if you can do `dx ls YOUR_PROJECT:`.
 
 There is no natural match for DNAnexus applets and workflows, so they are presented as block devices. They do not behave like block devices, but the shell colors them differently from files and directories.
