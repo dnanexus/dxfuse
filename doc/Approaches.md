@@ -21,8 +21,6 @@ The DNAnexus storage system is not POSIX. Here are some important differences:
 7. Files are immutable, consistency between multiple writers is non standard
 8. Directories don't have atime, mtime, ctime, and size.
 9. Files don't have atime.
-10. permission?
-
 The big question is how to bridge these gaps, presenting a regular filesystem to an application. One possible approach is to mount the object system as a network filesystem, something equivalent to [Amazon EFS](https://aws.amazon.com/efs/). An alternative is to write a FUSE filesystem on the cloud workers, similar to [Google Cloud FUSE](https://cloud.google.com/storage/docs/gcs-fuse), or [S3 FUSE](https://github.com/s3fs-fuse/s3fs-fuse).
 
 An additional approach is using a client side kernel module. The main benefit is less memory copying, compared to FUSE. However, development and debugging are much more difficult because it is done in kernel space; errors cause the kernel to crash, taking down the entire machine. This direction has been on the decline in recent years, which is why we only mention it in passing.

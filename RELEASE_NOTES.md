@@ -8,7 +8,7 @@
 
 ## v0.23.0
 - Default to read-only mode. `-readOnly` flag is deprecated.
-- Experimental `-limitedWrite` flag, but not guarantees are made about uploads
+- Experimental `-readWrite` flag, but not guarantees are made about uploads
 - Raise object limit from 10k --> 255k objects in a directory
 - Continue prefetching sequential data from a file if half of the data from the previous range is read, not the entire chunk. Heuristic changed for running `plink` with dxfuse.
 

@@ -210,7 +210,7 @@ Browsing through directory `Cards/J`, is equivalent to traversing the remote `pr
 
 # Experimental file creation and modification
 
-dxfuse has an unstable experimental mode that allows creating new files and modifying existing files,
+dxfuse has an experimental mode that allows creating new files and modifying existing files,
 in spite of the fact that only immutable files exist on DNAx. The
 mismatch between what the filesystem allows (updating a file), and
 what is available natively on the platform makes the update operation
