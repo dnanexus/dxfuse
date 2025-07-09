@@ -65,12 +65,13 @@ type DxDownloadURL struct {
 }
 
 type Options struct {
-	ReadOnly     bool
-	Verbose      bool
-	VerboseLevel int
-	Uid          uint32
-	Gid          uint32
-	StateFolder  string
+	ReadOnly       bool
+	AllowOverWrite bool
+	Verbose        bool
+	VerboseLevel   int
+	Uid            uint32
+	Gid            uint32
+	StateFolder    string
 }
 
 // A node is a generalization over files and directories

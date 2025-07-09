@@ -1314,6 +1314,11 @@ func (fsys *Filesys) openRegularFile(
 
 // Note: What happens if the file is opened for writing?
 func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error {
+	fsys.log("op: %v", op)
+	fsys.log("OpenfileOp Flags: %v", op.OpenFlags)
+	if op.OpenFlags&syscall.O_TRUNC != 0 {
+		fsys.log("File opened with O_TRUNC flag")
+	}
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
 	oph := fsys.opOpen()
