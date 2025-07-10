@@ -106,7 +106,7 @@ function file_overwrite {
 
     dx mkdir $projName:/$base_dir
 
-    # Start the dxfuse daemon in the background, and wait for it to initilize.
+    # Start the dxfuse daemon in the background, and wait for it to initialize.
     echo "Mounting dxfuse"
     flags="-limitedWrite"
     if [[ $verbose != "" ]]; then
