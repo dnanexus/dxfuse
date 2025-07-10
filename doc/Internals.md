@@ -74,14 +74,14 @@ The `directories` table stores information for individual directories.
 | ---        | ---  | --          |
 | inode      | bigint |  local filesystem inode |
 | proj\_id   | text | Project id the directory belongs to |
-| proj\_folder | text | corresponding folder on dnanexus |
+| proj\_folder | text | corresponding folder on DNAnexus |
 | populated  | int |  has the directory been queried? |
 | ctime      | bigint  | creation time |
 | mtime      | bigint  | modification time |
 | mode       | int     | Unix permission bits |
 
 It maps a directory to a stable `inode`, which is the primary key. The
-populated flag is zero the first time the directory is encounterd. It
+populated flag is zero the first time the directory is encountered. It
 is set to one, once the directory is fully described. The `ctime` and `mtime`
 are approximated by using the project timestamps. All directories are
 associated with a project, except the root. The root can hold multiple directories,
@@ -136,7 +136,7 @@ memory. The goal of the prefetch module is: *if a file is read from start to fin
 able to read it in large network requests*. What follows is a simplified description of the algorithm.
 
 In order for a file to be eligible for streaming it has to be at
-8MiB. A bitmap is maintained for areas accessed. If a complete metabyte
+8MiB. A bitmap is maintained for areas accessed. If a complete mebibyte
 is accessed, prefetch is started. This entails sending multiple
 asynchronous IO to fetch 4MiB of data. As long as the data
 is fully read, prefetch continues. If a file is not accessed for more
@@ -210,8 +210,8 @@ Browsing through directory `Cards/J`, is equivalent to traversing the remote `pr
 
 # Experimental file creation and modification
 
-dxfuse has an unstable experimental mode that allows creating new files and modifing existing files,
-inspite of the fact that only immutable files exist on DNAx. The
+dxfuse has an experimental mode that allows creating new files and modifying existing files,
+in spite of the fact that only immutable files exist on DNAx. The
 mismatch between what the filesystem allows (updating a file), and
 what is available natively on the platform makes the update operation
 expensive.

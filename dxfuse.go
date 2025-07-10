@@ -111,7 +111,7 @@ type FileHandle struct {
 	// For writeable files only
 	// Only flush from original FD
 	Tgid int32
-	// Used to indiciate the last part number written
+	// Used to indicate the last part number written
 	// Incremented for each buffer that is uploaded to the cloud
 	// Used to determine next part and buffer size
 	lastPartId      int
