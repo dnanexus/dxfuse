@@ -6,6 +6,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"runtime"
+	"strings"
 	"time"
 
 	"github.com/jacobsa/fuse/fuseops"
@@ -28,8 +30,11 @@ const (
 	MaxNumFileHandles         = 1000 * 1000
 	NumRetriesDefault         = 10
 	InitialUploadPartSize     = 16 * MiB
-	MaxUploadPartSize         = 700 * MiB
-	Version                   = "v1.5.0"
+	MinUploadPartSize         = 5 * MiB
+	MaxUploadPartSize         = 512 * MiB
+	MinNumWriteBuffers        = 8
+	MaxNumWriteBuffers        = 144
+	Version                   = "v2.0.0"
 )
 const (
 	InodeInvalid = 0
@@ -65,12 +70,13 @@ type DxDownloadURL struct {
 }
 
 type Options struct {
-	ReadOnly     bool
-	Verbose      bool
-	VerboseLevel int
-	Uid          uint32
-	Gid          uint32
-	StateFolder  string
+	ReadOnly          bool
+	Verbose           bool
+	VerboseLevel      int
+	Uid               uint32
+	Gid               uint32
+	StateFolder       string
+	MaxMemoryUsageMiB int // Hidden flag to override default memory usage (in MiB)
 }
 
 // A node is a generalization over files and directories
@@ -342,4 +348,47 @@ func GetTgid(pid uint32) (tgid int32, err error) {
 		return -1, err
 	}
 	return tgid, nil
+}
+
+// Returns formatted stack traces of all goroutines
+func GetDumpableStackTraces() string {
+	buf := make([]byte, 1024*1024)
+	n := runtime.Stack(buf, true)
+	return string(buf[:n])
+}
+
+// Analyzes stack traces to find goroutines waiting for mutex locks
+func FindWaitingGoroutines(stackTrace string, mutexName string) string {
+	lines := strings.Split(stackTrace, "\n")
+	var result strings.Builder
+	var currentGoroutine string
+	isWaiting := false
+
+	for _, line := range lines {
+		if strings.HasPrefix(line, "goroutine ") {
+			// If we found a waiting goroutine in the previous iteration, add it to results
+			if isWaiting {
+				result.WriteString(currentGoroutine)
+				result.WriteString("\n")
+			}
+
+			// Start collecting a new goroutine
+			currentGoroutine = line + "\n"
+			isWaiting = false
+		} else if strings.Contains(line, "sync.(*Mutex).Lock") ||
+			strings.Contains(line, "sync.(*RWMutex).Lock") ||
+			strings.Contains(line, "sync.(*RWMutex).RLock") {
+			isWaiting = true
+			currentGoroutine += line + "\n"
+		} else if isWaiting {
+			currentGoroutine += line + "\n"
+		}
+	}
+
+	// Check the last goroutine
+	if isWaiting {
+		result.WriteString(currentGoroutine)
+	}
+
+	return result.String()
 }

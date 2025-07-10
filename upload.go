@@ -2,30 +2,44 @@ package dxfuse
 
 import (
 	"context"
-	"math"
 	"runtime"
 	"sync"
 
 	"github.com/dnanexus/dxda"
 )
 
-const (
-	// Upload up to 4 parts concurrently
-	maxUploadRoutines = 4
-)
+// Support uploading up to a 5TiB file in 10,000 parts
+func calculatePartSize(partId int) int64 {
+	switch {
+	case partId <= 5:
+		return MinUploadPartSize
+	case partId <= 10:
+		return 16 * MiB
+	case partId <= 50:
+		return 128 * MiB
+	case partId <= 500:
+		return 256 * MiB
+	default:
+		return MaxUploadPartSize
+	}
+}
 
-// TODO replace this with a more reasonble buffer pool for managing memory use
-func (uploader *FileUploader) AllocateWriteBuffer(partId int, block bool) []byte {
+func (uploader *FileUploader) AllocateWriteBuffer(partId int) []byte {
 	if partId < 1 {
 		partId = 1
 	}
-	// Wait for available buffer
-	if block {
-		uploader.writeBufferChan <- struct{}{}
+
+	writeBufferCapacity := calculatePartSize(partId)
+	writeBufferCapacity = MinInt64(writeBufferCapacity, uploader.memoryManager.maxMemoryUsagePerModule)
+
+	if uploader.verbose {
+		uploader.log("Allocating %.2f MiB for write buffer", float64(writeBufferCapacity)/MiB)
 	}
-	writeBufferCapacity := math.Min(InitialUploadPartSize*math.Pow(1.1, float64(partId)), MaxUploadPartSize)
-	writeBufferCapacity = math.Round(writeBufferCapacity)
-	writeBuffer := make([]byte, 0, int64(writeBufferCapacity))
+	writeBuffer := uploader.memoryManager.AllocateWriteBuffer(writeBufferCapacity)
+	if writeBuffer == nil {
+		uploader.log("Failed to allocate write buffer")
+		return nil
+	}
 	return writeBuffer
 }
 
@@ -37,14 +51,11 @@ type UploadRequest struct {
 }
 
 type FileUploader struct {
-	verbose           bool
-	uploadQueue       chan UploadRequest
-	wg                sync.WaitGroup
-	numUploadRoutines int
-	// Max concurrent write buffers to reduce memory consumption
-	writeBufferChan chan struct{}
-	// API to dx
-	ops *DxOps
+	verbose       bool
+	uploadQueue   chan UploadRequest
+	wg            sync.WaitGroup
+	ops           *DxOps
+	memoryManager *MemoryManager
 }
 
 // write a log message, and add a header
@@ -52,21 +63,25 @@ func (uploader *FileUploader) log(a string, args ...interface{}) {
 	LogMsg("uploader", a, args...)
 }
 
-func NewFileUploader(verboseLevel int, options Options, dxEnv dxda.DXEnvironment) *FileUploader {
-	concurrentWriteBufferLimit := 15
-	if runtime.NumCPU()*3 > concurrentWriteBufferLimit {
-		concurrentWriteBufferLimit = runtime.NumCPU() * 3
+func (uploader *FileUploader) debug(a string, args ...interface{}) {
+	if uploader.verbose {
+		LogMsg("uploader", a, args...)
 	}
+}
+
+func NewFileUploader(verboseLevel int, options Options, dxEnv dxda.DXEnvironment, memoryManager *MemoryManager) *FileUploader {
+	concurrentWriteBufferLimit := MaxInt(runtime.NumCPU(), MinNumWriteBuffers)
+	concurrentWriteBufferLimit = MinInt(concurrentWriteBufferLimit, MaxNumWriteBuffers)
+
 	uploader := &FileUploader{
-		verbose:           verboseLevel >= 1,
-		uploadQueue:       make(chan UploadRequest),
-		writeBufferChan:   make(chan struct{}, concurrentWriteBufferLimit),
-		numUploadRoutines: maxUploadRoutines,
-		ops:               NewDxOps(dxEnv, options),
+		verbose:       verboseLevel >= 1,
+		uploadQueue:   make(chan UploadRequest),
+		ops:           NewDxOps(dxEnv, options),
+		memoryManager: memoryManager,
 	}
 
-	uploader.wg.Add(maxUploadRoutines)
-	for i := 0; i < maxUploadRoutines; i++ {
+	uploader.wg.Add(concurrentWriteBufferLimit)
+	for i := 0; i < concurrentWriteBufferLimit; i++ {
 		go uploader.uploadWorker()
 	}
 	return uploader
@@ -75,23 +90,27 @@ func NewFileUploader(verboseLevel int, options Options, dxEnv dxda.DXEnvironment
 func (uploader *FileUploader) Shutdown() {
 	// Close channel and wait for goroutines to complete
 	close(uploader.uploadQueue)
-	close(uploader.writeBufferChan)
 	uploader.wg.Wait()
 }
 
 func (uploader *FileUploader) uploadWorker() {
 	// reuse this http client
 	httpClient := dxda.NewHttpClient()
-	for true {
+	for {
 		uploadReq, ok := <-uploader.uploadQueue
 		if !ok {
 			uploader.wg.Done()
 			return
 		}
+		uploader.debug("Uploading %s, part %d, size %.2f MiB", uploadReq.fileId, uploadReq.partId, float64(len(uploadReq.writeBuffer))/MiB)
+		// Upload the part
 		err := uploader.ops.DxFileUploadPart(context.TODO(), httpClient, uploadReq.fileId, uploadReq.partId, uploadReq.writeBuffer)
+		// Release the write buffer
+		uploader.memoryManager.ReleaseWriteBuffer(uploadReq.writeBuffer)
 		if err != nil {
 			// Record upload error in FileHandle
 			uploader.log("Error uploading %s, part %d, %s", uploadReq.fileId, uploadReq.partId, err.Error())
+			uploader.log("httpClient: %v", httpClient)
 			uploadReq.fh.writeError = err
 		}
 		uploadReq.fh.wg.Done()

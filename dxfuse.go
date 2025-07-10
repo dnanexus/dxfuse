@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -19,6 +21,7 @@ import (
 	"github.com/jacobsa/fuse"
 	"github.com/jacobsa/fuse/fuseops"
 	"github.com/jacobsa/fuse/fuseutil"
+	"github.com/shirou/gopsutil/mem"
 
 	// for the sqlite driver
 	_ "github.com/mattn/go-sqlite3"
@@ -136,6 +139,14 @@ func NewDxfuse(
 	dxEnv dxda.DXEnvironment,
 	manifest Manifest,
 	options Options) (*Filesys, error) {
+	// Start a pprof server for profiling
+	// go func() {
+	// 	runtime.SetMutexProfileFraction(1)
+	// 	log.Println("Starting pprof server on :6060")
+	// 	if err := http.ListenAndServe("localhost:6060", nil); err != nil {
+	// 		log.Fatalf("Failed to start pprof server: %v", err)
+	// 	}
+	// }()
 
 	// initialize a pool of http-clients.
 	HttpClientPoolSize := MinHttpClientPoolSize
@@ -190,7 +201,22 @@ func NewDxfuse(
 	}
 	fsys.opClose(oph)
 
-	fsys.pgs = NewPrefetchGlobalState(options.VerboseLevel, dxEnv)
+	// Default to max 15% memory usage of system memory
+	sysMemory, _ := mem.VirtualMemory()
+	maxMemory := int64(sysMemory.Total * 10 / 100)
+	if options.MaxMemoryUsageMiB > 0 {
+		maxMemory = int64(options.MaxMemoryUsageMiB) * MiB
+	}
+	debug.SetMemoryLimit(maxMemory)
+	maxMemoryUsagePerModule := maxMemory
+	if !options.ReadOnly {
+		maxMemoryUsagePerModule = maxMemory * 90 / 100
+	}
+	fsys.log("Soft max memory limit: %d MiB", maxMemory/MiB)
+	fsys.debug("Max memory used for reads or writes: %d MiB", maxMemoryUsagePerModule/MiB)
+	memoryManager := NewMemoryManager(options.VerboseLevel, maxMemory, maxMemoryUsagePerModule)
+
+	fsys.pgs = NewPrefetchGlobalState(options.VerboseLevel, dxEnv, memoryManager)
 
 	// describe all the projects, we need their upload parameters
 	httpClient := <-fsys.httpClientPool
@@ -214,7 +240,7 @@ func NewDxfuse(
 		return fsys, nil
 	}
 
-	fsys.uploader = NewFileUploader(options.VerboseLevel, options, dxEnv)
+	fsys.uploader = NewFileUploader(options.VerboseLevel, options, dxEnv, memoryManager)
 	// initialize sync daemon
 	//fsys.sybx = NewSyncDbDx(options, dxEnv, projId2Desc, mdb, fsys.mutex)
 
@@ -229,6 +255,13 @@ func NewDxfuse(
 // write a log message, and add a header
 func (fsys *Filesys) log(a string, args ...interface{}) {
 	LogMsg("dxfuse", a, args...)
+}
+
+// write a log message, and add a header
+func (fsys *Filesys) debug(a string, args ...interface{}) {
+	if fsys.options.VerboseLevel > 1 {
+		LogMsg("dxfuse", a, args...)
+	}
 }
 
 func (fsys *Filesys) Shutdown() {
@@ -1379,7 +1412,7 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 		op.KeepPageCache = true
 		op.UseDirectIO = false
 		// Create an entry in the prefetch table
-		fsys.pgs.CreateStreamEntry(fh.hid, file, *fh.url)
+		fsys.pgs.attemptCreateStreamEntry(fh.hid, file, *fh.url)
 	} else {
 		// disable page cache for writes, files being appended to are not readable
 		op.KeepPageCache = false
@@ -1407,10 +1440,20 @@ func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp,
 	endOfs = MinInt64(lastByteInFile, endOfs)
 	reqSize = endOfs - op.Offset + 1
 
+	// Try to create a stream entry for tracking this file if not already tracked
+	if fh.accessMode == AM_RO_Remote && fh.url != nil {
+		fsys.pgs.attemptCreateStreamEntry(fh.hid,
+			File{
+				Inode: fh.inode,
+				Size:  fh.size,
+				Id:    fh.Id,
+			},
+			*fh.url)
+	}
+
 	// See if the data has already been prefetched.
-	// This call will wait, if a prefetch IO is in progress.
+	// This call will wait if a prefetch IO is in progress.
 	len := fsys.pgs.CacheLookup(fh.hid, op.Offset, endOfs, op.Dst)
-	// log received length if less than requested
 	if fsys.options.Verbose && int64(len) < reqSize {
 		fsys.log("ReadFile: CacheLookup returned %d, requested %d, offset %d", len, reqSize, op.Offset)
 	}
@@ -1460,6 +1503,7 @@ func (fsys *Filesys) ReadFile(ctx context.Context, op *fuseops.ReadFileOp) error
 		fsys.mutex.Unlock()
 		return fuse.EINVAL
 	}
+
 	fsys.mutex.Unlock()
 
 	switch fh.accessMode {
@@ -1509,8 +1553,10 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 		return syscall.ENOTSUP
 	}
 	if fh.writeBuffer == nil {
-		// Allocate write buffer
-		fh.writeBuffer = fsys.uploader.AllocateWriteBuffer(fh.lastPartId, true)
+		fh.writeBuffer = fsys.uploader.AllocateWriteBuffer(fh.lastPartId)
+		if fh.writeBuffer == nil {
+			return syscall.ENOMEM
+		}
 	}
 
 	bytesToWrite := op.Data
@@ -1529,17 +1575,15 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 		if sliceUpperBound > cap(fh.writeBuffer) {
 			sliceUpperBound = cap(fh.writeBuffer)
 		}
-		// expand slice
-		fh.writeBuffer = fh.writeBuffer[:sliceUpperBound]
-		// copy data into slice
+		// copy data into buffer
 		bytesCopied := copy(fh.writeBuffer[fh.writeBufferOffset:sliceUpperBound], bytesToWrite)
+		// update file size
 		fh.size += int64(bytesCopied)
 		// increment next write offset
 		fh.nextWriteOffset += int64(bytesCopied)
 		// increment current buffer slice offset
 		fh.writeBufferOffset += bytesCopied
-		if len(fh.writeBuffer) == cap(fh.writeBuffer) {
-			// increment part id
+		if fh.writeBufferOffset >= cap(fh.writeBuffer) {
 			fh.lastPartId++
 			partId := fh.lastPartId
 			uploadReq := UploadRequest{
@@ -1552,7 +1596,6 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 			fsys.uploader.uploadQueue <- uploadReq
 			fh.writeBuffer = nil
 			fh.writeBufferOffset = 0
-			// Update the file attributes in the database (size, mtime)
 			fsys.mutex.Lock()
 			oph := fsys.opOpenNoHttpClient()
 			if err := fsys.mdb.UpdateFileAttrs(ctx, oph, fh.inode, fh.size, time.Now(), nil); err != nil {
@@ -1563,7 +1606,10 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 			}
 			fsys.opClose(oph)
 			fsys.mutex.Unlock()
-			fh.writeBuffer = fsys.uploader.AllocateWriteBuffer(partId, false)
+			fh.writeBuffer = fsys.uploader.AllocateWriteBuffer(partId)
+			if fh.writeBuffer == nil {
+				return syscall.ENOMEM
+			}
 		}
 		// all data copied into buffer slice, break
 		if bytesCopied == len(bytesToWrite) {
@@ -1571,7 +1617,6 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 		}
 		// trim data if it was only partially copied
 		bytesToWrite = bytesToWrite[bytesCopied:]
-
 	}
 	return nil
 }
@@ -1594,9 +1639,7 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	}
 	if fh.accessMode != AM_AO_Remote {
 		// This isn't a writeable file
-		if fsys.ops.options.VerboseLevel > 1 {
-			fsys.log("Ignoring flush of inode %d, file is not writeable", op.Inode)
-		}
+		fsys.debug("Ignoring flush of inode %d, file is not writeable", op.Inode)
 		return nil
 	}
 
@@ -1617,17 +1660,18 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 		return fsys.translateError(fh.writeError)
 	}
 
-	// Empty files are handled by ReleaseFileHandle
+	// Empty files are an edge case handled by ReleaseFileHandle
 	if len(fh.writeBuffer) == 0 && fh.size == 0 {
-		if fsys.ops.options.VerboseLevel > 1 {
-			fsys.log("Ignoring FlushFile: file is empty")
-		}
+		fsys.debug("Ignoring FlushFile: file is empty")
 		return nil
 	}
 
 	// upload last part
 	fh.lastPartId++
 	partId := fh.lastPartId
+	// Resize the writeBuffer to its used capacity before uploading the final part
+	fh.writeBuffer = fsys.uploader.memoryManager.TrimWriteBuffer(fh.writeBuffer)
+
 	uploadReq := UploadRequest{
 		fh:          fh,
 		fileId:      fh.Id,
@@ -1636,8 +1680,8 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	}
 	fh.wg.Add(1)
 	fsys.uploader.uploadQueue <- uploadReq
+
 	fh.writeBuffer = nil
-	<-fsys.uploader.writeBufferChan
 
 	fh.wg.Wait()
 	// Check if there was an error uploading the last part
@@ -1785,7 +1829,7 @@ func (fsys *Filesys) lookupFileByInode(ctx context.Context, oph *OpHandle, inode
 		file = node.(File)
 	case Dir:
 		// directories do not have attributes
-		return File{}, true, syscall.EINVAL
+		return File{}, true, fuse.EINVAL
 	}
 	return file, false, nil
 }
@@ -1918,9 +1962,7 @@ func (fsys *Filesys) GetXattr(ctx context.Context, op *fuseops.GetXattrOp) error
 	oph := fsys.opOpen()
 	defer fsys.opClose(oph)
 
-	if fsys.options.VerboseLevel > 1 {
-		fsys.log("GetXattr %v", op)
-	}
+	fsys.debug("GetXattr %v", op)
 
 	// Grab the inode.
 	file, isDir, err := fsys.lookupFileByInode(ctx, oph, int64(op.Inode))
@@ -2054,7 +2096,7 @@ func (fsys *Filesys) SetXattr(ctx context.Context, op *fuseops.SetXattrOp) error
 		// Note: we may want to change this for directories
 		// representing projects. This would allow reporting project
 		// tags and properties.
-		return syscall.EINVAL
+		return fuse.EINVAL
 	}
 	if !fsys.checkProjectPermissions(file.ProjId, PERM_CONTRIBUTE) {
 		return syscall.EPERM
@@ -2107,7 +2149,7 @@ func (fsys *Filesys) SetXattr(ctx context.Context, op *fuseops.SetXattrOp) error
 	default:
 		fsys.log("invalid SetAttr flag value %d, expecting one of {0x0, 0x1, 0x2}",
 			op.Flags)
-		return syscall.EINVAL
+		return fuse.EINVAL
 	}
 
 	// update the file in-memory representation
