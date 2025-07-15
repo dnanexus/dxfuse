@@ -248,7 +248,7 @@ func (ops *DxOps) DxFileCloseAndWait(
 	start := time.Now()
 	deadline := start.Add(fileCloseMaxWaitTime)
 	time.Sleep(400 * time.Millisecond)
-	for true {
+	for {
 		fDesc, err := DxDescribe(ctx, httpClient, &ops.dxEnv, projectId, fid)
 		if err != nil {
 			return err
@@ -261,7 +261,7 @@ func (ops *DxOps) DxFileCloseAndWait(
 		case "closing":
 			// not done yet.
 			if ops.options.Verbose {
-				elapsed := time.Now().Sub(start)
+				elapsed := time.Since(start)
 				ops.log("Waited %s for file %s to close", elapsed.String(), fid)
 			}
 			time.Sleep(fileCloseWaitTime)
@@ -276,7 +276,6 @@ func (ops *DxOps) DxFileCloseAndWait(
 			return fmt.Errorf("data object %s has bad state %s", fid, fDesc.State)
 		}
 	}
-	return nil
 }
 
 type RequestUploadChunk struct {

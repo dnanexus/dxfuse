@@ -14,7 +14,7 @@ const (
 	maxUploadRoutines = 4
 )
 
-// TODO replace this with a more reasonble buffer pool for managing memory use
+// TODO replace this with a more reasonable buffer pool for managing memory use
 func (uploader *FileUploader) AllocateWriteBuffer(partId int, block bool) []byte {
 	if partId < 1 {
 		partId = 1
@@ -82,7 +82,7 @@ func (uploader *FileUploader) Shutdown() {
 func (uploader *FileUploader) uploadWorker() {
 	// reuse this http client
 	httpClient := dxda.NewHttpClient()
-	for true {
+	for {
 		uploadReq, ok := <-uploader.uploadQueue
 		if !ok {
 			uploader.wg.Done()

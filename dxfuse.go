@@ -348,11 +348,10 @@ func (fsys *Filesys) dxErrorToFilesystemError(dxErr dxda.DxError) error {
 }
 
 func (fsys *Filesys) translateError(err error) error {
-	switch err.(type) {
+	switch err := err.(type) {
 	case *dxda.DxError:
 		// A dnanexus error
-		dxErr := err.(*dxda.DxError)
-		return fsys.dxErrorToFilesystemError(*dxErr)
+		return fsys.dxErrorToFilesystemError(*err)
 	default:
 		// A "regular" error
 		fsys.log("A regular error from an API call %s, converting to EIO", err.Error())
@@ -467,9 +466,9 @@ func (fsys *Filesys) SetInodeAttributes(ctx context.Context, op *fuseops.SetInod
 	}
 
 	var file File
-	switch node.(type) {
+	switch node := node.(type) {
 	case File:
-		file = node.(File)
+		file = node
 	case Dir:
 		// can't modify directory attributes
 		return syscall.EPERM
@@ -678,11 +677,11 @@ func (fsys *Filesys) RmDir(ctx context.Context, op *fuseops.RmDirOp) error {
 	}
 
 	var childDir Dir
-	switch childNode.(type) {
+	switch cn := childNode.(type) {
 	case File:
 		return fuse.ENOTDIR
 	case Dir:
-		childDir = childNode.(Dir)
+		childDir = cn
 	}
 
 	// check that the directory is empty
@@ -1025,11 +1024,11 @@ a rename. You will need to issue a separate remove operation prior to rename.
 		return syscall.EPERM
 	}
 
-	switch srcNode.(type) {
+	switch srcNode := srcNode.(type) {
 	case File:
-		return fsys.renameFile(ctx, oph, oldParentDir, newParentDir, srcNode.(File), op.NewName)
+		return fsys.renameFile(ctx, oph, oldParentDir, newParentDir, srcNode, op.NewName)
 	case Dir:
-		srcDir := srcNode.(Dir)
+		srcDir := srcNode
 		if srcDir.faux {
 			fsys.log("can not move a faux directory")
 			return syscall.EPERM
@@ -1076,9 +1075,9 @@ func (fsys *Filesys) Unlink(ctx context.Context, op *fuseops.UnlinkOp) error {
 	}
 
 	var fileToRemove File
-	switch childNode.(type) {
+	switch cn := childNode.(type) {
 	case File:
-		fileToRemove = childNode.(File)
+		fileToRemove = cn
 	case Dir:
 		// can't unlink a directory
 		return fuse.EINVAL
@@ -1316,9 +1315,14 @@ func (fsys *Filesys) openRegularFile(
 func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error {
 	fsys.log("op: %v", op)
 	fsys.log("OpenfileOp Flags: %v", op.OpenFlags)
+
+	// TODO: set permission required
+	requiredPermissions := PERM_VIEW
 	if op.OpenFlags&syscall.O_TRUNC != 0 {
 		fsys.log("File opened with O_TRUNC flag")
+		requiredPermissions = PERM_CONTRIBUTE
 	}
+
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
 	oph := fsys.opOpen()
@@ -1340,15 +1344,20 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 	}
 
 	var file File
-	switch node.(type) {
+	switch node := node.(type) {
 	case Dir:
 		// not allowed to open a directory
 		return syscall.EACCES
 	case File:
 		// cast to a File type
-		file = node.(File)
+		file = node
 	default:
-		log.Panic(fmt.Sprintf("bad type for node %v", node))
+		log.Panicf("bad type for node %v", node)
+	}
+
+	// TODO: check permissions
+	if !fsys.checkProjectPermissions(file.ProjId, requiredPermissions) {
+		return syscall.EPERM
 	}
 
 	if file.State != "closed" {
@@ -1785,9 +1794,9 @@ func (fsys *Filesys) lookupFileByInode(ctx context.Context, oph *OpHandle, inode
 	}
 
 	var file File
-	switch node.(type) {
+	switch node := node.(type) {
 	case File:
-		file = node.(File)
+		file = node
 	case Dir:
 		// directories do not have attributes
 		return File{}, true, syscall.EINVAL
@@ -2050,9 +2059,9 @@ func (fsys *Filesys) SetXattr(ctx context.Context, op *fuseops.SetXattrOp) error
 	}
 
 	var file File
-	switch node.(type) {
+	switch node := node.(type) {
 	case File:
-		file = node.(File)
+		file = node
 	case Dir:
 		// directories do not have attributes
 		//

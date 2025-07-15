@@ -125,7 +125,7 @@ type MTags struct {
 }
 
 func tagsMarshal(tags []string) string {
-	if tags == nil || len(tags) == 0 {
+	if len(tags) == 0 {
 		return ""
 	}
 	payload, err := json.Marshal(MTags{
@@ -165,7 +165,7 @@ type MProperties struct {
 }
 
 func propertiesMarshal(props map[string]string) string {
-	if props == nil || len(props) == 0 {
+	if len(props) == 0 {
 		return ""
 	}
 	payload, err := json.Marshal(MProperties{
@@ -975,8 +975,8 @@ func (mdb *MetadataDb) directoryReadFromDNAx(
 	// describe all (closed) files
 	dxDir, err := DxDescribeFolder(ctx, oph.httpClient, &mdb.dxEnv, projId, projFolder)
 	if err != nil {
-		fmt.Printf(err.Error())
-		fmt.Printf("reading directory frmo DNAx error")
+		fmt.Print(err.Error())
+		fmt.Print("reading directory from DNAx error")
 		return err
 	}
 
@@ -1373,6 +1373,7 @@ func (mdb *MetadataDb) UpdateClosedFileMetadata(
 	return nil
 }
 
+// deprecated
 func (mdb *MetadataDb) UpdateFileLocalPath(
 	ctx context.Context,
 	oph *OpHandle,

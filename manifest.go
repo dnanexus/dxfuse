@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -165,9 +164,8 @@ func MakeManifestFromProjectIds(
 	// validate that the projects have good names
 	for _, pDesc := range projDescs {
 		if !FilenameIsPosixCompliant(pDesc.Name) {
-			err := errors.New(
-				fmt.Sprintf("Project %s has a non posix compliant name (%s)",
-					pDesc.Id, pDesc.Name))
+			err := fmt.Errorf("Project %s has a non posix compliant name (%s)",
+				pDesc.Id, pDesc.Name)
 			return nil, err
 		}
 	}

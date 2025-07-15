@@ -7,7 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"math/bits"
 	"net/http"
@@ -372,7 +372,7 @@ func (pgs *PrefetchGlobalState) readData(client *http.Client, ioReq IoReq) ([]by
 			return nil, err
 		}
 		// TODO: optimize by using a pre-allocated buffer
-		data, _ := ioutil.ReadAll(resp.Body)
+		data, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 
 		recvLen := int64(len(data))

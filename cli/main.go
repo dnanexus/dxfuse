@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -38,9 +38,10 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "    %s [options] MOUNTPOINT PROJECT1 PROJECT2 ...\n", progName)
 	fmt.Fprintf(os.Stderr, "    %s [options] MOUNTPOINT manifest.json\n", progName)
 	fmt.Fprintf(os.Stderr, "options:\n")
-	// Hide experimental options
+	// Hide deprecated and experimental options
+	hiddenOptions := []string{"readOnly", "limitedWrite", "allowOverWrite", "daemon"}
 	flag.VisitAll(func(f *flag.Flag) {
-		if f.Name == "readOnly" || f.Name == "limitedWrite" || f.Name == "allowOverWrite" || f.Name == "daemon" {
+		if slices.Contains(hiddenOptions, f.Name) {
 			return
 		}
 		name, usage := flag.UnquoteUsage(f)
@@ -54,7 +55,7 @@ func usage() {
 var (
 	debugFuseFlag = flag.Bool("debugFuse", false, "Tap into FUSE debugging information")
 	daemon        = flag.Bool("daemon", false, "An internal flag, do not use it")
-	// fsSync        = flag.Bool("sync", false, "Sychronize the filesystem and exit")
+	// fsSync        = flag.Bool("sync", false, "Synchronize the filesystem and exit")
 	help           = flag.Bool("help", false, "display program options")
 	readOnly       = flag.Bool("readOnly", true, "DEPRECATED, now the default behavior. Mount the filesystem in read-only mode")
 	limitedWrite   = flag.Bool("limitedWrite", false, "Allow removing files and folders, creating files and appending to them. (Experimental, not recommended), default is read-only")
@@ -169,7 +170,7 @@ func fsDaemon(
 	logger.Printf("mounting-dxfuse")
 	mfs, err := fuse.Mount(mountpoint, server, cfg)
 	if err != nil {
-		logger.Printf(err.Error())
+		logger.Print(err.Error())
 	}
 
 	// By default fuse will use 128kb read-ahead even though we ask for 1024kb
@@ -177,21 +178,21 @@ func fsDaemon(
 	if user.Uid == "0" && runtime.GOOS == "linux" {
 		mntInfo, err := os.Stat(mountpoint)
 		if err != nil {
-			logger.Printf(err.Error())
+			logger.Print(err.Error())
 		}
 		dxfuseDeviceNumber := mntInfo.Sys().(*syscall.Stat_t).Dev
 		readAheadFile := fmt.Sprintf("/sys/class/bdi/0:%d/read_ahead_kb", dxfuseDeviceNumber)
-		data, err := ioutil.ReadFile(readAheadFile)
+		data, err := os.ReadFile(readAheadFile)
 		if err != nil {
 			logger.Printf("Unable to get current read-ahead value")
-			logger.Printf(err.Error())
+			logger.Print(err.Error())
 		}
 		initialReadAhead, err := strconv.Atoi(strings.TrimSpace(string(data)))
 		if initialReadAhead < 1024 {
-			err = ioutil.WriteFile(readAheadFile, []byte("1024"), 0644)
+			err = os.WriteFile(readAheadFile, []byte("1024"), 0644)
 			if err != nil {
 				logger.Printf("Error raising read-ahead to 1024kb")
-				logger.Printf(err.Error())
+				logger.Print(err.Error())
 			} else {
 				logger.Printf("Raised kernel read-ahead from %dkb to 1024kb", initialReadAhead)
 			}
@@ -217,7 +218,7 @@ func waitForReady(logFile string) string {
 		time.Sleep(1 * time.Second)
 
 		// read the log file and look for either "ready" or "error"
-		data, err := ioutil.ReadFile(logFile)
+		data, err := os.ReadFile(logFile)
 		if err != nil {
 			continue
 		}
@@ -403,7 +404,7 @@ func startDaemon(cfg Config, logFile string) {
 
 	err = fsDaemon(cfg.mountpoint, cfg.dxEnv, *manifest, cfg.options, logf, logger)
 	if err != nil {
-		logger.Printf(err.Error())
+		logger.Print(err.Error())
 		os.Exit(1)
 	}
 }
@@ -452,7 +453,7 @@ func buildDaemonCommandLine(cfg Config, fullManifestPath string) []string {
 func startDaemonAndWaitForInitializationToComplete(cfg Config, logFile string) {
 	manifest, err := parseManifest(cfg)
 	if err != nil {
-		fmt.Printf(err.Error())
+		fmt.Print(err.Error())
 		os.Exit(1)
 	}
 
@@ -466,7 +467,7 @@ func startDaemonAndWaitForInitializationToComplete(cfg Config, logFile string) {
 	// This could be converted into a random temporary file to avoid collisions
 
 	fullManifestPath := filepath.Join(cfg.options.StateFolder, "dxfuse_manifest.json")
-	err = ioutil.WriteFile(fullManifestPath, manifestJSON, 0644)
+	err = os.WriteFile(fullManifestPath, manifestJSON, 0644)
 	if err != nil {
 		fmt.Printf("Error writing out fully elaborated manifest to %s (%s)\n",
 			fullManifestPath, err.Error())

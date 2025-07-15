@@ -108,7 +108,7 @@ func submit(
 	// get too much information, which is a burden on the server side.
 
 	describeOptions := map[string]map[string]bool{
-		"fields": map[string]bool{
+		"fields": {
 			"id":            true,
 			"project":       true,
 			"name":          true,
@@ -198,7 +198,7 @@ func DxDescribeBulkObjects(
 		return gMap, nil
 	}
 
-	// split into limited batchs
+	// split into limited batches
 	batchSize := maxNumObjectsInDescribe
 	var batches [][]string
 
