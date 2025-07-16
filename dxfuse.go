@@ -1316,12 +1316,7 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 	fsys.log("op: %v", op)
 	fsys.log("OpenfileOp Flags: %v", op.OpenFlags)
 
-	// TODO: set permission required
-	requiredPermissions := PERM_VIEW
-	if op.OpenFlags&syscall.O_TRUNC != 0 {
-		fsys.log("File opened with O_TRUNC flag")
-		requiredPermissions = PERM_CONTRIBUTE
-	}
+	// TOFIX: set permission required
 
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
@@ -1355,10 +1350,7 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 		log.Panicf("bad type for node %v", node)
 	}
 
-	// TODO: check permissions
-	if !fsys.checkProjectPermissions(file.ProjId, requiredPermissions) {
-		return syscall.EPERM
-	}
+	// TOFIX: check permissions
 
 	if file.State != "closed" {
 		fsys.log("File (%s,%s) is not closed, it cannot be accessed",
