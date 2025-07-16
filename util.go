@@ -311,10 +311,7 @@ func boolToInt(b bool) int {
 }
 
 func intToBool(x int) bool {
-	if x > 0 {
-		return true
-	}
-	return false
+	return x > 0
 }
 
 // create a directory for all dxfuse files. Manifest, log, sqlite db, etc.

@@ -206,7 +206,7 @@ func ancestors(p string) []string {
 	parent := filepath.Dir(p)
 	ators := ancestors(parent)
 	if len(ators) == 0 {
-		log.Panic(fmt.Sprintf("cannot create ancestor list for path %s", p))
+		log.Panicf("cannot create ancestor list for path %s", p)
 	}
 	return append(ators, filepath.Clean(p))
 }
@@ -295,10 +295,7 @@ func (m *Manifest) DirSkeleton() ([]string, error) {
 	for _, d := range m.Directories {
 		_, ok := tree[d.Dirname]
 		if ok {
-			return nil, fmt.Errorf(`
-manifest error: %s is a not leaf on the directory scaffolding (%v).
-It is a node in the middle, which is illegal.
-`,
+			return nil, fmt.Errorf("manifest error: %s is a not leaf on the directory scaffolding (%v). It is a node in the middle, which is illegal",
 				d.Dirname, de.elems)
 		}
 	}

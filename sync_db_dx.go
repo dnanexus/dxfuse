@@ -639,7 +639,7 @@ func (sybx *SyncDbDx) sweep(flag int) error {
 func (sybx *SyncDbDx) periodicSync() {
 	sybx.log("starting sweep thread")
 	lastSweepTs := time.Now()
-	for true {
+	for {
 		// we need to wake up often to check if
 		// the sweep has been disabled.
 		time.Sleep(1 * time.Second)
