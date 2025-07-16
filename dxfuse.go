@@ -1495,6 +1495,13 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 	if fh.accessMode != AM_AO_Remote {
 		return syscall.EPERM
 	}
+
+	tgid, _ := GetTgid(op.OpContext.Pid)
+	if fh.Tgid != tgid {
+		fsys.log("Ignoring WriteFile: tgids does not match fh tgid")
+		return syscall.EPERM
+	}
+
 	// One write at a time per fh so that sequential offsets work properly
 	fh.mutex.Lock()
 	defer fh.mutex.Unlock()
