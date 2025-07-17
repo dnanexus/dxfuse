@@ -101,7 +101,7 @@ Writing to files is **append only**. Any non-sequential writes will return `ENOT
 
 ### mkdir behavior
 
-All `mkdir` operations via dxfuse are treated as `mkdir -p`. This is because dxfuse does not present the realtime state of the project. Folders can be created outside of dxfuse (or in another dxfuse process), and therefore not be visible to the current running dxfuse. A subsequent `mkdir` --> `project-xxxx/newFolder` would return a 422 error, because dxfuse did not know the directory already exists. This design is due to spark behavior where multiple worker nodes sometimes attempt to create the same output directory.
+All `mkdir` operations via dxfuse are treated as `mkdir -p`, which creates the parent directory if needed, and does not fail if the directory already exists. This is because dxfuse does not present the realtime state of the project. Folders can be created outside of dxfuse (or in another dxfuse process), and therefore not be visible to the current running dxfuse. A subsequent `mkdir` --> `project-xxxx/newFolder` would return a 422 error, because dxfuse did not know the directory already exists. This design is due to spark behavior where multiple worker nodes sometimes attempt to create the same output directory.
 
 ### rename behavior
 
@@ -181,6 +181,8 @@ Upload benchmarks are from an Ubuntu 20.04 DNAnexus worker mem2_ssd1_v2_x32 (AWS
 |	37.8  |	87 | 10GiB |
 |	254  |	495 | 100GiB |
 
+# File Overwrite Support
+## TBA
 
 # Building
 

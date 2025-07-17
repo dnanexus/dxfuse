@@ -351,7 +351,8 @@ func (fsys *Filesys) translateError(err error) error {
 	switch err := err.(type) {
 	case *dxda.DxError:
 		// A dnanexus error
-		return fsys.dxErrorToFilesystemError(*err)
+		dxErr := err
+		return fsys.dxErrorToFilesystemError(*dxErr)
 	default:
 		// A "regular" error
 		fsys.log("A regular error from an API call %s, converting to EIO", err.Error())
@@ -677,11 +678,11 @@ func (fsys *Filesys) RmDir(ctx context.Context, op *fuseops.RmDirOp) error {
 	}
 
 	var childDir Dir
-	switch cn := childNode.(type) {
+	switch childNode := childNode.(type) {
 	case File:
 		return fuse.ENOTDIR
 	case Dir:
-		childDir = cn
+		childDir = childNode
 	}
 
 	// check that the directory is empty
@@ -1075,9 +1076,9 @@ func (fsys *Filesys) Unlink(ctx context.Context, op *fuseops.UnlinkOp) error {
 	}
 
 	var fileToRemove File
-	switch cn := childNode.(type) {
+	switch childNode := childNode.(type) {
 	case File:
-		fileToRemove = cn
+		fileToRemove = childNode
 	case Dir:
 		// can't unlink a directory
 		return fuse.EINVAL
@@ -1472,7 +1473,7 @@ func (fsys *Filesys) ReadFile(ctx context.Context, op *fuseops.ReadFileOp) error
 	case AM_RO_Remote:
 		return fsys.readRemoteFile(ctx, op, fh)
 	case AM_AO_Remote:
-		// the file is being appened to, not readable in this state
+		// the file is being appended to, not readable in this state
 		return syscall.EPERM
 	default:
 		log.Panicf("Invalid file access mode %d", fh.accessMode)
@@ -1511,7 +1512,7 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 
 	if op.Offset != fh.nextWriteOffset {
 		fsys.log("ERROR: Only sequential writes are supported")
-		fsys.log("op.Offest: %d, fh.nextWriteOffest: %d", op.Offset, fh.nextWriteOffset)
+		fsys.log("op.Offset: %d, fh.nextWriteOffset: %d", op.Offset, fh.nextWriteOffset)
 		return syscall.ENOTSUP
 	}
 	if fh.writeBuffer == nil {
@@ -1845,7 +1846,7 @@ func (fsys *Filesys) RemoveXattr(ctx context.Context, op *fuseops.RemoveXattrOp)
 		}
 	case XATTR_PROP:
 		// in the property namespace
-		for key, _ := range file.Properties {
+		for key := range file.Properties {
 			if key == attrName {
 				attrExists = true
 				break
@@ -2000,7 +2001,7 @@ func (fsys *Filesys) ListXattr(ctx context.Context, op *fuseops.ListXattrOp) err
 	for _, tag := range file.Tags {
 		xattrKeys = append(xattrKeys, XATTR_TAG+"."+tag)
 	}
-	for key, _ := range file.Properties {
+	for key := range file.Properties {
 		xattrKeys = append(xattrKeys, XATTR_PROP+"."+key)
 	}
 	// Special attributes
@@ -2087,7 +2088,7 @@ func (fsys *Filesys) SetXattr(ctx context.Context, op *fuseops.SetXattrOp) error
 		}
 	case XATTR_PROP:
 		// in the property namespace
-		for key, _ := range file.Properties {
+		for key := range file.Properties {
 			if key == attrName {
 				attrExists = true
 				break

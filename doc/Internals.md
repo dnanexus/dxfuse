@@ -7,11 +7,11 @@ The `data_objects` table maintains information for files, applets, workflows, an
 
 | field name      | SQL type | description |
 | ---             | ---      | --          |
-| kind            | int      | type of file: regular, symbolic link, other |
+| kind            | int      | type of DNAx object: regular file, executable, record, database, other |
 | id              | text     | The DNAx object-id |
-| proj\_id        | text     | A project id for the file |
-| state           | text     | the file state (open/closing/closed) |
-| archival\_state | text     | archival state of this file |
+| proj\_id        | text     | A project/container id for the object |
+| state           | text     | the object state (open/closing/closed) |
+| archival\_state | text     | archival state of this object. Applies only to regular file |
 | inode           | bigint   | local filesystem i-node, cannot change |
 | size            | bigint   | size of the file in bytes |
 | ctime           | bigint   | creation time |
@@ -39,7 +39,8 @@ be accessed only when it is in the `live` state.
 The `state` can be one of `open`, `closing`, `closed`. It applies to all data objects.
 
 The `id` will be empty when a file is first created. It will be populated when it is first
-uploaded to the platform. Every update the id will change. This is because DNAx files are immutable,
+uploaded to the platform. 
+If `-allowOverwrite` mode is used, the id will change when the file is overwritten. This is because DNAx files are immutable,
 and changing, even a single byte, requires rewriting the entire file, generating a new id.
 
 The `namespace` table stores information on the directory structure.
@@ -63,7 +64,7 @@ For example, directory `/A/B/C` is represented with the record:
 
 The primary key is `(parent,name)`. An additional index is placed on
 the `parent` field, allowing an efficient query for all members of a
-directory. The DNAx object system does not adhere to POSIX. This
+directory. The DNAx object system does not adhere to POSIX (See the [challenge](Approaches.md/#challenge) section for more details). This
 sometimes requires changes to file names, and directory structure.
 The main difficulties are files with the same name, and
 files with posix disallowed characters, such as slash (`/`).
@@ -87,10 +88,6 @@ are approximated by using the project timestamps. All directories are
 associated with a project, except the root. The root can hold multiple directories,
 each representing a different project. This is why the root will have an empty `proj\_id`,
 and an empty `proj\_folder`.
-
-The local directory contents does not change after the describe calls
-are complete. The only way to update the directory, in case of
-changes, is to unmount and remount the filesystem.
 
 DNAx allows multiple data objects in a directory to have the same name. This
 violates POSIX, and cannot be presented in a FUSE filesystem. It is
@@ -123,7 +120,7 @@ X.txt
    |_ X.txt
 ```
 
-A symbolic link is represented as a regular file, with the link stored in the `inner\_data` field.
+A symbolic link is represented as a regular file. The current support only works for symlinks backed by a publicly accessible object in cloud storage.
 
 A hard link is an entry in the namespace that points to an existing data object. This means that a
 single i-node can have multiple namespace entries, so it cannot serve as a primary key.
@@ -136,9 +133,9 @@ memory. The goal of the prefetch module is: *if a file is read from start to fin
 able to read it in large network requests*. What follows is a simplified description of the algorithm.
 
 In order for a file to be eligible for streaming it has to be at
-8MiB. A bitmap is maintained for areas accessed. If a complete mebibyte
+8MiB. A bitmap is maintained for areas accessed. If a complete MiB
 is accessed, prefetch is started. This entails sending multiple
-asynchronous IO to fetch 4MiB of data. As long as the data
+asynchronous IO to fetch up to 16 (remote machine) or 96 (worker) MiB of data. As long as the data
 is fully read, prefetch continues. If a file is not accessed for more
 than five minutes, or, access is outside the prefetched area, the process halts. It will start again if sequential access is detected down the road.
 
@@ -216,17 +213,24 @@ mismatch between what the filesystem allows (updating a file), and
 what is available natively on the platform makes the update operation
 expensive.
 
-When a file is first created it is written to the local disk and
-marked dirty in the database. In order to modify an existing file it
-is downloaded in its entirety to the local disk, modified locally, and
-marked dirty. A background daemon scans the database periodically and
+Under `-limitedWrite` mode, when a file is first created it is written to the local disk and
+marked dirty in the database, then sequential write operation could be done upon this file and the appended data will be uploaded to the remote file synchronously. Once writing file is done and the local file is closed, it would no longer be marked as dirty, and the remote DNAx file will be closed as well and become immutable. 
+
+Since DNAx files are immutable they could not be modified directly. However, if `-allowOverwrite` is true, then any overwrite operations upon the local entry of a DNAx file will do the following when `OpenFile`:
+- Delete existing remote DNAx file
+- Create new file of the same name with a new DNAx file id
+- Update all local dxfuse metadata in the database to refer to the new file id and its metadata
+- Return a file handle of the local file entry with truncated size to 0
+- Accept subsequent `WriteFile` calls to this file handle and treat as any other write allowed in `-limitedWrite` mode
+
+<!-- A background daemon scans the database periodically and
 uploads dirty files to the platform. If a file `foo` already exists as
 object `file-xxxx`, a new version of it is uploaded, and when done,
 the database is modified to point to the new version. It is then
 possible to either erase the old version, or keep it as an old
-snapshot.
+snapshot. -->
 
-There are situations where you want the background process to
+<!-- There are situations where you want the background process to
 synchronously update all modified and newly created files. For example, before shutting down a machine,
 or unmounting the filesystem. This can be done by issuing the command:
 ```
@@ -235,4 +239,4 @@ $ dxfuse -sync
 
 Metadata such as xattrs is updated with a similar scheme. The database
 is updated, and the inode is marked `dirtyMetadata`. The background daemon then
-updates the attributes asynchronously.
+updates the attributes asynchronously. -->

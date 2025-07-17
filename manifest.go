@@ -5,8 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -123,12 +124,12 @@ func (m *Manifest) Clean() {
 
 // read the manifest from a file into a memory structure
 func ReadManifest(fname string) (*Manifest, error) {
-	srcData, err := ioutil.ReadFile(fname)
+	srcData, err := os.ReadFile(fname)
 	if err != nil {
 		log.Panic(err)
 	}
 	br := bytes.NewReader(srcData)
-	data, err := ioutil.ReadAll(br)
+	data, err := io.ReadAll(br)
 	if err != nil {
 		log.Panic(err)
 	}

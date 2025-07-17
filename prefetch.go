@@ -213,7 +213,7 @@ func (pfm *PrefetchFileMetadata) logReport(now time.Time) {
 
 // Got an error. Release all waiting IO.
 func (pfm *PrefetchFileMetadata) cancelIOs() {
-	for i, _ := range pfm.cache.iovecs {
+	for i := range pfm.cache.iovecs {
 		iovec := pfm.cache.iovecs[i]
 		iovec.state = IOV_ERRORED
 		iovec.cond.Broadcast()
@@ -306,7 +306,7 @@ func (pgs *PrefetchGlobalState) Shutdown() {
 	// clear the entire table
 	var allHandles []fuseops.HandleID
 	pgs.mutex.Lock()
-	for hid, _ := range pgs.handlesInfo {
+	for hid := range pgs.handlesInfo {
 		allHandles = append(allHandles, hid)
 	}
 	pgs.mutex.Unlock()
@@ -372,7 +372,7 @@ func (pgs *PrefetchGlobalState) readData(client *http.Client, ioReq IoReq) ([]by
 			return nil, err
 		}
 		// TODO: optimize by using a pre-allocated buffer
-		data, _ := io.ReadAll(resp.Body)
+		data, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 
 		recvLen := int64(len(data))
@@ -507,7 +507,7 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 	// reuse this http client. The idea is to be able to reuse http connections.
 	client := dxda.NewHttpClient()
 
-	for true {
+	for {
 		ioReq, ok := <-pgs.ioQueue
 		if !ok {
 			pgs.wg.Done()
@@ -555,7 +555,7 @@ func (pgs *PrefetchGlobalState) isWorthIt(pfm *PrefetchFileMetadata, now time.Ti
 }
 
 func (pgs *PrefetchGlobalState) tableCleanupWorker() {
-	for true {
+	for {
 		time.Sleep(periodicTime)
 		if pgs.verbose {
 			pgs.log("periodic sweep [")
@@ -565,7 +565,7 @@ func (pgs *PrefetchGlobalState) tableCleanupWorker() {
 		var candidates []fuseops.HandleID
 
 		pgs.mutex.Lock()
-		for hid, _ := range pgs.handlesInfo {
+		for hid := range pgs.handlesInfo {
 			candidates = append(candidates, hid)
 		}
 		pgs.mutex.Unlock()

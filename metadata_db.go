@@ -240,7 +240,7 @@ func (mdb *MetadataDb) init2(txn *sql.Tx) error {
 	`
 	if _, err := txn.Exec(sqlStmt); err != nil {
 		mdb.log(err.Error())
-		return fmt.Errorf("Could not create index on dirty_metdata column in table data_objects")
+		return fmt.Errorf("Could not create index on dirty_metadata column in table data_objects")
 	}
 
 	// Create a table for the namespace relationships. All members of a directory
@@ -287,7 +287,7 @@ func (mdb *MetadataDb) init2(txn *sql.Tx) error {
 	// A separate table for directories.
 	//
 	// If the inode is -1, then, the directory does not exist on the platform.
-	// If poplated is zero, we haven't described the directory yet.
+	// If populated is zero, we haven't described the directory yet.
 	sqlStmt = `
 	CREATE TABLE directories (
                 inode bigint,
@@ -772,7 +772,7 @@ func (mdb *MetadataDb) createEmptyDir(
 		log.Panicf("directory must start with a slash")
 	}
 
-	// choose unused inode number. It is on stable stoage, and will not change.
+	// choose unused inode number. It is on stable storage, and will not change.
 	inode := mdb.allocInodeNum()
 	parentDir, basename := splitPath(dirPath)
 	if mdb.options.VerboseLevel > 1 {
@@ -1050,7 +1050,7 @@ func (mdb *MetadataDb) directoryReadFromDNAx(
 	return nil
 }
 
-// Add a directory with its contents to an exisiting database
+// Add a directory with its contents to an existing database
 func (mdb *MetadataDb) ReadDirAll(ctx context.Context, oph *OpHandle, dir *Dir) (map[string]File, map[string]Dir, error) {
 	if mdb.options.Verbose {
 		mdb.log("ReadDirAll %s", dir.FullPath)
@@ -1373,7 +1373,6 @@ func (mdb *MetadataDb) UpdateClosedFileMetadata(
 	return nil
 }
 
-// deprecated
 func (mdb *MetadataDb) UpdateFileLocalPath(
 	ctx context.Context,
 	oph *OpHandle,
@@ -1676,7 +1675,7 @@ func (mdb *MetadataDb) DirtyFilesGetAndReset(flag int) ([]DirtyFileInfo, error) 
 	rows.Close()
 
 	// Figure out the project folder for each file
-	for i, _ := range fAr {
+	for i := range fAr {
 		projId, projFolder, err := mdb.lookupDirByName(oph, fAr[i].Directory)
 		if err != nil {
 			return nil, err
