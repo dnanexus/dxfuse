@@ -39,9 +39,7 @@ be accessed only when it is in the `live` state.
 The `state` can be one of `open`, `closing`, `closed`. It applies to all data objects.
 
 The `id` will be empty when a file is first created. It will be populated when it is first
-uploaded to the platform. 
-If `-allowOverwrite` mode is used, the id will change when the file is overwritten. This is because DNAx files are immutable,
-and changing, even a single byte, requires rewriting the entire file, generating a new id.
+uploaded to the platform.
 
 The `namespace` table stores information on the directory structure.
 
