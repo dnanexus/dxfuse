@@ -215,13 +215,6 @@ expensive.
 Under `-limitedWrite` mode, when a file is first created it is written to the local disk and
 marked dirty in the database, then sequential write operation could be done upon this file and the appended data will be uploaded to the remote file synchronously. Once writing file is done and the local file is closed, it would no longer be marked as dirty, and the remote DNAx file will be closed as well and become immutable. 
 
-Since DNAx files are immutable they could not be modified directly. However, if `-allowOverwrite` is true, then any overwrite operations upon the local entry of a DNAx file will do the following when `OpenFile`:
-- Delete existing remote DNAx file
-- Create new file of the same name with a new DNAx file id
-- Update all local dxfuse metadata in the database to refer to the new file id and its metadata
-- Return a file handle of the local file entry with truncated size to 0
-- Accept subsequent `WriteFile` calls to this file handle and treat as any other write allowed in `-limitedWrite` mode
-
 <!-- A background daemon scans the database periodically and
 uploads dirty files to the platform. If a file `foo` already exists as
 object `file-xxxx`, a new version of it is uploaded, and when done,
