@@ -39,7 +39,8 @@ be accessed only when it is in the `live` state.
 The `state` can be one of `open`, `closing`, `closed`. It applies to all data objects.
 
 The `id` will be empty when a file is first created. It will be populated when it is first
-uploaded to the platform.
+uploaded to the platform. Every update the id will change. This is because DNAx files are immutable,
+and changing, even a single byte, requires rewriting the entire file, generating a new id.
 
 The `namespace` table stores information on the directory structure.
 
