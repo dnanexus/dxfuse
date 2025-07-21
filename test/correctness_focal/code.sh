@@ -573,8 +573,8 @@ main() {
     mkdir_existing  $mountpoint/$projName/$base_dir/T4
 
     echo "file create remove"
-    file_create_existing "$mountpoint/$projName"
-    file_remove_non_exist "$mountpoint/$projName"
+    file_create_existing "$mountpoint/$projName/$expr_dir"
+    file_remove_non_exist "$mountpoint/$projName/$expr_dir"
 
     echo "move file I"
     move_file $mountpoint/$projName/$expr_dir
@@ -602,8 +602,8 @@ main() {
     rm -rf /tmp/D
 
     echo "checking illegal directory moves"
-    move_non_existent_dir "$mountpoint/$projName"
-    move_dir_to_file "$mountpoint/$projName"
+    move_non_existent_dir "$mountpoint/$projName/$expr_dir"
+    move_dir_to_file "$mountpoint/$projName/$expr_dir"
 
     echo "faux dirs cannot be moved"
     faux_dirs_move $mountpoint/$projName/$faux_dir
