@@ -1,3 +1,5 @@
+#!/bin/bash -e
+
 ######################################################################
 ## constants
 CRNT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
@@ -123,7 +125,7 @@ function rmdir_non_empty {
     cd $write_dir
 
     mkdir E
-    echo "permanente creek" > E/X.txt
+    echo "permanent creek" > E/X.txt
 
     set +e
     rmdir E >& /dev/null
@@ -406,7 +408,7 @@ function fs_test_cases {
     dx mkdir $projName:/$base_dir
     dx mkdir $projName:/$expr_dir
 
-    # Start the dxfuse daemon in the background, and wait for it to initilize.
+    # Start the dxfuse daemon in the background, and wait for it to initialize.
     echo "Mounting dxfuse"
     flags="-limitedWrite"
     if [[ $verbose != "" ]]; then
@@ -463,7 +465,7 @@ function fs_test_cases {
     rm -rf /tmp/D
 
     echo "checking illegal directory moves"
-    move_non_existent_dir "$mountpoint/$projName"
+    move_non_existent_dir "$mountpoint/$projName/$expr_dir"
     move_dir_to_file "$mountpoint/$projName/$expr_dir"
 
     echo "directory and file with the same name"
