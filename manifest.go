@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -124,12 +124,12 @@ func (m *Manifest) Clean() {
 
 // read the manifest from a file into a memory structure
 func ReadManifest(fname string) (*Manifest, error) {
-	srcData, err := ioutil.ReadFile(fname)
+	srcData, err := os.ReadFile(fname)
 	if err != nil {
 		log.Panic(err)
 	}
 	br := bytes.NewReader(srcData)
-	data, err := ioutil.ReadAll(br)
+	data, err := io.ReadAll(br)
 	if err != nil {
 		log.Panic(err)
 	}
@@ -165,9 +165,8 @@ func MakeManifestFromProjectIds(
 	// validate that the projects have good names
 	for _, pDesc := range projDescs {
 		if !FilenameIsPosixCompliant(pDesc.Name) {
-			err := errors.New(
-				fmt.Sprintf("Project %s has a non posix compliant name (%s)",
-					pDesc.Id, pDesc.Name))
+			err := fmt.Errorf("Project %s has a non posix compliant name (%s)",
+				pDesc.Id, pDesc.Name)
 			return nil, err
 		}
 	}
@@ -208,7 +207,7 @@ func ancestors(p string) []string {
 	parent := filepath.Dir(p)
 	ators := ancestors(parent)
 	if len(ators) == 0 {
-		log.Panic(fmt.Sprintf("cannot create ancestor list for path %s", p))
+		log.Panicf("cannot create ancestor list for path %s", p)
 	}
 	return append(ators, filepath.Clean(p))
 }
@@ -297,10 +296,7 @@ func (m *Manifest) DirSkeleton() ([]string, error) {
 	for _, d := range m.Directories {
 		_, ok := tree[d.Dirname]
 		if ok {
-			return nil, fmt.Errorf(`
-manifest error: %s is a not leaf on the directory scaffolding (%v).
-It is a node in the middle, which is illegal.
-`,
+			return nil, fmt.Errorf("manifest error: %s is a not leaf on the directory scaffolding (%v). It is a node in the middle, which is illegal",
 				d.Dirname, de.elems)
 		}
 	}

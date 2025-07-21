@@ -56,10 +56,7 @@ func (px *Posix) log(a string, args ...interface{}) {
 }
 
 func FilenameIsPosixCompliant(filename string) bool {
-	if strings.Contains(filename, "/") {
-		return false
-	}
-	return true
+	return !strings.Contains(filename, "/")
 }
 
 // Slashes cannot be included in a posix filename. Replace them with a triple underscore.

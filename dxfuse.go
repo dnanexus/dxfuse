@@ -348,10 +348,10 @@ func (fsys *Filesys) dxErrorToFilesystemError(dxErr dxda.DxError) error {
 }
 
 func (fsys *Filesys) translateError(err error) error {
-	switch err.(type) {
+	switch err := err.(type) {
 	case *dxda.DxError:
 		// A dnanexus error
-		dxErr := err.(*dxda.DxError)
+		dxErr := err
 		return fsys.dxErrorToFilesystemError(*dxErr)
 	default:
 		// A "regular" error
@@ -467,9 +467,9 @@ func (fsys *Filesys) SetInodeAttributes(ctx context.Context, op *fuseops.SetInod
 	}
 
 	var file File
-	switch node.(type) {
+	switch node := node.(type) {
 	case File:
-		file = node.(File)
+		file = node
 	case Dir:
 		// can't modify directory attributes
 		return syscall.EPERM
@@ -678,11 +678,11 @@ func (fsys *Filesys) RmDir(ctx context.Context, op *fuseops.RmDirOp) error {
 	}
 
 	var childDir Dir
-	switch childNode.(type) {
+	switch childNode := childNode.(type) {
 	case File:
 		return fuse.ENOTDIR
 	case Dir:
-		childDir = childNode.(Dir)
+		childDir = childNode
 	}
 
 	// check that the directory is empty
@@ -1025,11 +1025,11 @@ a rename. You will need to issue a separate remove operation prior to rename.
 		return syscall.EPERM
 	}
 
-	switch srcNode.(type) {
+	switch srcNode := srcNode.(type) {
 	case File:
-		return fsys.renameFile(ctx, oph, oldParentDir, newParentDir, srcNode.(File), op.NewName)
+		return fsys.renameFile(ctx, oph, oldParentDir, newParentDir, srcNode, op.NewName)
 	case Dir:
-		srcDir := srcNode.(Dir)
+		srcDir := srcNode
 		if srcDir.faux {
 			fsys.log("can not move a faux directory")
 			return syscall.EPERM
@@ -1076,9 +1076,9 @@ func (fsys *Filesys) Unlink(ctx context.Context, op *fuseops.UnlinkOp) error {
 	}
 
 	var fileToRemove File
-	switch childNode.(type) {
+	switch childNode := childNode.(type) {
 	case File:
-		fileToRemove = childNode.(File)
+		fileToRemove = childNode
 	case Dir:
 		// can't unlink a directory
 		return fuse.EINVAL
@@ -1335,16 +1335,18 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 	}
 
 	var file File
-	switch node.(type) {
+	switch node := node.(type) {
 	case Dir:
 		// not allowed to open a directory
 		return syscall.EACCES
 	case File:
 		// cast to a File type
-		file = node.(File)
+		file = node
 	default:
-		log.Panic(fmt.Sprintf("bad type for node %v", node))
+		log.Panicf("bad type for node %v", node)
 	}
+
+	// TOFIX: check permissions
 
 	if file.State != "closed" {
 		fsys.log("File (%s,%s) is not closed, it cannot be accessed",
@@ -1466,7 +1468,7 @@ func (fsys *Filesys) ReadFile(ctx context.Context, op *fuseops.ReadFileOp) error
 	case AM_RO_Remote:
 		return fsys.readRemoteFile(ctx, op, fh)
 	case AM_AO_Remote:
-		// the file is being appened to, not readable in this state
+		// the file is being appended to, not readable in this state
 		return syscall.EPERM
 	default:
 		log.Panicf("Invalid file access mode %d", fh.accessMode)
@@ -1505,7 +1507,7 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 
 	if op.Offset != fh.nextWriteOffset {
 		fsys.log("ERROR: Only sequential writes are supported")
-		fsys.log("op.Offest: %d, fh.nextWriteOffest: %d", op.Offset, fh.nextWriteOffset)
+		fsys.log("op.Offset: %d, fh.nextWriteOffset: %d", op.Offset, fh.nextWriteOffset)
 		return syscall.ENOTSUP
 	}
 	if fh.writeBuffer == nil {
@@ -1780,9 +1782,9 @@ func (fsys *Filesys) lookupFileByInode(ctx context.Context, oph *OpHandle, inode
 	}
 
 	var file File
-	switch node.(type) {
+	switch node := node.(type) {
 	case File:
-		file = node.(File)
+		file = node
 	case Dir:
 		// directories do not have attributes
 		return File{}, true, syscall.EINVAL
@@ -1839,7 +1841,7 @@ func (fsys *Filesys) RemoveXattr(ctx context.Context, op *fuseops.RemoveXattrOp)
 		}
 	case XATTR_PROP:
 		// in the property namespace
-		for key, _ := range file.Properties {
+		for key := range file.Properties {
 			if key == attrName {
 				attrExists = true
 				break
@@ -1994,7 +1996,7 @@ func (fsys *Filesys) ListXattr(ctx context.Context, op *fuseops.ListXattrOp) err
 	for _, tag := range file.Tags {
 		xattrKeys = append(xattrKeys, XATTR_TAG+"."+tag)
 	}
-	for key, _ := range file.Properties {
+	for key := range file.Properties {
 		xattrKeys = append(xattrKeys, XATTR_PROP+"."+key)
 	}
 	// Special attributes
@@ -2045,9 +2047,9 @@ func (fsys *Filesys) SetXattr(ctx context.Context, op *fuseops.SetXattrOp) error
 	}
 
 	var file File
-	switch node.(type) {
+	switch node := node.(type) {
 	case File:
-		file = node.(File)
+		file = node
 	case Dir:
 		// directories do not have attributes
 		//
@@ -2081,7 +2083,7 @@ func (fsys *Filesys) SetXattr(ctx context.Context, op *fuseops.SetXattrOp) error
 		}
 	case XATTR_PROP:
 		// in the property namespace
-		for key, _ := range file.Properties {
+		for key := range file.Properties {
 			if key == attrName {
 				attrExists = true
 				break

@@ -65,12 +65,13 @@ type DxDownloadURL struct {
 }
 
 type Options struct {
-	ReadOnly     bool
-	Verbose      bool
-	VerboseLevel int
-	Uid          uint32
-	Gid          uint32
-	StateFolder  string
+	ReadOnly       bool
+	AllowOverWrite bool
+	Verbose        bool
+	VerboseLevel   int
+	Uid            uint32
+	Gid            uint32
+	StateFolder    string
 }
 
 // A node is a generalization over files and directories
@@ -310,10 +311,7 @@ func boolToInt(b bool) int {
 }
 
 func intToBool(x int) bool {
-	if x > 0 {
-		return true
-	}
-	return false
+	return x > 0
 }
 
 // create a directory for all dxfuse files. Manifest, log, sqlite db, etc.

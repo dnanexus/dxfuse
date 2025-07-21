@@ -2,7 +2,6 @@ package dxfuse
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -161,7 +160,7 @@ func (sybx *SyncDbDx) bulkDataWorker() {
 	// A fixed http client
 	client := dxda.NewHttpClient()
 
-	for true {
+	for {
 		chunk, ok := <-sybx.chunkQueue
 		if !ok {
 			return
@@ -201,26 +200,21 @@ func checkPartSizeSolution(param FileUploadParameters, fileSize int64, partSize 
 		return false
 	}
 	numParts := divideRoundUp(fileSize, partSize)
-	if numParts > param.MaximumNumParts {
-		return false
-	}
-	return true
+	return numParts <= param.MaximumNumParts
 }
 
 func (sybx *SyncDbDx) calcPartSize(param FileUploadParameters, fileSize int64) (int64, error) {
 	if param.MaximumFileSize < fileSize {
-		return 0, errors.New(
-			fmt.Sprintf("File is too large, the limit is %d, and the file is %d",
-				param.MaximumFileSize, fileSize))
+		return 0, fmt.Errorf("File is too large, the limit is %d, and the file is %d",
+			param.MaximumFileSize, fileSize)
 	}
 
 	// The minimal number of parts we'll need for this file
 	minNumParts := divideRoundUp(fileSize, param.MaximumPartSize)
 
 	if minNumParts > param.MaximumNumParts {
-		return 0, errors.New(
-			fmt.Sprintf("We need at least %d parts for the file, but the limit is %d",
-				minNumParts, param.MaximumNumParts))
+		return 0, fmt.Errorf("We need at least %d parts for the file, but the limit is %d",
+			minNumParts, param.MaximumNumParts)
 	}
 
 	// now we know that there is a solution. We'll try to use a small part size,
@@ -232,12 +226,12 @@ func (sybx *SyncDbDx) calcPartSize(param FileUploadParameters, fileSize int64) (
 	//    too small, so we add a little bit to it.
 	// 2) To make it easy to understanding the part sizes we make them a multiple of MiB.
 	minPartSize := MaxInt64(sybx.minChunkSize, param.MinimumPartSize+KiB)
-	preferedChunkSize := divideRoundUp(minPartSize, MiB) * MiB
-	for preferedChunkSize < param.MaximumPartSize {
-		if checkPartSizeSolution(param, fileSize, preferedChunkSize) {
-			return preferedChunkSize, nil
+	preferredChunkSize := divideRoundUp(minPartSize, MiB) * MiB
+	for preferredChunkSize < param.MaximumPartSize {
+		if checkPartSizeSolution(param, fileSize, preferredChunkSize) {
+			return preferredChunkSize, nil
 		}
-		preferedChunkSize *= 2
+		preferredChunkSize *= 2
 	}
 
 	// nothing smaller will work, we need to use the maximal file size
@@ -546,7 +540,7 @@ func (sybx *SyncDbDx) updateFileWorker() {
 	// A fixed http client. The idea is to be able to reuse http connections.
 	client := dxda.NewHttpClient()
 
-	for true {
+	for {
 		upReq, ok := <-sybx.fileUpdateQueue
 		if !ok {
 			sybx.wg.Done()
@@ -645,7 +639,7 @@ func (sybx *SyncDbDx) sweep(flag int) error {
 func (sybx *SyncDbDx) periodicSync() {
 	sybx.log("starting sweep thread")
 	lastSweepTs := time.Now()
-	for true {
+	for {
 		// we need to wake up often to check if
 		// the sweep has been disabled.
 		time.Sleep(1 * time.Second)
