@@ -181,7 +181,6 @@ Upload benchmarks are from an Ubuntu 20.04 DNAnexus worker mem2_ssd1_v2_x32 (AWS
 |	37.8  |	87 | 10GiB |
 |	254  |	495 | 100GiB |
 
-# File Overwrite Support
 ## TBA
 
 # Building

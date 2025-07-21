@@ -119,7 +119,7 @@ X.txt
    |_ X.txt
 ```
 
-A symbolic link is represented as a regular file. The current support only works for symlinks backed by a publicly accessible object in cloud storage.
+A symbolic link is represented as a regular file.
 
 A hard link is an entry in the namespace that points to an existing data object. This means that a
 single i-node can have multiple namespace entries, so it cannot serve as a primary key.
@@ -212,7 +212,7 @@ mismatch between what the filesystem allows (updating a file), and
 what is available natively on the platform makes the update operation
 expensive.
 
-Under `-limitedWrite` mode, when a file is first created it is written to the local disk and
+Under `-limitedWrite` mode, when a file is created, a remote DNAnexus file object is created. Sequential write operations are first written to a buffer in memory which maps to a DNAnexus file object part. Part sizes increase as file size grows. Once writing is complete and the file is flushed, the remote file object is closed immutably and can no longer be appended to.  
 marked dirty in the database, then sequential write operation could be done upon this file and the appended data will be uploaded to the remote file synchronously. Once writing file is done and the local file is closed, it would no longer be marked as dirty, and the remote DNAx file will be closed as well and become immutable. 
 
 <!-- A background daemon scans the database periodically and
