@@ -151,10 +151,11 @@ func fsDaemon(
 		Options:  mountOptions,
 	}
 
-	logger.Printf("mounting-dxfuse")
 	mfs, err := fuse.Mount(mountpoint, server, cfg)
 	if err != nil {
-		logger.Print(err.Error())
+		logger.Printf("Mounting dxfuse failed: %s", err.Error())
+	} else {
+		logger.Printf("Mounting dxfuse succeeded")
 	}
 
 	// By default fuse will use 128kb read-ahead even though we ask for 1024kb
@@ -207,10 +208,10 @@ func waitForReady(logFile string) string {
 			continue
 		}
 		content := string(data)
-		if strings.Contains(content, "mounting-dxfuse") {
+		if strings.Contains(content, "Mounting dxfuse succeeded") {
 			return "ready"
 		}
-		if strings.Contains(content, "error") {
+		if strings.Contains(content, "Mounting dxfuse failed") {
 			return "error"
 		}
 	}
