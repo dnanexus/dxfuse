@@ -68,7 +68,7 @@ type Filesys struct {
 	// cmdSrv *CmdServer
 
 	// description for each mounted project
-	projId2Desc map[string]DxDescribePrj
+	projId2Desc map[string]DxProjectDescription
 
 	// all open files
 	fhCounter uint64
@@ -198,7 +198,7 @@ func NewDxfuse(
 		fsys.httpClientPool <- httpClient
 	}()
 
-	projId2Desc := make(map[string]DxDescribePrj)
+	projId2Desc := make(map[string]DxProjectDescription)
 	for _, d := range manifest.Directories {
 		pDesc, err := DxDescribeProject(context.TODO(), httpClient, &fsys.dxEnv, d.ProjId)
 		if err != nil {
