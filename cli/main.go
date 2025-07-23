@@ -148,7 +148,9 @@ func fsDaemon(
 		DisableWritebackCaching: true,
 		// Pass read-only mount option if not in limitedWrite
 		ReadOnly: options.ReadOnly,
-		Options:  mountOptions,
+		// Allow overwriting files if requested
+		EnableAtomicTrunc: options.AllowOverwrite,
+		Options:           mountOptions,
 	}
 
 	mfs, err := fuse.Mount(mountpoint, server, cfg)
