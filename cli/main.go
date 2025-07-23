@@ -319,7 +319,7 @@ func parseCmdLineArgs() Config {
 	}
 }
 
-func validateConfig(cfg Config) {
+func validateMountpointPath(cfg Config) {
 	fileInfo, err := os.Stat(cfg.mountpoint)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -498,7 +498,7 @@ func main() {
 	flag.Usage = usage
 	flag.Parse()
 	cfg := parseCmdLineArgs()
-	validateConfig(cfg)
+	validateMountpointPath(cfg)
 	dxfuse.MakeDxfuseBaseDir(cfg.options.StateFolder)
 	logFile := filepath.Join(cfg.options.StateFolder, dxfuse.LogFile)
 	fmt.Printf("The log file is located at %s\n", logFile)
