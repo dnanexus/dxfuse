@@ -38,8 +38,8 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "    %s [options] MOUNTPOINT PROJECT1 PROJECT2 ...\n", progName)
 	fmt.Fprintf(os.Stderr, "    %s [options] MOUNTPOINT manifest.json\n", progName)
 	fmt.Fprintf(os.Stderr, "options:\n")
-	// Hide deprecated and experimental options
-	hiddenOptions := []string{"readOnly", "limitedWrite", "daemon"}
+	// Hide deprecated, internal and experimental options
+	hiddenOptions := []string{"readOnly", "limitedWrite", "daemon", "allowOverwrite"}
 	flag.VisitAll(func(f *flag.Flag) {
 		if slices.Contains(hiddenOptions, f.Name) {
 			return
@@ -55,15 +55,16 @@ func usage() {
 var (
 	debugFuseFlag = flag.Bool("debugFuse", false, "Tap into FUSE debugging information")
 	daemon        = flag.Bool("daemon", false, "An internal flag, do not use it")
-	// fsSync        = flag.Bool("sync", false, "Sychronize the filesystem and exit")
-	help         = flag.Bool("help", false, "display program options")
-	readOnly     = flag.Bool("readOnly", true, "DEPRECATED, now the default behavior. Mount the filesystem in read-only mode")
-	limitedWrite = flag.Bool("limitedWrite", false, "Allow removing files and folders, creating files and appending to them. (Experimental, not recommended), default is read-only")
-	uid          = flag.Int("uid", -1, "User id (uid)")
-	gid          = flag.Int("gid", -1, "User group id (gid)")
-	verbose      = flag.Int("verbose", 0, "Enable verbose debugging")
-	version      = flag.Bool("version", false, "Print the version and exit")
-	stateFolder  = flag.String("stateFolder", getDefaultStateFolder(), "Directory to use for dxfuse's internal state (log file, database, etc). Created if does not exist. Defaults to "+getDefaultStateFolder())
+	// fsSync        = flag.Bool("sync", false, "Synchronize the filesystem and exit")
+	help           = flag.Bool("help", false, "display program options")
+	readOnly       = flag.Bool("readOnly", true, "DEPRECATED, now the default behavior is True. Mount the filesystem in read-only mode")
+	limitedWrite   = flag.Bool("limitedWrite", false, "Allow removing files and folders, creating files and appending to them. (Experimental, not recommended), default is read-only")
+	allowOverwrite = flag.Bool("allowOverwrite", false, "Allow overwriting files (Experimental, not recommended). Only works with -limitedWrite, default is read-only and no overwriting allowed")
+	uid            = flag.Int("uid", -1, "User id (uid)")
+	gid            = flag.Int("gid", -1, "User group id (gid)")
+	verbose        = flag.Int("verbose", 0, "Enable verbose debugging")
+	version        = flag.Bool("version", false, "Print the version and exit")
+	stateFolder    = flag.String("stateFolder", getDefaultStateFolder(), "Directory to use for dxfuse's internal state (log file, database, etc). Created if does not exist. Defaults to "+getDefaultStateFolder())
 )
 
 func initLog(logFile string) *os.File {
@@ -263,15 +264,24 @@ func parseCmdLineArgs() Config {
 	// -readOnly and -limitedWrite flags are mutually exclusive
 	readOnlyFlagSet := false
 	limitedWriteFlagSet := false
+	allowOverwriteFlagSet := false
 	flag.Visit(func(f *flag.Flag) {
-		if f.Name == "readOnly" {
+		switch f.Name {
+		case "readOnly":
 			readOnlyFlagSet = true
-		} else if f.Name == "limitedWrite" {
+		case "limitedWrite":
 			limitedWriteFlagSet = true
+		case "allowOverwrite":
+			allowOverwriteFlagSet = true
 		}
 	})
 	if limitedWriteFlagSet && readOnlyFlagSet {
 		fmt.Printf("Cannot provide both -readOnly and -limitedWrite flags\n")
+		usage()
+		os.Exit(2)
+	}
+	if allowOverwriteFlagSet && !limitedWriteFlagSet {
+		fmt.Printf("Cannot provide -allowOverwrite without -limitedWrite\n")
 		usage()
 		os.Exit(2)
 	}
@@ -286,12 +296,13 @@ func parseCmdLineArgs() Config {
 
 	uid, gid := initUidGid()
 	options := dxfuse.Options{
-		ReadOnly:     !*limitedWrite,
-		Verbose:      *verbose > 0,
-		VerboseLevel: *verbose,
-		Uid:          uid,
-		Gid:          gid,
-		StateFolder:  *stateFolder,
+		ReadOnly:       !*limitedWrite,
+		AllowOverwrite: *allowOverwrite,
+		Verbose:        *verbose > 0,
+		VerboseLevel:   *verbose,
+		Uid:            uid,
+		Gid:            gid,
+		StateFolder:    *stateFolder,
 	}
 
 	dxEnv, _, err := dxda.GetDxEnvironment()
@@ -393,6 +404,12 @@ func buildDaemonCommandLine(cfg Config, fullManifestPath string) []string {
 	}
 	if *limitedWrite {
 		daemonArgs = append(daemonArgs, "-limitedWrite")
+	}
+	if *allowOverwrite {
+		daemonArgs = append(daemonArgs, "-allowOverwrite")
+	}
+	if *readOnly {
+		daemonArgs = append(daemonArgs, "-readOnly")
 	}
 	if *uid != -1 {
 		args := []string{"-uid", strconv.FormatInt(int64(*uid), 10)}
