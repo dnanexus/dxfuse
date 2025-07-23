@@ -155,6 +155,7 @@ func fsDaemon(
 
 	mfs, err := fuse.Mount(mountpoint, server, cfg)
 	if err != nil {
+		fmt.Printf("Mounting dxfuse failed: %s\n", err.Error())
 		logger.Printf("Mounting dxfuse failed: %s", err.Error())
 	} else {
 		logger.Printf("Mounting dxfuse succeeded")
@@ -214,6 +215,7 @@ func waitForReady(logFile string) string {
 			return "ready"
 		}
 		if strings.Contains(content, "Mounting dxfuse failed") {
+			fmt.Print(content)
 			return "error"
 		}
 	}
