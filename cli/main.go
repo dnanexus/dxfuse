@@ -66,21 +66,6 @@ var (
 	stateFolder  = flag.String("stateFolder", getDefaultStateFolder(), "Directory to use for dxfuse's internal state (log file, database, etc). Created if does not exist. Defaults to "+getDefaultStateFolder())
 )
 
-func lookupProject(dxEnv *dxda.DXEnvironment, projectIdOrName string) (string, error) {
-	if strings.HasPrefix(projectIdOrName, "project-") {
-		// This is a project ID
-		return projectIdOrName, nil
-	}
-	if strings.HasPrefix(projectIdOrName, "container-") {
-		// This is a container ID
-		return projectIdOrName, nil
-	}
-
-	// This is a project name, describe it, and
-	// return the project-id.
-	return dxfuse.DxFindProject(context.TODO(), dxEnv, projectIdOrName)
-}
-
 func initLog(logFile string) *os.File {
 	// Redirect the log output to a file
 	f, err := os.OpenFile(logFile, os.O_RDWR|os.O_CREATE|os.O_APPEND|os.O_TRUNC, 0666)
@@ -337,7 +322,7 @@ func validateConfig(cfg Config) {
 	}
 }
 
-func parseManifest(cfg Config) (*dxfuse.Manifest, error) {
+func buildManifestFromArgs(cfg Config) (*dxfuse.Manifest, error) {
 	numArgs := flag.NArg()
 
 	// distinguish between the case of a manifest, and a list of projects.
@@ -354,18 +339,7 @@ func parseManifest(cfg Config) (*dxfuse.Manifest, error) {
 	} else {
 		// process the project inputs, and convert to an array of verified
 		// project IDs
-		var projectIds []string
-		for i := 1; i < numArgs; i++ {
-			projectIdOrName := flag.Arg(i)
-			projId, err := lookupProject(&cfg.dxEnv, projectIdOrName)
-			if err != nil {
-				return nil, err
-			}
-			if projId == "" {
-				return nil, fmt.Errorf("no project with name %s", projectIdOrName)
-			}
-			projectIds = append(projectIds, projId)
-		}
+		var projectIds []string = flag.Args()[1:]
 
 		manifest, err := dxfuse.MakeManifestFromProjectIds(context.TODO(), cfg.dxEnv, projectIds)
 		if err != nil {
@@ -437,7 +411,7 @@ func buildDaemonCommandLine(cfg Config, fullManifestPath string) []string {
 
 // We are in the parent process.
 func startDaemonAndWaitForInitializationToComplete(cfg Config, logFile string) {
-	manifest, err := parseManifest(cfg)
+	manifest, err := buildManifestFromArgs(cfg)
 	if err != nil {
 		fmt.Print(err.Error())
 		os.Exit(1)
