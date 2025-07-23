@@ -146,27 +146,27 @@ func ReadManifest(fname string) (*Manifest, error) {
 	return m, nil
 }
 
-func MakeManifestFromProjectIds(
+func BuildManifestFromProjects(
 	ctx context.Context,
 	dxEnv dxda.DXEnvironment,
-	projectIds []string) (*Manifest, error) {
+	projectIdsOrNames []string) (*Manifest, error) {
 	// describe the projects, retrieve metadata for them
 	tmpHttpClient := dxda.NewHttpClient()
 	projDescs := make(map[string]DxProjectDescription)
-	for _, pId := range projectIds {
-		if validProject(pId) {
-			pDesc, err := DxDescribeProject(ctx, tmpHttpClient, &dxEnv, pId)
+	for _, proj := range projectIdsOrNames {
+		if validProject(proj) {
+			pDesc, err := DxDescribeProject(ctx, tmpHttpClient, &dxEnv, proj)
 			if err != nil {
-				log.Printf("Could not describe project %s, check permissions", pId)
+				log.Printf("Could not describe project %s, check permissions", proj)
 				return nil, err
 			}
 			projDescs[pDesc.Id] = *pDesc
 		} else {
 			// This is a project name, describe it, and
 			// return the project description.
-			pDesc, err := DxFindProject(ctx, tmpHttpClient, &dxEnv, pId)
+			pDesc, err := DxFindProject(ctx, tmpHttpClient, &dxEnv, proj)
 			if err != nil {
-				log.Printf("Could not find project with name %s", pId)
+				log.Printf("Could not find project with name %s", proj)
 				return nil, err
 			}
 			projDescs[pDesc.Id] = *pDesc

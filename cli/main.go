@@ -336,7 +336,7 @@ func validateMountpointPath(cfg Config) {
 	}
 }
 
-func buildManifestFromArgs(cfg Config) (*dxfuse.Manifest, error) {
+func getManifest(cfg Config) (*dxfuse.Manifest, error) {
 	numArgs := flag.NArg()
 
 	// distinguish between the case of a manifest, and a list of projects.
@@ -355,7 +355,7 @@ func buildManifestFromArgs(cfg Config) (*dxfuse.Manifest, error) {
 		// project IDs
 		var projectIds []string = flag.Args()[1:]
 
-		manifest, err := dxfuse.MakeManifestFromProjectIds(context.TODO(), cfg.dxEnv, projectIds)
+		manifest, err := dxfuse.BuildManifestFromProjects(context.TODO(), cfg.dxEnv, projectIds)
 		if err != nil {
 			return nil, err
 		}
@@ -428,7 +428,7 @@ func buildDaemonCommandLine(cfg Config, fullManifestPath string) []string {
 
 // We are in the parent process.
 func startDaemonAndWaitForInitializationToComplete(cfg Config, logFile string) {
-	manifest, err := buildManifestFromArgs(cfg)
+	manifest, err := getManifest(cfg)
 	if err != nil {
 		fmt.Print(err.Error())
 		os.Exit(1)
