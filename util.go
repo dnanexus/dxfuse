@@ -66,7 +66,7 @@ type DxDownloadURL struct {
 
 type Options struct {
 	ReadOnly       bool
-	AllowOverWrite bool
+	AllowOverwrite bool
 	Verbose        bool
 	VerboseLevel   int
 	Uid            uint32

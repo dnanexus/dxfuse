@@ -32,12 +32,12 @@ import (
 //     zoo     regular file
 type PosixDir struct {
 	path        string // entire directory path
-	dataObjects []DxDescribeDataObject
+	dataObjects []DxDataObjectDescription
 	subdirs     []string
 
 	// additional subdirectories holding files that have multiple versions,
 	// and could not be placed in the original location.
-	fauxSubdirs map[string]([]DxDescribeDataObject)
+	fauxSubdirs map[string]([]DxDataObjectDescription)
 }
 
 type Posix struct {
@@ -99,7 +99,7 @@ func (px *Posix) pickFauxDirNames(subdirs []string, uniqueFileNames []string, nu
 }
 
 // Find all the unique file names.
-func (px *Posix) uniqueFileNames(dxObjs []DxDescribeDataObject) []string {
+func (px *Posix) uniqueFileNames(dxObjs []DxDataObjectDescription) []string {
 	usedNames := make(map[string]bool)
 
 	var firstTimers []string
@@ -116,7 +116,7 @@ func (px *Posix) uniqueFileNames(dxObjs []DxDescribeDataObject) []string {
 
 // pick all the objects with "name" from the list. Return an empty array
 // if none exist. Sort them from newest to oldest.
-func (px *Posix) SortObjectsByCtime(dxObjs []DxDescribeDataObject) []DxDescribeDataObject {
+func (px *Posix) SortObjectsByCtime(dxObjs []DxDataObjectDescription) []DxDataObjectDescription {
 	// sort by date
 	sort.Slice(dxObjs, func(i, j int) bool { return dxObjs[i].CtimeSeconds > dxObjs[j].CtimeSeconds })
 	return dxObjs
@@ -160,9 +160,9 @@ func (px *Posix) FixDir(dxFolder *DxFolder) (*PosixDir, error) {
 	}
 
 	// convert the map into an array. Normalize any non Posix names.
-	var allDxObjs []DxDescribeDataObject
+	var allDxObjs []DxDataObjectDescription
 	for _, dxObj := range dxFolder.dataObjects {
-		var objNorm DxDescribeDataObject = dxObj
+		var objNorm DxDataObjectDescription = dxObj
 
 		if !FilenameIsPosixCompliant(objNorm.Name) {
 			// we need to normalize the name
@@ -178,7 +178,7 @@ func (px *Posix) FixDir(dxFolder *DxFolder) (*PosixDir, error) {
 		px.log("unique file names=%v", uniqueFileNames)
 	}
 
-	dxObjsPerUniqueFilename := make(map[string][]DxDescribeDataObject)
+	dxObjsPerUniqueFilename := make(map[string][]DxDataObjectDescription)
 
 	// Create a map of object names to obj describes
 	// To be used in spreading objects across faux subdirs
@@ -189,7 +189,7 @@ func (px *Posix) FixDir(dxFolder *DxFolder) (*PosixDir, error) {
 
 	// Iteratively, take unique files from the remaining objects, and place them in
 	// subdirectories 1, 2, 3, ... Be careful to create unused directory names
-	fauxSubDirs := make(map[string][]DxDescribeDataObject)
+	fauxSubDirs := make(map[string][]DxDataObjectDescription)
 
 	// choose names for faux subdirs for the worst case where all objects
 	// have the same name.
@@ -207,7 +207,7 @@ func (px *Posix) FixDir(dxFolder *DxFolder) (*PosixDir, error) {
 
 	// Take all the data-objects that have names that aren't already taken
 	// up by subdirs. They go in the top level
-	var topLevelObjs []DxDescribeDataObject
+	var topLevelObjs []DxDataObjectDescription
 	for _, oName := range uniqueFileNames {
 		dxObjs := px.SortObjectsByCtime(dxObjsPerUniqueFilename[oName])
 		if px.options.VerboseLevel > 1 {
@@ -228,7 +228,7 @@ func (px *Posix) FixDir(dxFolder *DxFolder) (*PosixDir, error) {
 			vec, ok := fauxSubDirs[dName]
 			if !ok {
 				// need to start a new faux subdir called "dName"
-				v := make([]DxDescribeDataObject, 1)
+				v := make([]DxDataObjectDescription, 1)
 				v[0] = obj
 				fauxSubDirs[dName] = v
 			} else {
