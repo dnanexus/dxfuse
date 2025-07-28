@@ -891,6 +891,13 @@ func (mdb *MetadataDb) populateDir(
 		mdb.log("populateDir(%s)  data-objects=%v  subdirs=%v", dirPath, objNames, subdirs)
 	}
 
+	var fileMode os.FileMode
+	if mdb.options.AllowOverwrite {
+		fileMode = fileReadWriteMode
+	} else {
+		fileMode = fileReadOnlyMode
+	}
+
 	// Create a database entry for each file
 	if mdb.options.VerboseLevel > 1 {
 		mdb.log("inserting files")
@@ -913,7 +920,7 @@ func (mdb *MetadataDb) populateDir(
 			o.MtimeSeconds,
 			o.Tags,
 			o.Properties,
-			fileReadOnlyMode,
+			fileMode,
 			dirPath,
 			o.Name)
 		if err != nil {
@@ -1164,6 +1171,12 @@ func (mdb *MetadataDb) PopulateRoot(ctx context.Context, oph *OpHandle, manifest
 	}
 
 	// create individual files
+	var fileMode os.FileMode
+	if mdb.options.AllowOverwrite {
+		fileMode = fileReadWriteMode
+	} else {
+		fileMode = fileReadOnlyMode
+	}
 	mdb.log("individual manifest files (num=%d)", len(manifest.Files))
 	for _, fl := range manifest.Files {
 		mdb.log("fileDesc=%v", fl)
@@ -1181,7 +1194,7 @@ func (mdb *MetadataDb) PopulateRoot(ctx context.Context, oph *OpHandle, manifest
 			fl.MtimeSeconds,
 			nil,
 			nil,
-			fileReadOnlyMode,
+			fileMode,
 			fl.Parent,
 			fl.Fname)
 		if err != nil {
@@ -1220,8 +1233,7 @@ func (mdb *MetadataDb) CreateFile(
 	ctx context.Context,
 	oph *OpHandle,
 	dir *Dir,
-	fname string,
-	mode os.FileMode) (File, error) {
+	fname string) (File, error) {
 	if mdb.options.Verbose {
 		mdb.log("CreateFile %s/%s projpath=%s%s",
 			dir.FullPath, fname, dir.ProjId, dir.ProjFolder)
@@ -1243,6 +1255,13 @@ func (mdb *MetadataDb) CreateFile(
 	// 3. empty, without any data
 	// 4. dirtyData true, for any subsequent Open() calls to return a filehandler with append access
 	nowSeconds := time.Now().Unix()
+
+	var mode os.FileMode
+	if mdb.options.AllowOverwrite {
+		mode = fileReadWriteMode
+	} else {
+		mode = fileWriteOnlyMode
+	}
 	inode, err := mdb.createDataObject(
 		oph,
 		FK_Regular,

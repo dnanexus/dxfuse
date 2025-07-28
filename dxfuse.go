@@ -474,6 +474,12 @@ func (fsys *Filesys) SetInodeAttributes(ctx context.Context, op *fuseops.SetInod
 		// can't modify directory attributes
 		return syscall.EPERM
 	}
+
+	if fsys.options.ReadOnly {
+		// the filesystem is mounted read-only
+		return syscall.EPERM
+	}
+
 	if !fsys.checkProjectPermissions(file.ProjId, PERM_VIEW) {
 		return syscall.EPERM
 	}
@@ -772,10 +778,10 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	if !fsys.checkProjectPermissions(parentDir.ProjId, PERM_UPLOAD) {
 		return syscall.EPERM
 	}
-	var mode os.FileMode = fileWriteOnlyMode
+
 	// we now know that the parent directory exists, and the file does not.
 	// Create a remote file for appending data and then update the metadata db
-	file, err := fsys.mdb.CreateFile(ctx, oph, &parentDir, op.Name, mode)
+	file, err := fsys.mdb.CreateFile(ctx, oph, &parentDir, op.Name)
 	if err != nil {
 		return err
 	}
@@ -1314,6 +1320,11 @@ func (fsys *Filesys) openRegularFile(
 
 // Note: What happens if the file is opened for writing?
 func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error {
+	fsys.log("op: %v", op)
+	fsys.log("OpenfileOp Flags: %v", op.OpenFlags)
+	if op.OpenFlags&syscall.O_TRUNC != 0 {
+		fsys.log("File opened with O_TRUNC flag")
+	}
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
 	oph := fsys.opOpen()
@@ -1667,7 +1678,15 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 
 	// Update the file attributes in the database (size, mtime)
 	mtime := time.Now()
-	var mode os.FileMode = fileReadOnlyMode
+
+	// If AllowOverwrite is true, we can keep using read-write mode
+	// otherwise, flushing a file (which must be a newly created one) will make it read-only.
+	var mode os.FileMode
+	if fsys.options.AllowOverwrite {
+		mode = fileReadWriteMode
+	} else {
+		mode = fileReadOnlyMode
+	}
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
 	oph = fsys.opOpenNoHttpClient()
@@ -1742,19 +1761,27 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 			}
 			// Update the file attributes in the database (size, mtime)
 			mtime := time.Now()
-			var mode os.FileMode = fileReadOnlyMode
+
+			// If AllowOverwrite is true, we can keep using read-write mode
+			// otherwise, change the mode to read-only.
+			var mode os.FileMode
+			if fsys.options.AllowOverwrite {
+				mode = fileReadWriteMode
+			} else {
+				mode = fileReadOnlyMode
+			}
 			fsys.mutex.Lock()
 			defer fsys.mutex.Unlock()
 			oph = fsys.opOpenNoHttpClient()
 			defer fsys.opClose(oph)
 
 			if err := fsys.mdb.UpdateFileAttrs(ctx, oph, fh.inode, fh.size, mtime, &mode); err != nil {
-				fsys.log("database error in updating attributes for FlushFile %s", err.Error())
+				fsys.log("database error in updating attributes for ReleaseFile %s", err.Error())
 				return fuse.EIO
 			}
 			// update to remote read-only
 			if err := fsys.mdb.UpdateClosedFileMetadata(ctx, oph, fh.inode); err != nil {
-				fsys.log("database error in updating attributes for closed FlushFile %s", err.Error())
+				fsys.log("database error in updating attributes for closed ReleaseFile %s", err.Error())
 				return fuse.EIO
 			}
 

@@ -42,6 +42,7 @@ const (
 	dirReadWriteMode  = 0777 | os.ModeDir
 	fileReadOnlyMode  = 0444
 	fileWriteOnlyMode = 0222
+	fileReadWriteMode = 0644
 )
 const (
 	// flags for writing files to disk
@@ -66,7 +67,7 @@ type DxDownloadURL struct {
 
 type Options struct {
 	ReadOnly       bool
-	AllowOverWrite bool
+	AllowOverwrite bool
 	Verbose        bool
 	VerboseLevel   int
 	Uid            uint32
