@@ -1255,13 +1255,8 @@ func (mdb *MetadataDb) CreateFile(
 	// 3. empty, without any data
 	// 4. dirtyData true, for any subsequent Open() calls to return a filehandler with append access
 	nowSeconds := time.Now().Unix()
+	var mode os.FileMode = fileWriteOnlyMode
 
-	var mode os.FileMode
-	if mdb.options.AllowOverwrite {
-		mode = fileReadWriteMode
-	} else {
-		mode = fileWriteOnlyMode
-	}
 	inode, err := mdb.createDataObject(
 		oph,
 		FK_Regular,
