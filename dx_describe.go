@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strings"
 
 	// The dxda package has the get-environment code
 	"github.com/dnanexus/dxda"
@@ -19,7 +18,7 @@ const (
 
 // -------------------------------------------------------------------
 // Description of a DNAx data object
-type DxDescribeDataObject struct {
+type DxDataObjectDescription struct {
 	Id            string
 	ProjId        string
 	Name          string
@@ -42,7 +41,7 @@ type FileUploadParameters struct {
 	MaximumFileSize      int64 `json:"maximumFileSize"`
 }
 
-type DxDescribePrj struct {
+type DxProjectDescription struct {
 	Id           string
 	Name         string
 	Region       string
@@ -57,7 +56,7 @@ type DxDescribePrj struct {
 // a DNAx directory. It holds files and sub-directories.
 type DxFolder struct {
 	path        string // Full directory name, for example: { "/A/B/C", "foo/bar/baz" }
-	dataObjects map[string]DxDescribeDataObject
+	dataObjects map[string]DxDataObjectDescription
 	subdirs     []string
 }
 
@@ -69,12 +68,12 @@ type RequestWithScope struct {
 	DescribeOptions map[string]map[string]bool `json:"describe"`
 }
 
-type Request struct {
+type DxFindDataObjectsRequest struct {
 	Objects         []string                   `json:"id"`
 	DescribeOptions map[string]map[string]bool `json:"describe"`
 }
 
-type Reply struct {
+type DxFindDataObjectsReply struct {
 	Results []DxDescribeRawTop `json:"results"`
 }
 
@@ -102,7 +101,7 @@ func submit(
 	httpClient *http.Client,
 	dxEnv *dxda.DXEnvironment,
 	projectId string,
-	fileIds []string) (map[string]DxDescribeDataObject, error) {
+	fileIds []string) (map[string]DxDataObjectDescription, error) {
 
 	// Limit the number of fields returned, because by default we
 	// get too much information, which is a burden on the server side.
@@ -127,7 +126,7 @@ func submit(
 	var err error
 
 	// If given a valid project or container provide the scope parameter to reduce load on the backend
-	if strings.HasPrefix(projectId, "project-") || strings.HasPrefix(projectId, "container-") {
+	if validProject(projectId) {
 		scope := map[string]string{
 			"project": projectId,
 		}
@@ -141,7 +140,7 @@ func submit(
 			return nil, err
 		}
 	} else {
-		request := Request{
+		request := DxFindDataObjectsRequest{
 			Objects:         fileIds,
 			DescribeOptions: describeOptions,
 		}
@@ -157,17 +156,17 @@ func submit(
 	if err != nil {
 		return nil, err
 	}
-	var reply Reply
+	var reply DxFindDataObjectsReply
 	err = json.Unmarshal(repJs, &reply)
 	if err != nil {
 		return nil, err
 	}
 
-	var files = make(map[string]DxDescribeDataObject)
+	var files = make(map[string]DxDataObjectDescription)
 	for _, descRawTop := range reply.Results {
 		descRaw := descRawTop.Describe
 
-		desc := DxDescribeDataObject{
+		desc := DxDataObjectDescription{
 			Id:            descRaw.Id,
 			ProjId:        descRaw.ProjId,
 			Name:          descRaw.Name,
@@ -191,9 +190,9 @@ func DxDescribeBulkObjects(
 	httpClient *http.Client,
 	dxEnv *dxda.DXEnvironment,
 	projectId string,
-	objIds []string) (map[string]DxDescribeDataObject, error) {
+	objIds []string) (map[string]DxDataObjectDescription, error) {
 
-	var gMap = make(map[string]DxDescribeDataObject)
+	var gMap = make(map[string]DxDataObjectDescription)
 	if len(objIds) == 0 {
 		return gMap, nil
 	}
@@ -307,7 +306,7 @@ func DxDescribeFolder(
 		log.Printf("describeBulkObjects(%v) error %s", folderInfo.objIds, err.Error())
 		return nil, err
 	}
-	dataObjects := make(map[string]DxDescribeDataObject)
+	dataObjects := make(map[string]DxDataObjectDescription)
 	for _, oDesc := range dxObjs {
 		dataObjects[oDesc.Id] = oDesc
 	}
@@ -318,11 +317,11 @@ func DxDescribeFolder(
 	}, nil
 }
 
-type RequestDescribeProject struct {
+type DxDescribeProjectRequest struct {
 	Fields map[string]bool `json:"fields"`
 }
 
-type ReplyDescribeProject struct {
+type DxDescribeProjectReply struct {
 	Id               string               `json:"id"`
 	Name             string               `json:"name"`
 	Region           string               `json:"region"`
@@ -354,9 +353,9 @@ func DxDescribeProject(
 	ctx context.Context,
 	httpClient *http.Client,
 	dxEnv *dxda.DXEnvironment,
-	projectId string) (*DxDescribePrj, error) {
+	projectId string) (*DxProjectDescription, error) {
 
-	var request RequestDescribeProject
+	var request DxDescribeProjectRequest
 	request.Fields = map[string]bool{
 		"id":                   true,
 		"name":                 true,
@@ -380,12 +379,12 @@ func DxDescribeProject(
 		return nil, err
 	}
 
-	var reply ReplyDescribeProject
+	var reply DxDescribeProjectReply
 	if err := json.Unmarshal(repJs, &reply); err != nil {
 		return nil, err
 	}
 
-	prj := DxDescribePrj{
+	prj := DxProjectDescription{
 		Id:           reply.Id,
 		Name:         reply.Name,
 		Region:       reply.Region,
@@ -405,16 +404,16 @@ func DxDescribe(
 	httpClient *http.Client,
 	dxEnv *dxda.DXEnvironment,
 	projectId string,
-	objId string) (DxDescribeDataObject, error) {
+	objId string) (DxDataObjectDescription, error) {
 	var objectIds []string
 	objectIds = append(objectIds, objId)
 	m, err := DxDescribeBulkObjects(ctx, httpClient, dxEnv, projectId, objectIds)
 	if err != nil {
-		return DxDescribeDataObject{}, err
+		return DxDataObjectDescription{}, err
 	}
 	oDesc, ok := m[objId]
 	if !ok {
-		return DxDescribeDataObject{}, fmt.Errorf("Object %s not found", objId)
+		return DxDataObjectDescription{}, fmt.Errorf("Object %s not found", objId)
 	}
 	return oDesc, nil
 }

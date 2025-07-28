@@ -37,7 +37,7 @@ type FileUpdateReq struct {
 type SyncDbDx struct {
 	dxEnv              dxda.DXEnvironment
 	options            Options
-	projId2Desc        map[string]DxDescribePrj
+	projId2Desc        map[string]DxProjectDescription
 	fileUpdateQueue    chan FileUpdateReq
 	chunkQueue         chan *Chunk
 	sweepStopChan      chan struct{}
@@ -54,7 +54,7 @@ type SyncDbDx struct {
 func NewSyncDbDx(
 	options Options,
 	dxEnv dxda.DXEnvironment,
-	projId2Desc map[string]DxDescribePrj,
+	projId2Desc map[string]DxProjectDescription,
 	mdb *MetadataDb,
 	mutex *sync.Mutex) *SyncDbDx {
 

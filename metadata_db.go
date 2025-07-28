@@ -852,7 +852,7 @@ func (mdb *MetadataDb) setDirectoryToPopulated(oph *OpHandle, dinode int64) erro
 	return nil
 }
 
-func (mdb *MetadataDb) kindOfFile(o DxDescribeDataObject) int {
+func (mdb *MetadataDb) kindOfFile(o DxDataObjectDescription) int {
 	kind := 0
 	if strings.HasPrefix(o.Id, "file-") {
 		kind = FK_Regular
@@ -881,7 +881,7 @@ func (mdb *MetadataDb) populateDir(
 	ctime int64,
 	mtime int64,
 	dirPath string,
-	dxObjs []DxDescribeDataObject,
+	dxObjs []DxDataObjectDescription,
 	subdirs []string) error {
 	if mdb.options.VerboseLevel > 1 {
 		var objNames []string
