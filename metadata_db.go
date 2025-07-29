@@ -700,7 +700,6 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 // several use cases:
 //  1. Create a singleton file from the manifest
 //  2. Create a new file, and upload it later to the platform
-//     (the file-id will be the empty string "")
 //  3. Discover a file in a directory, which may actually be a link to another file.
 func (mdb *MetadataDb) createDataObject(
 	oph *OpHandle,
@@ -1186,7 +1185,7 @@ func (mdb *MetadataDb) PopulateRoot(ctx context.Context, oph *OpHandle, manifest
 			false,
 			false,
 			fl.ProjId,
-			"closed",
+			fl.State,
 			fl.ArchivalState,
 			fl.FileId,
 			fl.Size,

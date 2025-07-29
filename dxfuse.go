@@ -1500,10 +1500,7 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 		return fuse.EINVAL
 	}
 	fsys.mutex.Unlock()
-	if !ok {
-		// invalid file handle. It doesn't exist in the table
-		return fuse.EINVAL
-	}
+
 	// Possible case of file being flushed by one fd, but another open file descriptor still attempting to write
 	if fh.accessMode != AM_AO_Remote {
 		return syscall.EPERM
