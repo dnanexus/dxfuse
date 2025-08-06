@@ -1398,10 +1398,6 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 
 	var fh *FileHandle
 
-	// add the file handle to the open-file table, so following operations will use the same file descriptor
-	// created by this OpenFile operation
-	op.Handle = fsys.insertIntoFileHandleTable(fh)
-
 	if accessMode == AM_RO_Remote {
 		// enable page cache for reads because file contents are immutable
 		// page cache enables shared read-only mmap access
@@ -1537,7 +1533,7 @@ func (fsys *Filesys) prepareFileHandleForWrite(ctx context.Context, oph *OpHandl
 		context.TODO(), oph.httpClient, NewNonce().String(),
 		parentDir.ProjId,
 		file.Name,
-		parentDir.FullPath)
+		parentDir.ProjFolder)
 	if err != nil {
 		return nil, err
 	}
@@ -1550,9 +1546,9 @@ func (fsys *Filesys) prepareFileHandleForWrite(ctx context.Context, oph *OpHandl
 	fh := &FileHandle{
 		accessMode:        AM_AO_Remote,
 		inode:             file.Inode,
-		size:              file.Size,
+		size:              0,
 		url:               nil,
-		Id:                file.Id,
+		Id:                newFileId,
 		Tgid:              tgid,
 		lastPartId:        0,
 		nextWriteOffset:   0,
