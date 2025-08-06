@@ -497,9 +497,8 @@ func (fsys *Filesys) SetInodeAttributes(ctx context.Context, op *fuseops.SetInod
 	if op.Mtime != nil {
 		attrs.Mtime = *op.Mtime
 	}
-	// Don't allow chmod
 	// we don't handle atime
-	err = fsys.mdb.UpdateFileAttrs(ctx, oph, file.Inode, int64(attrs.Size), attrs.Mtime, nil)
+	err = fsys.mdb.UpdateFileAttrs(ctx, oph, file.Inode, int64(attrs.Size), attrs.Mtime, &attrs.Mode)
 	if err != nil {
 		fsys.log("database error in OpenFile %s", err.Error())
 		return fuse.EIO
@@ -1368,12 +1367,10 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 			fsys.log("OpenFileOp: Append writing is not supported for closed files")
 			return syscall.EACCES
 		}
-		// For both WriteOnly and ReadWrite the O_TRUNC flag is required
-		// O_WRONLY: succeed with O_TRUNC, fail otherwise,
-		// O_RDWR: open as write with O_TRUNC, as read without.
-		if op.OpenFlags&syscall.O_TRUNC == 0 && op.OpenFlags.IsWriteOnly() {
-			fsys.log("OpenFileOp: writing without O_TRUNC is not allowed")
-		} else if op.OpenFlags&syscall.O_TRUNC == 0 && op.OpenFlags.IsReadWrite() {
+		// For both WriteOnly and ReadWrite the O_TRUNC flag is required for WriteFile
+		// however other syscalls (chmod, touch, truncate) could also use openat without O_TRUNC flag
+		// in those cases, we leave the file as read-only, so setting inode attributes will proceed
+		if op.OpenFlags&syscall.O_TRUNC == 0 {
 			accessMode = AM_RO_Remote
 			perm = PERM_VIEW
 			// O_TRUNC is set, check if we can overwrite the file
