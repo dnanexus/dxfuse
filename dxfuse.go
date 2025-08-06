@@ -1414,7 +1414,7 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 		// Create an entry in the prefetch table
 		fsys.pgs.CreateStreamEntry(fh.hid, file, *fh.url)
 	} else {
-		fh, err = fsys.prepareFileHandleForWrite(ctx, op)
+		fh, err = fsys.prepareFileHandleForWrite(ctx, oph, op)
 		if err != nil {
 			return err
 		}
