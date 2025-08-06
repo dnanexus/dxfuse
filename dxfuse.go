@@ -1422,6 +1422,10 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 		op.KeepPageCache = false
 		op.UseDirectIO = true
 	}
+
+	// add the file handle to the open-file table, so following operations will use the same file descriptor
+	// created by this OpenFile operation
+	op.Handle = fsys.insertIntoFileHandleTable(fh)
 	return nil
 }
 
@@ -1511,11 +1515,7 @@ func (fsys *Filesys) ReadFile(ctx context.Context, op *fuseops.ReadFileOp) error
 	}
 }
 
-func (fsys *Filesys) prepareFileHandleForWrite(ctx context.Context, op *fuseops.OpenFileOp) (*FileHandle, error) {
-	fsys.mutex.Lock()
-	oph := fsys.opOpen()
-	defer fsys.opClose(oph)
-	defer fsys.mutex.Unlock()
+func (fsys *Filesys) prepareFileHandleForWrite(ctx context.Context, oph *OpHandle, op *fuseops.OpenFileOp) (*FileHandle, error) {
 	file, parentDir, err := fsys.mdb.GetFullInfoByInode(ctx, oph, int64(op.Inode))
 	if err != nil {
 		return nil, err
