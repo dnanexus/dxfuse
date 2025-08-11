@@ -1308,7 +1308,7 @@ func (fsys *Filesys) ReleaseDirHandle(ctx context.Context, op *fuseops.ReleaseDi
 
 // ===
 // File handling
-func (fsys *Filesys) getRemoteFileHandle(
+func (fsys *Filesys) getRemoteFileHandleForRead(
 	ctx context.Context,
 	oph *OpHandle,
 	op *fuseops.OpenFileOp,
@@ -1419,7 +1419,7 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 			return syscall.EACCES
 		}
 		// For both WriteOnly and ReadWrite the O_TRUNC flag is required for WriteFile
-		// however other syscalls (chmod, touch, truncate) could also use openat without O_TRUNC flag
+		// however other commands (i.e. touch, truncate) could also call openat without O_TRUNC flag
 		// in those cases, we leave the file as read-only, so setting inode attributes will proceed
 		if op.OpenFlags&syscall.O_TRUNC == 0 {
 			accessMode = AM_RO_Remote
@@ -1449,7 +1449,7 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 	if accessMode == AM_RO_Remote {
 		// enable page cache for reads because file contents are immutable
 		// page cache enables shared read-only mmap access
-		fh, err = fsys.getRemoteFileHandle(ctx, oph, op, file)
+		fh, err = fsys.getRemoteFileHandleForRead(ctx, oph, op, file)
 		if err != nil {
 			return err
 		}
@@ -1458,7 +1458,7 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 		// Create an entry in the prefetch table
 		fsys.pgs.CreateStreamEntry(fh.hid, file, *fh.url)
 	} else {
-		fh, err = fsys.prepareFileHandleForWrite(ctx, oph, op)
+		fh, err = fsys.prepareFileHandleForOverwrite(ctx, oph, op, file)
 		if err != nil {
 			return err
 		}
@@ -1584,7 +1584,7 @@ func (fsys *Filesys) prepareFileHandleForOverwrite(ctx context.Context, oph *OpH
 		writeBufferOffset: 0,
 		mutex:             &sync.Mutex{},
 	}
-	fsys.log("Created new file handle for writing: %s, %s", fh.Id, fh.inode)
+	fsys.log("Created new file handle for writing: %s, %d", fh.Id, fh.inode)
 	return fh, nil
 }
 
