@@ -403,7 +403,7 @@ func (sybx *SyncDbDx) updateFileData(
 	}
 
 	// Update the database with the new ID.
-	sybx.mdb.UpdateInodeFileId(upReq.dfi.Inode, fileId)
+	// sybx.mdb.UpdateInodeFileId(upReq.dfi.Inode, fileId)
 	sybx.mutex.Unlock()
 
 	// Note: the file may have been deleted while it was being uploaded.

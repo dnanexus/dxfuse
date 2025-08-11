@@ -342,7 +342,7 @@ func (fsys *Filesys) dxErrorToFilesystemError(dxErr dxda.DxError) error {
 		return syscall.EPERM
 	default:
 		fsys.log("unexpected dnanexus error type (%s), returning EIO which will unmount the filesystem",
-			dxErr.EType)
+			dxErr.Message)
 		return fuse.EIO
 	}
 }
@@ -444,9 +444,48 @@ func (fsys *Filesys) GetInodeAttributes(ctx context.Context, op *fuseops.GetInod
 
 	return nil
 }
+func (fsys *Filesys) createNewFileForExistingInode(ctx context.Context, oph *OpHandle, inode int64) (string, error) {
+	// get the file information needed to create a new file
+	file, parentDir, err := fsys.mdb.GetFullInfoByInode(ctx, oph, inode)
+	if err != nil {
+		return "", err
+	}
+	if file.State != "closed" {
+		fsys.log("File (%s,%s) is not closed but it will be removed to be overwritten",
+			file.Name, file.Id)
+		return "", syscall.EACCES
+	}
+
+	oldFileId := []string{file.Id}
+	fsys.log("DxRemoveObjects: fileid=%s, parentDir=%s", file.Id, parentDir.FullPath)
+	if err := fsys.ops.DxRemoveObjects(ctx, oph.httpClient, file.ProjId, oldFileId); err != nil {
+		fsys.log("Error in removing %s:%s on dnanexus: %s",
+			file.ProjId, file.Id, err.Error())
+		return "", err
+	}
+	fsys.log("Removed %s, %s", file.ProjId, file.Name)
+
+	fsys.log("DxNewFile: parentDir=%s, fileName=%s, fullPath=%s",
+		parentDir.FullPath, file.Name, parentDir.FullPath)
+
+	newFileId, err := fsys.ops.DxFileNew(
+		context.TODO(), oph.httpClient, NewNonce().String(),
+		parentDir.ProjId,
+		file.Name,
+		parentDir.ProjFolder)
+	if err != nil {
+		fsys.log("Error in creating new file %s:%s on dnanexus: %s",
+			file.ProjId, file.Name, err.Error())
+		oph.RecordError(err)
+		return "", err
+	}
+	fsys.log("DxNewFile: newFileId=%s", newFileId)
+	return newFileId, nil
+}
 
 // if the file is writable, we can modify some of the attributes.
 // otherwise, this is a permission error.
+// invoked by chmod(2) ftruncate(2)
 func (fsys *Filesys) SetInodeAttributes(ctx context.Context, op *fuseops.SetInodeAttributesOp) error {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
@@ -466,6 +505,19 @@ func (fsys *Filesys) SetInodeAttributes(ctx context.Context, op *fuseops.SetInod
 		fsys.log("SetInodeAttributes(inode=%d, %v)", int64(op.Inode), node)
 	}
 
+	// mtime could be set during `touch` so we allow it if not read-only
+	// but changing mode and size could lead to potential file overwrite so we only allow it
+	// if AllowOverwrite is set.
+	var perm = PERM_VIEW
+	if op.Mode != nil && op.Size != nil {
+		if !fsys.options.AllowOverwrite {
+			fsys.log("SetInodeAttributes: cannot change mode and size if not in allow overwrite mode")
+			return syscall.EPERM
+		} else {
+			perm = PERM_CONTRIBUTE
+		}
+	}
+
 	var file File
 	switch node := node.(type) {
 	case File:
@@ -474,19 +526,50 @@ func (fsys *Filesys) SetInodeAttributes(ctx context.Context, op *fuseops.SetInod
 		// can't modify directory attributes
 		return syscall.EPERM
 	}
-	if !fsys.checkProjectPermissions(file.ProjId, PERM_VIEW) {
-		return syscall.EPERM
-	}
 
-	// we know it is a file.
-	// check if this is a read-only file.
-	attrs := file.GetAttrs()
-	if attrs.Mode == fileReadOnlyMode {
+	if !fsys.checkProjectPermissions(file.ProjId, perm) {
 		return syscall.EPERM
 	}
 
 	// update the file
+	attrs := file.GetAttrs()
 	if op.Size != nil {
+		if *op.Size > 0 {
+			fsys.log("SetInodeAttributes: cannot change size to %d, only to 0", *op.Size)
+			return syscall.ENOSYS
+		}
+		// the file size is set to 0, so we will remove the old remote file and create a new one
+		fsys.log("SetInodeAttributes: setting file size to 0, removing the remote file")
+
+		// replace the file associated with the inode with a new empty file
+		newFileId, err := fsys.createNewFileForExistingInode(ctx, oph, file.Inode)
+		if err != nil {
+			return err
+		}
+
+		// update the inode with the new fileId
+		fsys.mdb.UpdateInodeFileId(ctx, oph, file.Inode, newFileId)
+
+		// since we are just changing the inode attributes, the new file needs to be closed
+		httpClient := <-fsys.httpClientPool
+		err = fsys.ops.DxFileUploadPart(ctx, httpClient, newFileId, 1, make([]byte, 0))
+		if err != nil {
+			fsys.log("error uploading empty chunk to file %s", newFileId)
+			return err
+		}
+		err = fsys.ops.DxFileCloseAndWait(context.TODO(), httpClient, file.ProjId, newFileId)
+		fsys.httpClientPool <- httpClient
+		if err != nil {
+			return fsys.translateError(err)
+		}
+
+		// marked the file as closed to make it accessible
+		err = fsys.mdb.UpdateInodeFileState(ctx, oph, file.Inode, "closed", false)
+		if err != nil {
+			fsys.log("database error in updating attributes for closed SetInodeAttributes %s", err.Error())
+			return fuse.EIO
+		}
+		attrs.Mtime = time.Now()
 		attrs.Size = *op.Size
 	}
 	if op.Mode != nil {
@@ -495,11 +578,12 @@ func (fsys *Filesys) SetInodeAttributes(ctx context.Context, op *fuseops.SetInod
 	if op.Mtime != nil {
 		attrs.Mtime = *op.Mtime
 	}
-	// Don't allow chmod
+
+	// update the other attributes
 	// we don't handle atime
-	err = fsys.mdb.UpdateFileAttrs(ctx, oph, file.Inode, int64(attrs.Size), attrs.Mtime, nil)
+	err = fsys.mdb.UpdateFileAttrs(ctx, oph, file.Inode, int64(attrs.Size), attrs.Mtime, &attrs.Mode)
 	if err != nil {
-		fsys.log("database error in OpenFile %s", err.Error())
+		fsys.log("database error in SetInodeAttributes %s", err.Error())
 		return fuse.EIO
 	}
 
@@ -722,7 +806,8 @@ func (fsys *Filesys) RmDir(ctx context.Context, op *fuseops.RmDirOp) error {
 func (fsys *Filesys) insertIntoFileHandleTable(fh *FileHandle) fuseops.HandleID {
 	fsys.fhCounter++
 	hid := fuseops.HandleID(fsys.fhCounter)
-
+	// hid is a unique file descriptor ID and is created each time a file is created or opened
+	// It is passed to the follow-up operations by the kernel, allowing them to use the same file handle
 	fsys.fhTable[hid] = fh
 	fh.hid = hid
 	return hid
@@ -743,7 +828,7 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	defer fsys.opClose(oph)
 
 	if fsys.options.Verbose {
-		fsys.log("CreateFile(%s)", op.Name)
+		fsys.log("CreateFile(%s, %s, %d)", op.Name, op.Mode.String(), op.Handle)
 	}
 
 	// the parent is supposed to be a directory
@@ -772,10 +857,23 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	if !fsys.checkProjectPermissions(parentDir.ProjId, PERM_UPLOAD) {
 		return syscall.EPERM
 	}
-	var mode os.FileMode = fileWriteOnlyMode
+
 	// we now know that the parent directory exists, and the file does not.
 	// Create a remote file for appending data and then update the metadata db
-	file, err := fsys.mdb.CreateFile(ctx, oph, &parentDir, op.Name, mode)
+
+	// Create remote file
+	fileId, err := fsys.ops.DxFileNew(
+		context.TODO(), oph.httpClient, NewNonce().String(),
+		parentDir.ProjId,
+		op.Name,
+		parentDir.ProjFolder)
+	if err != nil {
+		fsys.log("CreateFile error ")
+		return err
+	}
+
+	// Create a new file data object in the metadata database.
+	file, err := fsys.mdb.CreateFile(ctx, oph, &parentDir, op.Name, op.Mode, fileId)
 	if err != nil {
 		return err
 	}
@@ -1255,31 +1353,13 @@ func (fsys *Filesys) ReleaseDirHandle(ctx context.Context, op *fuseops.ReleaseDi
 
 // ===
 // File handling
-func (fsys *Filesys) openRegularFile(
+func (fsys *Filesys) getRemoteFileHandleForRead(
 	ctx context.Context,
 	oph *OpHandle,
 	op *fuseops.OpenFileOp,
 	f File) (*FileHandle, error) {
 
-	tgid, err := GetTgid(op.OpContext.Pid)
-
-	if f.dirtyData {
-		fh := &FileHandle{
-			accessMode:        AM_AO_Remote,
-			inode:             f.Inode,
-			size:              f.Size,
-			Id:                f.Id,
-			url:               nil,
-			Tgid:              tgid,
-			lastPartId:        0,
-			nextWriteOffset:   0,
-			writeBuffer:       nil,
-			writeBufferOffset: 0,
-			mutex:             &sync.Mutex{},
-		}
-
-		return fh, nil
-	}
+	tgid, _ := GetTgid(op.OpContext.Pid)
 
 	// A remote (immutable) file.
 	// create a download URL for this file.
@@ -1314,6 +1394,8 @@ func (fsys *Filesys) openRegularFile(
 
 // Note: What happens if the file is opened for writing?
 func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error {
+	fsys.log("op: %v", op)
+
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
 	oph := fsys.opOpen()
@@ -1346,47 +1428,93 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 		log.Panicf("bad type for node %v", node)
 	}
 
-	// TOFIX: check permissions
+	// check if the file is a regular file that could be opened
+	if file.Kind != FK_Regular {
+		// can't open an applet/workflow/etc.
+		return fuse.ENOSYS
+	}
 
+	// check if the file is closed
+	// - only reading a closed file is allowed
+	// - if a file is open or closing, there must be another file handle that writes to it and has not closed it,
+	// in both cases we shall not allow accessing the file
 	if file.State != "closed" {
 		fsys.log("File (%s,%s) is not closed, it cannot be accessed",
 			file.Name, file.Id)
 		return syscall.EACCES
 	}
+	// open an archived file is not allowed
 	if file.ArchivalState != "live" {
 		fsys.log("File (%s,%s) is in state %s, it cannot be accessed",
 			file.Name, file.Id, file.ArchivalState)
 		return syscall.EACCES
 	}
+	// set access mode and permission for this operation
+	var accessMode int
+	var perm int
+	if op.OpenFlags.IsReadOnly() {
+		fsys.log("OpenFileOp: ReadOnly")
+		accessMode = AM_RO_Remote
+		perm = PERM_VIEW
+	} else if op.OpenFlags.IsWriteOnly() || op.OpenFlags.IsReadWrite() {
+		fsys.log("OpenFileOp: WriteOnly or ReadWrite")
+		// appending to a file is not allowed, error out before writing
+		if op.OpenFlags.IsAppend() {
+			fsys.log("OpenFileOp: Append writing is not supported for closed files")
+			return syscall.EACCES
+		}
+		// For both WriteOnly and ReadWrite the O_TRUNC flag is required for WriteFile
+		// however other commands (i.e. touch, truncate) could also call openat without O_TRUNC flag
+		// in those cases, we leave the file as read-only, so setting inode attributes will proceed
+		if op.OpenFlags&syscall.O_TRUNC == 0 {
+			accessMode = AM_RO_Remote
+			perm = PERM_VIEW
+			// O_TRUNC is set, check if we can overwrite the file
+		} else if !fsys.options.AllowOverwrite {
+			fsys.log("OpenFileOp: overwriting is not allowed if not using -allow-overwrite mode")
+			return syscall.EACCES
+			// O_TRUNC is set and we are in the -allow-overwrite mode
+		} else {
+			accessMode = AM_AO_Remote
+			// CONTRIBUTE permission is required since we will delete the old file
+			perm = PERM_CONTRIBUTE
+		}
+
+	}
+
+	// check if the user has permissions to access this file in the requested mode
+	if !fsys.checkProjectPermissions(file.ProjId, perm) {
+		fsys.log("User does not have permissions to access file %s:%s in the mode %s",
+			file.ProjId, file.Name, op.OpenFlags.String())
+		return syscall.EACCES
+	}
 
 	var fh *FileHandle
-	switch file.Kind {
-	case FK_Regular:
-		fh, err = fsys.openRegularFile(ctx, oph, op, file)
+
+	if accessMode == AM_RO_Remote {
+		// enable page cache for reads because file contents are immutable
+		// page cache enables shared read-only mmap access
+		fh, err = fsys.getRemoteFileHandleForRead(ctx, oph, op, file)
 		if err != nil {
 			return err
 		}
-	default:
-		// can't open an applet/workflow/etc.
-		return fuse.ENOSYS
-	}
-
-	// add to the open-file table, so we can recognize future accesses to
-	// the same handle.
-	op.Handle = fsys.insertIntoFileHandleTable(fh)
-
-	if fh.accessMode == AM_RO_Remote {
-		// enable page cache for reads because file contents are immutable
-		// page cache enables shared read-only mmap access
 		op.KeepPageCache = true
 		op.UseDirectIO = false
 		// Create an entry in the prefetch table
 		fsys.pgs.CreateStreamEntry(fh.hid, file, *fh.url)
 	} else {
+		fh, err = fsys.prepareFileHandleForOverwrite(ctx, oph, op, file)
+		if err != nil {
+			return err
+		}
 		// disable page cache for writes, files being appended to are not readable
 		op.KeepPageCache = false
 		op.UseDirectIO = true
 	}
+
+	// add the file handle to the open-file table, so following operations will use the same file descriptor
+	// created by this OpenFile operation
+	op.Handle = fsys.insertIntoFileHandleTable(fh)
 	return nil
 }
 
@@ -1468,12 +1596,41 @@ func (fsys *Filesys) ReadFile(ctx context.Context, op *fuseops.ReadFileOp) error
 	case AM_RO_Remote:
 		return fsys.readRemoteFile(ctx, op, fh)
 	case AM_AO_Remote:
-		// the file is being appended to, not readable in this state
+		// the file handle is now used for writing only
 		return syscall.EPERM
 	default:
 		log.Panicf("Invalid file access mode %d", fh.accessMode)
 		return fuse.EIO
 	}
+}
+
+func (fsys *Filesys) prepareFileHandleForOverwrite(ctx context.Context, oph *OpHandle, op *fuseops.OpenFileOp, file File) (*FileHandle, error) {
+	// Set up attributes after replacing the file
+	newFileId, err := fsys.createNewFileForExistingInode(ctx, oph, int64(op.Inode))
+	if err != nil {
+		return nil, err
+	}
+	fsys.mdb.UpdateInodeFileId(ctx, oph, file.Inode, newFileId)
+	fsys.mdb.UpdateFileAttrs(ctx, oph, file.Inode, 0, time.Now(), &file.Mode)
+	fsys.mdb.UpdateInodeFileState(ctx, oph, file.Inode, "open", true)
+
+	tgid, _ := GetTgid(op.OpContext.Pid)
+
+	fh := &FileHandle{
+		accessMode:        AM_AO_Remote,
+		inode:             file.Inode,
+		size:              0,
+		url:               nil,
+		Id:                newFileId,
+		Tgid:              tgid,
+		lastPartId:        0,
+		nextWriteOffset:   0,
+		writeBuffer:       nil,
+		writeBufferOffset: 0,
+		mutex:             &sync.Mutex{},
+	}
+	fsys.log("Created new file handle for writing: %s, %d", fh.Id, fh.inode)
+	return fh, nil
 }
 
 // Writes to files.
@@ -1489,11 +1646,11 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 		return fuse.EINVAL
 	}
 	fsys.mutex.Unlock()
-	if !ok {
-		// invalid file handle. It doesn't exist in the table
-		return fuse.EINVAL
-	}
-	// Possible case of file being flushed by one fd, but another open file descriptor still attempting to write
+
+	// it is possible that the file handle is
+	// - not initialized for writing
+	// - shared between multiple processes and the parent one changed the access mode when flushing the file
+	// so this file handle is not writable any longer
 	if fh.accessMode != AM_AO_Remote {
 		return syscall.EPERM
 	}
@@ -1595,7 +1752,7 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 		return nil
 	}
 	if fh.accessMode != AM_AO_Remote {
-		// This isn't a writeable file
+		// This isn't a writeable file, either an read-only one or already been flushed
 		if fsys.ops.options.VerboseLevel > 1 {
 			fsys.log("Ignoring flush of inode %d, file is not writeable", op.Inode)
 		}
@@ -1667,7 +1824,15 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 
 	// Update the file attributes in the database (size, mtime)
 	mtime := time.Now()
-	var mode os.FileMode = fileReadOnlyMode
+
+	// If AllowOverwrite is true, we can keep the file's current mode
+	// otherwise, flushing a file will make it read-only.
+	var mode os.FileMode
+	if fsys.options.AllowOverwrite {
+		mode = file.Mode
+	} else {
+		mode = fileReadOnlyMode
+	}
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
 	oph = fsys.opOpenNoHttpClient()
@@ -1677,8 +1842,8 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 		fsys.log("database error in updating attributes for FlushFile %s", err.Error())
 		return fuse.EIO
 	}
-	// update to remote read-only
-	if err := fsys.mdb.UpdateClosedFileMetadata(ctx, oph, fh.inode); err != nil {
+	// marked the file as closed to make it accessible
+	if err := fsys.mdb.UpdateInodeFileState(ctx, oph, fh.inode, "closed", false); err != nil {
 		fsys.log("database error in updating attributes for closed FlushFile %s", err.Error())
 		return fuse.EIO
 	}
@@ -1742,19 +1907,27 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 			}
 			// Update the file attributes in the database (size, mtime)
 			mtime := time.Now()
-			var mode os.FileMode = fileReadOnlyMode
+
+			// If AllowOverwrite is true, we can keep using file's current mode
+			// otherwise, change the mode to read-only.
+			var mode os.FileMode
+			if fsys.options.AllowOverwrite {
+				mode = file.Mode
+			} else {
+				mode = fileReadOnlyMode
+			}
 			fsys.mutex.Lock()
 			defer fsys.mutex.Unlock()
 			oph = fsys.opOpenNoHttpClient()
 			defer fsys.opClose(oph)
 
 			if err := fsys.mdb.UpdateFileAttrs(ctx, oph, fh.inode, fh.size, mtime, &mode); err != nil {
-				fsys.log("database error in updating attributes for FlushFile %s", err.Error())
+				fsys.log("database error in updating attributes for ReleaseFile %s", err.Error())
 				return fuse.EIO
 			}
-			// update to remote read-only
-			if err := fsys.mdb.UpdateClosedFileMetadata(ctx, oph, fh.inode); err != nil {
-				fsys.log("database error in updating attributes for closed FlushFile %s", err.Error())
+			// marked the file as closed to make it accessible
+			if err := fsys.mdb.UpdateInodeFileState(ctx, oph, fh.inode, "closed", false); err != nil {
+				fsys.log("database error in updating attributes for closed ReleaseFile %s", err.Error())
 				return fuse.EIO
 			}
 

@@ -55,7 +55,6 @@ func NewMetadataDb(
 		baseDir2ProjectId: make(map[string]string),
 		inodeCnt:          InodeRoot + 1,
 		options:           options,
-		ops:               NewDxOps(dxEnv, options),
 	}, nil
 }
 
@@ -593,10 +592,7 @@ func (mdb *MetadataDb) lookupDirByName(oph *OpHandle, dirname string) (string, s
 }
 
 // We wrote a new version of this file, creating a new file-id.
-func (mdb *MetadataDb) UpdateInodeFileId(inode int64, fileId string) error {
-	oph := mdb.opOpen()
-	defer mdb.opClose(oph)
-
+func (mdb *MetadataDb) UpdateInodeFileId(ctx context.Context, oph *OpHandle, inode int64, fileId string) error {
 	sqlStmt := fmt.Sprintf(`
  		        UPDATE data_objects
                         SET id = '%s'
@@ -700,7 +696,6 @@ func (mdb *MetadataDb) directoryReadAllEntries(
 // several use cases:
 //  1. Create a singleton file from the manifest
 //  2. Create a new file, and upload it later to the platform
-//     (the file-id will be the empty string "")
 //  3. Discover a file in a directory, which may actually be a link to another file.
 func (mdb *MetadataDb) createDataObject(
 	oph *OpHandle,
@@ -891,6 +886,13 @@ func (mdb *MetadataDb) populateDir(
 		mdb.log("populateDir(%s)  data-objects=%v  subdirs=%v", dirPath, objNames, subdirs)
 	}
 
+	var fileMode os.FileMode
+	if mdb.options.AllowOverwrite {
+		fileMode = fileReadWriteMode
+	} else {
+		fileMode = fileReadOnlyMode
+	}
+
 	// Create a database entry for each file
 	if mdb.options.VerboseLevel > 1 {
 		mdb.log("inserting files")
@@ -913,7 +915,7 @@ func (mdb *MetadataDb) populateDir(
 			o.MtimeSeconds,
 			o.Tags,
 			o.Properties,
-			fileReadOnlyMode,
+			fileMode,
 			dirPath,
 			o.Name)
 		if err != nil {
@@ -1129,6 +1131,61 @@ func (mdb *MetadataDb) LookupInDir(ctx context.Context, oph *OpHandle, dir *Dir,
 	}
 }
 
+func (mdb *MetadataDb) GetFullInfoByInode(ctx context.Context, oph *OpHandle, inode int64) (File, Dir, error) {
+	// First, get the namespace entry to find the parent
+	sqlStmt := fmt.Sprintf(`
+        SELECT parent, name, obj_type
+        FROM namespace
+        WHERE inode = '%d';`, inode)
+
+	rows, err := oph.txn.Query(sqlStmt)
+	if err != nil {
+		return File{}, Dir{}, err
+	}
+	defer rows.Close()
+
+	var parent string
+	var name string
+	var obj_type int
+	numRows := 0
+	for rows.Next() {
+		rows.Scan(&parent, &name, &obj_type)
+		numRows++
+	}
+	rows.Close()
+	if numRows == 0 {
+		return File{}, Dir{}, err
+	}
+	if numRows > 1 {
+		log.Panicf("More than one node with inode=%d", inode)
+		return File{}, Dir{}, err
+	}
+
+	switch obj_type {
+	case nsDirType:
+		return File{}, Dir{}, err
+	case nsDataObjType:
+		// This is important for a file with multiple hard links. The
+		// parent directory determines which project the file belongs to.
+		file, _, err := mdb.lookupDataObjectByInode(oph, name, inode)
+		projId, projFolder, dirErr := mdb.lookupDirByName(oph, parent)
+		if dirErr != nil {
+			return file, Dir{}, dirErr
+		}
+		parentDir := Dir{
+			Parent:     filepath.Dir(parent),
+			Dname:      filepath.Base(parent),
+			FullPath:   parent,
+			ProjId:     projId,
+			ProjFolder: projFolder,
+		}
+		return file, parentDir, err
+	default:
+		log.Panicf("Invalid type %d in namespace table", obj_type)
+		return File{}, Dir{}, err
+	}
+}
+
 // Build a toplevel directory for each project.
 func (mdb *MetadataDb) PopulateRoot(ctx context.Context, oph *OpHandle, manifest Manifest) error {
 	mdb.log("Populating root directory")
@@ -1164,6 +1221,12 @@ func (mdb *MetadataDb) PopulateRoot(ctx context.Context, oph *OpHandle, manifest
 	}
 
 	// create individual files
+	var fileMode os.FileMode
+	if mdb.options.AllowOverwrite {
+		fileMode = fileReadWriteMode
+	} else {
+		fileMode = fileReadOnlyMode
+	}
 	mdb.log("individual manifest files (num=%d)", len(manifest.Files))
 	for _, fl := range manifest.Files {
 		mdb.log("fileDesc=%v", fl)
@@ -1173,7 +1236,7 @@ func (mdb *MetadataDb) PopulateRoot(ctx context.Context, oph *OpHandle, manifest
 			false,
 			false,
 			fl.ProjId,
-			"closed",
+			fl.State,
 			fl.ArchivalState,
 			fl.FileId,
 			fl.Size,
@@ -1181,7 +1244,7 @@ func (mdb *MetadataDb) PopulateRoot(ctx context.Context, oph *OpHandle, manifest
 			fl.MtimeSeconds,
 			nil,
 			nil,
-			fileReadOnlyMode,
+			fileMode,
 			fl.Parent,
 			fl.Fname)
 		if err != nil {
@@ -1221,22 +1284,12 @@ func (mdb *MetadataDb) CreateFile(
 	oph *OpHandle,
 	dir *Dir,
 	fname string,
-	mode os.FileMode) (File, error) {
+	mode os.FileMode, fileId string) (File, error) {
 	if mdb.options.Verbose {
 		mdb.log("CreateFile %s/%s projpath=%s%s",
 			dir.FullPath, fname, dir.ProjId, dir.ProjFolder)
 	}
 
-	// Create remote file
-	fileId, err := mdb.ops.DxFileNew(
-		context.TODO(), oph.httpClient, NewNonce().String(),
-		dir.ProjId,
-		fname,
-		dir.ProjFolder)
-	if err != nil {
-		mdb.log("CreateFile error creating data object")
-		return File{}, err
-	}
 	// Create local metadata for file
 	// 1. live
 	// 2. open
@@ -1268,19 +1321,12 @@ func (mdb *MetadataDb) CreateFile(
 		dir.FullPath, fname, dir.ProjId, fileId)
 
 	// 3. return a File structure
-	return File{
-		Kind:          FK_Regular,
-		Id:            fileId,
-		ProjId:        dir.ProjId,
-		ArchivalState: "live",
-		Name:          fname,
-		Size:          0,
-		Inode:         inode,
-		Ctime:         SecondsToTime(nowSeconds),
-		Mtime:         SecondsToTime(nowSeconds),
-		Mode:          mode,
-		dirtyData:     true,
-	}, nil
+	file, _, err := mdb.lookupDataObjectByInode(oph, fname, inode)
+	if err != nil {
+		mdb.log("CreateFile error looking up data object by inode")
+		return File{}, err
+	}
+	return file, nil
 }
 
 // TODO: take into account the case of ForgetInode, and files that are open, but unlinked.
@@ -1328,16 +1374,16 @@ func (mdb *MetadataDb) UpdateFileAttrs(
 		}
 		sqlStmt = fmt.Sprintf(`
  		        UPDATE data_objects
-                        SET size = '%d', mtime='%d', dirty_data='1'
+                        SET size = '%d', mtime='%d'
 			WHERE inode = '%d';`,
 			fileSize, modTimeSec, inode)
 	} else {
 		if mdb.options.Verbose {
-			mdb.log("Update inode=%d size=%d mode=%d", inode, fileSize, mode)
+			mdb.log("Update inode=%d size=%d mode=%s", inode, fileSize, (*mode).String())
 		}
 		sqlStmt = fmt.Sprintf(`
  		        UPDATE data_objects
-                        SET size = '%d', mtime='%d', mode='%d', dirty_data='1'
+                        SET size = '%d', mtime='%d', mode='%d'
 			WHERE inode = '%d';`,
 			fileSize, modTimeSec, int(*mode), inode)
 	}
@@ -1350,20 +1396,20 @@ func (mdb *MetadataDb) UpdateFileAttrs(
 	return nil
 }
 
-func (mdb *MetadataDb) UpdateClosedFileMetadata(
+func (mdb *MetadataDb) UpdateInodeFileState(
 	ctx context.Context,
 	oph *OpHandle,
-	inode int64) error {
+	inode int64, state string, dirty bool) error {
 
 	sqlStmt := ""
 	// don't update the mode
 	if mdb.options.Verbose {
-		mdb.log("Update inode=%d state=closed", inode)
+		mdb.log("Update inode=%d state=%s", inode, state)
 	}
 	sqlStmt = fmt.Sprintf(`
  		        UPDATE data_objects
-                        SET state = 'closed', dirty_data='0'
-			WHERE inode = '%d';`, inode)
+                        SET state = '%s', dirty_data='%d'
+			WHERE inode = '%d';`, state, boolToInt(dirty), inode)
 
 	if _, err := oph.txn.Exec(sqlStmt); err != nil {
 		mdb.log(err.Error())
