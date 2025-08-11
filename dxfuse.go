@@ -342,7 +342,7 @@ func (fsys *Filesys) dxErrorToFilesystemError(dxErr dxda.DxError) error {
 		return syscall.EPERM
 	default:
 		fsys.log("unexpected dnanexus error type (%s), returning EIO which will unmount the filesystem",
-			dxErr.EType)
+			dxErr.Message)
 		return fuse.EIO
 	}
 }
