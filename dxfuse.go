@@ -444,6 +444,44 @@ func (fsys *Filesys) GetInodeAttributes(ctx context.Context, op *fuseops.GetInod
 
 	return nil
 }
+func (fsys *Filesys) createNewFileForExistingInode(ctx context.Context, oph *OpHandle, inode int64) (string, error) {
+	// get the file information needed to create a new file
+	file, parentDir, err := fsys.mdb.GetFullInfoByInode(ctx, oph, inode)
+	if err != nil {
+		return "", err
+	}
+	if file.State != "closed" {
+		fsys.log("File (%s,%s) is not closed but it will be removed to be overwritten",
+			file.Name, file.Id)
+		return "", syscall.EACCES
+	}
+
+	oldFileId := []string{file.Id}
+	fsys.log("DxRemoveObjects: fileid=%s, parentDir=%s", file.Id, parentDir.FullPath)
+	if err := fsys.ops.DxRemoveObjects(ctx, oph.httpClient, file.ProjId, oldFileId); err != nil {
+		fsys.log("Error in removing %s:%s on dnanexus: %s",
+			file.ProjId, file.Id, err.Error())
+		return "", err
+	}
+	fsys.log("Removed %s, %s", file.ProjId, file.Name)
+
+	fsys.log("DxNewFile: parentDir=%s, fileName=%s, fullPath=%s",
+		parentDir.FullPath, file.Name, parentDir.FullPath)
+
+	newFileId, err := fsys.ops.DxFileNew(
+		context.TODO(), oph.httpClient, NewNonce().String(),
+		parentDir.ProjId,
+		file.Name,
+		parentDir.ProjFolder)
+	if err != nil {
+		fsys.log("Error in creating new file %s:%s on dnanexus: %s",
+			file.ProjId, file.Name, err.Error())
+		oph.RecordError(err)
+		return "", err
+	}
+	fsys.log("DxNewFile: newFileId=%s", newFileId)
+	return newFileId, nil
+}
 
 // if the file is writable, we can modify some of the attributes.
 // otherwise, this is a permission error.
@@ -1521,36 +1559,16 @@ func (fsys *Filesys) ReadFile(ctx context.Context, op *fuseops.ReadFileOp) error
 	}
 }
 
-func (fsys *Filesys) prepareFileHandleForWrite(ctx context.Context, oph *OpHandle, op *fuseops.OpenFileOp) (*FileHandle, error) {
-	file, parentDir, err := fsys.mdb.GetFullInfoByInode(ctx, oph, int64(op.Inode))
-	if err != nil {
-		return nil, err
-	}
-	if file.dirtyData {
-		fsys.log("File (%s,%s) is dirty, it cannot be accessed",
-			file.Name, file.Id)
-		return nil, syscall.EACCES
-	}
-	objectIds := []string{file.Id}
-	if err := fsys.ops.DxRemoveObjects(ctx, oph.httpClient, file.ProjId, objectIds); err != nil {
-		fsys.log("Error in removing %s:%s on dnanexus: %s",
-			file.ProjId, file.Id, err.Error())
-		return nil, err
-	}
-	fsys.log("Removed %s, %s", file.ProjId, file.Name)
-
-	newFileId, err := fsys.ops.DxFileNew(
-		context.TODO(), oph.httpClient, NewNonce().String(),
-		parentDir.ProjId,
-		file.Name,
-		parentDir.ProjFolder)
-	if err != nil {
-		return nil, err
-	}
-
+func (fsys *Filesys) prepareFileHandleForOverwrite(ctx context.Context, oph *OpHandle, op *fuseops.OpenFileOp, file File) (*FileHandle, error) {
 	// Set up attributes after replacing the file
+	newFileId, err := fsys.createNewFileForExistingInode(ctx, oph, int64(op.Inode))
+	if err != nil {
+		return nil, err
+	}
+	fsys.mdb.UpdateInodeFileId(ctx, oph, file.Inode, newFileId)
 	fsys.mdb.UpdateFileAttrs(ctx, oph, file.Inode, 0, time.Now(), &file.Mode)
-	fsys.mdb.UpdateOverwrittenFileMetadata(ctx, oph, file.Inode, newFileId)
+	fsys.mdb.UpdateInodeFileState(ctx, oph, file.Inode, "open", true)
+
 	tgid, _ := GetTgid(op.OpContext.Pid)
 
 	fh := &FileHandle{
@@ -1566,7 +1584,7 @@ func (fsys *Filesys) prepareFileHandleForWrite(ctx context.Context, oph *OpHandl
 		writeBufferOffset: 0,
 		mutex:             &sync.Mutex{},
 	}
-
+	fsys.log("Created new file handle for writing: %s, %s", fh.Id, fh.inode)
 	return fh, nil
 }
 
