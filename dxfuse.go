@@ -1780,11 +1780,11 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	// Update the file attributes in the database (size, mtime)
 	mtime := time.Now()
 
-	// If AllowOverwrite is true, we can keep using read-write mode
-	// otherwise, flushing a file (which must be a newly created one) will make it read-only.
+	// If AllowOverwrite is true, we can keep the file's current mode
+	// otherwise, flushing a file will make it read-only.
 	var mode os.FileMode
 	if fsys.options.AllowOverwrite {
-		mode = fileReadWriteMode
+		mode = file.Mode
 	} else {
 		mode = fileReadOnlyMode
 	}
@@ -1863,11 +1863,11 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 			// Update the file attributes in the database (size, mtime)
 			mtime := time.Now()
 
-			// If AllowOverwrite is true, we can keep using read-write mode
+			// If AllowOverwrite is true, we can keep using file's current mode
 			// otherwise, change the mode to read-only.
 			var mode os.FileMode
 			if fsys.options.AllowOverwrite {
-				mode = fileReadWriteMode
+				mode = file.Mode
 			} else {
 				mode = fileReadOnlyMode
 			}
