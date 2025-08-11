@@ -592,10 +592,7 @@ func (mdb *MetadataDb) lookupDirByName(oph *OpHandle, dirname string) (string, s
 }
 
 // We wrote a new version of this file, creating a new file-id.
-func (mdb *MetadataDb) UpdateInodeFileId(inode int64, fileId string) error {
-	oph := mdb.opOpen()
-	defer mdb.opClose(oph)
-
+func (mdb *MetadataDb) UpdateInodeFileId(ctx context.Context, oph *OpHandle, inode int64, fileId string) error {
 	sqlStmt := fmt.Sprintf(`
  		        UPDATE data_objects
                         SET id = '%s'
@@ -1377,16 +1374,16 @@ func (mdb *MetadataDb) UpdateFileAttrs(
 		}
 		sqlStmt = fmt.Sprintf(`
  		        UPDATE data_objects
-                        SET size = '%d', mtime='%d', dirty_data='1'
+                        SET size = '%d', mtime='%d'
 			WHERE inode = '%d';`,
 			fileSize, modTimeSec, inode)
 	} else {
 		if mdb.options.Verbose {
-			mdb.log("Update inode=%d size=%d mode=%s", inode, fileSize, mode.String())
+			mdb.log("Update inode=%d size=%d mode=%s", inode, fileSize, (*mode).String())
 		}
 		sqlStmt = fmt.Sprintf(`
  		        UPDATE data_objects
-                        SET size = '%d', mtime='%d', mode='%d', dirty_data='1'
+                        SET size = '%d', mtime='%d', mode='%d'
 			WHERE inode = '%d';`,
 			fileSize, modTimeSec, int(*mode), inode)
 	}
@@ -1399,44 +1396,20 @@ func (mdb *MetadataDb) UpdateFileAttrs(
 	return nil
 }
 
-func (mdb *MetadataDb) UpdateClosedFileMetadata(
+func (mdb *MetadataDb) UpdateInodeFileState(
 	ctx context.Context,
 	oph *OpHandle,
-	inode int64) error {
+	inode int64, state string, dirty bool) error {
 
 	sqlStmt := ""
 	// don't update the mode
 	if mdb.options.Verbose {
-		mdb.log("Update inode=%d state=closed", inode)
+		mdb.log("Update inode=%d state=%s", inode, state)
 	}
 	sqlStmt = fmt.Sprintf(`
  		        UPDATE data_objects
-                        SET state = 'closed', dirty_data='0'
-			WHERE inode = '%d';`, inode)
-
-	if _, err := oph.txn.Exec(sqlStmt); err != nil {
-		mdb.log(err.Error())
-		mdb.log("UpdateFile error executing transaction")
-		return oph.RecordError(err)
-	}
-	return nil
-}
-
-func (mdb *MetadataDb) UpdateOverwrittenFileMetadata(
-	ctx context.Context,
-	oph *OpHandle,
-	inode int64,
-	fileId string) error {
-
-	sqlStmt := ""
-	// don't update the mode
-	if mdb.options.Verbose {
-		mdb.log("Update inode=%d state=open", inode)
-	}
-	sqlStmt = fmt.Sprintf(`
- 		        UPDATE data_objects
-                        SET state = 'open', dirty_data='1', id = '%s'
-			WHERE inode = '%d';`, fileId, inode)
+                        SET state = '%s', dirty_data='%d'
+			WHERE inode = '%d';`, state, boolToInt(dirty), inode)
 
 	if _, err := oph.txn.Exec(sqlStmt); err != nil {
 		mdb.log(err.Error())

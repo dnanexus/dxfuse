@@ -1779,8 +1779,8 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 		fsys.log("database error in updating attributes for FlushFile %s", err.Error())
 		return fuse.EIO
 	}
-	// update to remote read-only
-	if err := fsys.mdb.UpdateClosedFileMetadata(ctx, oph, fh.inode); err != nil {
+	// marked the file as closed to make it accessible
+	if err := fsys.mdb.UpdateInodeFileState(ctx, oph, fh.inode, "closed", false); err != nil {
 		fsys.log("database error in updating attributes for closed FlushFile %s", err.Error())
 		return fuse.EIO
 	}
@@ -1862,8 +1862,8 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 				fsys.log("database error in updating attributes for ReleaseFile %s", err.Error())
 				return fuse.EIO
 			}
-			// update to remote read-only
-			if err := fsys.mdb.UpdateClosedFileMetadata(ctx, oph, fh.inode); err != nil {
+			// marked the file as closed to make it accessible
+			if err := fsys.mdb.UpdateInodeFileState(ctx, oph, fh.inode, "closed", false); err != nil {
 				fsys.log("database error in updating attributes for closed ReleaseFile %s", err.Error())
 				return fuse.EIO
 			}
