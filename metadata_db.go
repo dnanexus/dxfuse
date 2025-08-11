@@ -1324,19 +1324,12 @@ func (mdb *MetadataDb) CreateFile(
 		dir.FullPath, fname, dir.ProjId, fileId)
 
 	// 3. return a File structure
-	return File{
-		Kind:          FK_Regular,
-		Id:            fileId,
-		ProjId:        dir.ProjId,
-		ArchivalState: "live",
-		Name:          fname,
-		Size:          0,
-		Inode:         inode,
-		Ctime:         SecondsToTime(nowSeconds),
-		Mtime:         SecondsToTime(nowSeconds),
-		Mode:          mode,
-		dirtyData:     true,
-	}, nil
+	file, _, err := mdb.lookupDataObjectByInode(oph, fname, inode)
+	if err != nil {
+		mdb.log("CreateFile error looking up data object by inode")
+		return File{}, err
+	}
+	return file, nil
 }
 
 // TODO: take into account the case of ForgetInode, and files that are open, but unlinked.
