@@ -777,7 +777,20 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 
 	// we now know that the parent directory exists, and the file does not.
 	// Create a remote file for appending data and then update the metadata db
-	file, err := fsys.mdb.CreateFile(ctx, oph, &parentDir, op.Name, op.Mode)
+
+	// Create remote file
+	fileId, err := fsys.ops.DxFileNew(
+		context.TODO(), oph.httpClient, NewNonce().String(),
+		parentDir.ProjId,
+		op.Name,
+		parentDir.ProjFolder)
+	if err != nil {
+		fsys.log("CreateFile error ")
+		return err
+	}
+
+	// Create a new file data object in the metadata database.
+	file, err := fsys.mdb.CreateFile(ctx, oph, &parentDir, op.Name, op.Mode, fileId)
 	if err != nil {
 		return err
 	}

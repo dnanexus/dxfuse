@@ -55,7 +55,6 @@ func NewMetadataDb(
 		baseDir2ProjectId: make(map[string]string),
 		inodeCnt:          InodeRoot + 1,
 		options:           options,
-		ops:               NewDxOps(dxEnv, options),
 	}, nil
 }
 
@@ -1288,22 +1287,12 @@ func (mdb *MetadataDb) CreateFile(
 	oph *OpHandle,
 	dir *Dir,
 	fname string,
-	mode os.FileMode) (File, error) {
+	mode os.FileMode, fileId string) (File, error) {
 	if mdb.options.Verbose {
 		mdb.log("CreateFile %s/%s projpath=%s%s",
 			dir.FullPath, fname, dir.ProjId, dir.ProjFolder)
 	}
 
-	// Create remote file
-	fileId, err := mdb.ops.DxFileNew(
-		context.TODO(), oph.httpClient, NewNonce().String(),
-		dir.ProjId,
-		fname,
-		dir.ProjFolder)
-	if err != nil {
-		mdb.log("CreateFile error creating data object")
-		return File{}, err
-	}
 	// Create local metadata for file
 	// 1. live
 	// 2. open
