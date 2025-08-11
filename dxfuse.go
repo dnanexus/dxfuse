@@ -505,6 +505,19 @@ func (fsys *Filesys) SetInodeAttributes(ctx context.Context, op *fuseops.SetInod
 		fsys.log("SetInodeAttributes(inode=%d, %v)", int64(op.Inode), node)
 	}
 
+	// mtime could be set during `touch` so we allow it if not read-only
+	// but changing mode and size could lead to potential file overwrite so we only allow it
+	// if AllowOverwrite is set.
+	var perm = PERM_VIEW
+	if op.Mode != nil && op.Size != nil {
+		if !fsys.options.AllowOverwrite {
+			fsys.log("SetInodeAttributes: cannot change mode and size if not in allow overwrite mode")
+			return syscall.EPERM
+		} else {
+			perm = PERM_CONTRIBUTE
+		}
+	}
+
 	var file File
 	switch node := node.(type) {
 	case File:
@@ -514,19 +527,49 @@ func (fsys *Filesys) SetInodeAttributes(ctx context.Context, op *fuseops.SetInod
 		return syscall.EPERM
 	}
 
-	if !fsys.checkProjectPermissions(file.ProjId, PERM_VIEW) {
-		return syscall.EPERM
-	}
-
-	// we know it is a file.
-	// check if this is a read-only file.
-	attrs := file.GetAttrs()
-	if attrs.Mode == fileReadOnlyMode {
+	if !fsys.checkProjectPermissions(file.ProjId, perm) {
 		return syscall.EPERM
 	}
 
 	// update the file
+	attrs := file.GetAttrs()
 	if op.Size != nil {
+		if *op.Size > 0 {
+			fsys.log("SetInodeAttributes: cannot change size to %d, only to 0", *op.Size)
+			return syscall.ENOSYS
+		}
+		// the file size is set to 0, so we will remove the old remote file and create a new one
+		fsys.log("SetInodeAttributes: setting file size to 0, removing the remote file")
+
+		// replace the file associated with the inode with a new empty file
+		newFileId, err := fsys.createNewFileForExistingInode(ctx, oph, file.Inode)
+		if err != nil {
+			return err
+		}
+
+		// update the inode with the new fileId
+		fsys.mdb.UpdateInodeFileId(ctx, oph, file.Inode, newFileId)
+
+		// since we are just changing the inode attributes, the new file needs to be closed
+		httpClient := <-fsys.httpClientPool
+		err = fsys.ops.DxFileUploadPart(ctx, httpClient, newFileId, 1, make([]byte, 0))
+		if err != nil {
+			fsys.log("error uploading empty chunk to file %s", newFileId)
+			return err
+		}
+		err = fsys.ops.DxFileCloseAndWait(context.TODO(), httpClient, file.ProjId, newFileId)
+		fsys.httpClientPool <- httpClient
+		if err != nil {
+			return fsys.translateError(err)
+		}
+
+		// marked the file as closed to make it accessible
+		err = fsys.mdb.UpdateInodeFileState(ctx, oph, file.Inode, "closed", false)
+		if err != nil {
+			fsys.log("database error in updating attributes for closed SetInodeAttributes %s", err.Error())
+			return fuse.EIO
+		}
+		attrs.Mtime = time.Now()
 		attrs.Size = *op.Size
 	}
 	if op.Mode != nil {
@@ -535,10 +578,12 @@ func (fsys *Filesys) SetInodeAttributes(ctx context.Context, op *fuseops.SetInod
 	if op.Mtime != nil {
 		attrs.Mtime = *op.Mtime
 	}
+
+	// update the other attributes
 	// we don't handle atime
 	err = fsys.mdb.UpdateFileAttrs(ctx, oph, file.Inode, int64(attrs.Size), attrs.Mtime, &attrs.Mode)
 	if err != nil {
-		fsys.log("database error in OpenFile %s", err.Error())
+		fsys.log("database error in SetInodeAttributes %s", err.Error())
 		return fuse.EIO
 	}
 
