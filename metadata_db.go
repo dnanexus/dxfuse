@@ -1367,26 +1367,21 @@ func (mdb *MetadataDb) UpdateFileAttrs(
 	modTimeSec := modTime.Unix()
 
 	sqlStmt := ""
-	if mode == nil {
-		// don't update the mode
-		if mdb.options.Verbose {
-			mdb.log("Update inode=%d size=%d", inode, fileSize)
-		}
-		sqlStmt = fmt.Sprintf(`
- 		        UPDATE data_objects
-                        SET size = '%d', mtime='%d'
-			WHERE inode = '%d';`,
-			fileSize, modTimeSec, inode)
-	} else {
-		if mdb.options.Verbose {
-			mdb.log("Update inode=%d size=%d mode=%s", inode, fileSize, (*mode).String())
-		}
-		sqlStmt = fmt.Sprintf(`
- 		        UPDATE data_objects
-                        SET size = '%d', mtime='%d', mode='%d'
-			WHERE inode = '%d';`,
-			fileSize, modTimeSec, int(*mode), inode)
+	updateAttrs := ""
+	updateAttrs += fmt.Sprintf("size=%d", fileSize)
+	updateAttrs += fmt.Sprintf(", mtime=%d", modTimeSec)
+	if mode != nil {
+		updateAttrs += fmt.Sprintf(", mode=%s", (*mode).String())
 	}
+
+	if mdb.options.Verbose {
+		mdb.log("Update inode=%d: %s", inode, updateAttrs)
+	}
+	sqlStmt = fmt.Sprintf(`
+			 UPDATE data_objects
+					SET '%s'
+		WHERE inode = '%d';`,
+		updateAttrs, inode)
 
 	if _, err := oph.txn.Exec(sqlStmt); err != nil {
 		mdb.log(err.Error())
