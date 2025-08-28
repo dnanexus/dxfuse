@@ -444,38 +444,33 @@ func (fsys *Filesys) GetInodeAttributes(ctx context.Context, op *fuseops.GetInod
 
 	return nil
 }
-func (fsys *Filesys) createNewFileForExistingInode(ctx context.Context, oph *OpHandle, inode int64) (string, error) {
-	// get the file information needed to create a new file
-	file, parentDir, err := fsys.mdb.GetFullInfoByInode(ctx, oph, inode)
-	if err != nil {
-		return "", err
-	}
-	if file.State != "closed" {
-		fsys.log("File (%s,%s) is not closed but it will be removed to be overwritten",
-			file.Name, file.Id)
-		return "", syscall.EACCES
-	}
 
+func (fsys *Filesys) removeInodeFile(ctx context.Context, oph *OpHandle, file File) error {
 	oldFileId := []string{file.Id}
-	fsys.log("DxRemoveObjects: fileid=%s, parentDir=%s", file.Id, parentDir.FullPath)
+	fsys.log("DxRemoveObjects: fileid=%s, project=%s", file.Id, file.ProjId)
 	if err := fsys.ops.DxRemoveObjects(ctx, oph.httpClient, file.ProjId, oldFileId); err != nil {
 		fsys.log("Error in removing %s:%s on dnanexus: %s",
 			file.ProjId, file.Id, err.Error())
-		return "", err
+		return err
 	}
 	fsys.log("Removed %s, %s", file.ProjId, file.Name)
+	return nil
+}
+
+func (fsys *Filesys) createNewDxFile(ctx context.Context, oph *OpHandle, parentDir Dir, fileName string) (string, error) {
+	// get the file information needed to create a new file
 
 	fsys.log("DxNewFile: parentDir=%s, fileName=%s, fullPath=%s",
-		parentDir.FullPath, file.Name, parentDir.FullPath)
+		parentDir.FullPath, fileName, parentDir.FullPath)
 
 	newFileId, err := fsys.ops.DxFileNew(
 		context.TODO(), oph.httpClient, NewNonce().String(),
 		parentDir.ProjId,
-		file.Name,
+		fileName,
 		parentDir.ProjFolder)
 	if err != nil {
 		fsys.log("Error in creating new file %s:%s on dnanexus: %s",
-			file.ProjId, file.Name, err.Error())
+			parentDir.ProjId, fileName, err.Error())
 		oph.RecordError(err)
 		return "", err
 	}
@@ -485,7 +480,7 @@ func (fsys *Filesys) createNewFileForExistingInode(ctx context.Context, oph *OpH
 
 // if the file is writable, we can modify some of the attributes.
 // otherwise, this is a permission error.
-// invoked by chmod(2) ftruncate(2)
+// invoked by chmod(2) ftruncate(2) etc.
 func (fsys *Filesys) SetInodeAttributes(ctx context.Context, op *fuseops.SetInodeAttributesOp) error {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
@@ -537,40 +532,18 @@ func (fsys *Filesys) SetInodeAttributes(ctx context.Context, op *fuseops.SetInod
 		if *op.Size > 0 {
 			fsys.log("SetInodeAttributes: cannot change size to %d, only to 0", *op.Size)
 			return syscall.ENOSYS
-		}
-		// the file size is set to 0, so we will remove the old remote file and create a new one
-		fsys.log("SetInodeAttributes: setting file size to 0, removing the remote file")
+		} else if *op.Size == 0 && attrs.Size > 0 {
+			// the file size is set to 0, so we will remove the old remote file and create a new one
+			fsys.log("SetInodeAttributes: setting file size to 0, removing the remote file")
 
-		// replace the file associated with the inode with a new empty file
-		newFileId, err := fsys.createNewFileForExistingInode(ctx, oph, file.Inode)
-		if err != nil {
-			return err
+			// replace the file associated with the inode with a new empty file
+			err, ok := replaceFileHandleId(ctx, fsys, file.Inode, op.Handle)
+			if !ok {
+				return err
+			}
+			attrs.Mtime = time.Now()
+			attrs.Size = *op.Size
 		}
-
-		// update the inode with the new fileId
-		fsys.mdb.UpdateInodeFileId(ctx, oph, file.Inode, newFileId)
-
-		// since we are just changing the inode attributes, the new file needs to be closed
-		httpClient := <-fsys.httpClientPool
-		err = fsys.ops.DxFileUploadPart(ctx, httpClient, newFileId, 1, make([]byte, 0))
-		if err != nil {
-			fsys.log("error uploading empty chunk to file %s", newFileId)
-			return err
-		}
-		err = fsys.ops.DxFileCloseAndWait(context.TODO(), httpClient, file.ProjId, newFileId)
-		fsys.httpClientPool <- httpClient
-		if err != nil {
-			return fsys.translateError(err)
-		}
-
-		// marked the file as closed to make it accessible
-		err = fsys.mdb.UpdateInodeFileState(ctx, oph, file.Inode, "closed", false)
-		if err != nil {
-			fsys.log("database error in updating attributes for closed SetInodeAttributes %s", err.Error())
-			return fuse.EIO
-		}
-		attrs.Mtime = time.Now()
-		attrs.Size = *op.Size
 	}
 	if op.Mode != nil {
 		attrs.Mode = *op.Mode
@@ -592,6 +565,52 @@ func (fsys *Filesys) SetInodeAttributes(ctx context.Context, op *fuseops.SetInod
 	op.AttributesExpiration = fsys.calcExpirationTime(attrs)
 
 	return nil
+}
+
+func replaceFileHandleId(ctx context.Context, fsys *Filesys, inode int64, handle *fuseops.HandleID) (error, bool) {
+	oph := fsys.opOpen()
+	defer fsys.opClose(oph)
+
+	file, parentDir, err := fsys.mdb.GetFullInfoByInode(ctx, oph, inode)
+	// get the file information needed to create a new file
+	if file.State == "open" {
+		fsys.log("File (%s,%s) is still open, will not be replaced", file.Name, file.Id)
+		return nil, true
+	}
+	// step 1: remove old file
+	fsys.removeInodeFile(ctx, oph, file)
+	// step 2: create new file
+	newFileId, err := fsys.createNewDxFile(ctx, oph, parentDir, file.Name)
+	if err != nil {
+		return err, false
+	}
+	// step 3: update the inode with the new fileId
+	fsys.mdb.UpdateInodeFileId(ctx, oph, inode, newFileId)
+	fsys.mdb.UpdateInodeFileState(ctx, oph, inode, "open", true)
+
+	// step 4: update file handle
+	fsys.mutex.Lock()
+	defer fsys.mutex.Unlock()
+	fh, ok := fsys.fhTable[*handle]
+	if !ok {
+		return nil, false
+	}
+	newfilehandle := FileHandle{
+		accessMode:        AM_AO_Remote,
+		inode:             inode,
+		size:              0,
+		url:               nil,
+		Id:                newFileId,
+		Tgid:              fh.Tgid,
+		lastPartId:        0,
+		nextWriteOffset:   0,
+		writeBuffer:       nil,
+		writeBufferOffset: 0,
+		mutex:             &sync.Mutex{},
+	}
+	// step 5: update file handle table
+	fsys.fhTable[*handle] = &newfilehandle
+	return nil, true
 }
 
 // make a pass through the open handles, and
@@ -861,18 +880,14 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	// we now know that the parent directory exists, and the file does not.
 	// Create a remote file for appending data and then update the metadata db
 
-	// Create remote file
-	fileId, err := fsys.ops.DxFileNew(
-		context.TODO(), oph.httpClient, NewNonce().String(),
-		parentDir.ProjId,
-		op.Name,
-		parentDir.ProjFolder)
+	// step 1: Create remote file
+	fileId, err := fsys.createNewDxFile(ctx, oph, parentDir, op.Name)
 	if err != nil {
 		fsys.log("CreateFile error ")
 		return err
 	}
 
-	// Create a new file data object in the metadata database.
+	// step 2: Create a new file data object in the metadata database.
 	file, err := fsys.mdb.CreateFile(ctx, oph, &parentDir, op.Name, op.Mode, fileId)
 	if err != nil {
 		return err
@@ -901,6 +916,7 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 		EntryExpiration:      tWindow,
 	}
 
+	// step 3: make new file handle
 	tgid, err := GetTgid(op.OpContext.Pid)
 
 	fh := FileHandle{
@@ -916,6 +932,8 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 		writeBufferOffset: 0,
 		mutex:             &sync.Mutex{},
 	}
+
+	// step 4: insert file handle to table
 	op.Handle = fsys.insertIntoFileHandleTable(&fh)
 	return nil
 }
@@ -1353,40 +1371,45 @@ func (fsys *Filesys) ReleaseDirHandle(ctx context.Context, op *fuseops.ReleaseDi
 
 // ===
 // File handling
-func (fsys *Filesys) getRemoteFileHandleForRead(
+func (fsys *Filesys) openFileHandle(
 	ctx context.Context,
 	oph *OpHandle,
 	op *fuseops.OpenFileOp,
-	f File) (*FileHandle, error) {
+	f File, access int) (*FileHandle, error) {
 
 	tgid, _ := GetTgid(op.OpContext.Pid)
 
-	// A remote (immutable) file.
-	// create a download URL for this file.
-	const secondsInYear int = 60 * 60 * 24 * 365
-	payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
-		f.ProjId, secondsInYear)
-
-	body, err := dxda.DxAPI(ctx, oph.httpClient, NumRetriesDefault, &fsys.dxEnv, fmt.Sprintf("%s/download", f.Id), payload)
-	if err != nil {
-		oph.RecordError(err)
-		return nil, fsys.translateError(err)
-	}
-	var u DxDownloadURL
-	json.Unmarshal(body, &u)
-
 	fh := &FileHandle{
-		accessMode:        AM_RO_Remote,
+		accessMode:        access,
 		inode:             f.Inode,
 		size:              f.Size,
-		url:               &u,
 		Id:                f.Id,
+		url:               nil,
 		Tgid:              tgid,
 		lastPartId:        0,
 		nextWriteOffset:   0,
 		writeBuffer:       nil,
 		writeBufferOffset: 0,
-		mutex:             nil,
+		mutex:             &sync.Mutex{},
+	}
+
+	if access == AM_RO_Remote {
+		// A remote (immutable) file.
+		// create a download URL for this file.
+		const secondsInYear int = 60 * 60 * 24 * 365
+		payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
+			f.ProjId, secondsInYear)
+
+		body, err := dxda.DxAPI(ctx, oph.httpClient, NumRetriesDefault, &fsys.dxEnv, fmt.Sprintf("%s/download", f.Id), payload)
+		if err != nil {
+			oph.RecordError(err)
+			return nil, fsys.translateError(err)
+		}
+		var u DxDownloadURL
+		json.Unmarshal(body, &u)
+		fh.url = &u
+	} else if access == AM_AO_Remote {
+		fh.mutex = &sync.Mutex{}
 	}
 
 	return fh, nil
@@ -1490,23 +1513,19 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 	}
 
 	var fh *FileHandle
-
+	fh, err = fsys.openFileHandle(ctx, oph, op, file, accessMode)
+	if err != nil {
+		return err
+	}
 	if accessMode == AM_RO_Remote {
 		// enable page cache for reads because file contents are immutable
 		// page cache enables shared read-only mmap access
-		fh, err = fsys.getRemoteFileHandleForRead(ctx, oph, op, file)
-		if err != nil {
-			return err
-		}
+
 		op.KeepPageCache = true
 		op.UseDirectIO = false
 		// Create an entry in the prefetch table
 		fsys.pgs.CreateStreamEntry(fh.hid, file, *fh.url)
 	} else {
-		fh, err = fsys.prepareFileHandleForOverwrite(ctx, oph, op, file)
-		if err != nil {
-			return err
-		}
 		// disable page cache for writes, files being appended to are not readable
 		op.KeepPageCache = false
 		op.UseDirectIO = true
@@ -1604,35 +1623,6 @@ func (fsys *Filesys) ReadFile(ctx context.Context, op *fuseops.ReadFileOp) error
 	}
 }
 
-func (fsys *Filesys) prepareFileHandleForOverwrite(ctx context.Context, oph *OpHandle, op *fuseops.OpenFileOp, file File) (*FileHandle, error) {
-	// Set up attributes after replacing the file
-	newFileId, err := fsys.createNewFileForExistingInode(ctx, oph, int64(op.Inode))
-	if err != nil {
-		return nil, err
-	}
-	fsys.mdb.UpdateInodeFileId(ctx, oph, file.Inode, newFileId)
-	fsys.mdb.UpdateFileAttrs(ctx, oph, file.Inode, 0, time.Now(), &file.Mode)
-	fsys.mdb.UpdateInodeFileState(ctx, oph, file.Inode, "open", true)
-
-	tgid, _ := GetTgid(op.OpContext.Pid)
-
-	fh := &FileHandle{
-		accessMode:        AM_AO_Remote,
-		inode:             file.Inode,
-		size:              0,
-		url:               nil,
-		Id:                newFileId,
-		Tgid:              tgid,
-		lastPartId:        0,
-		nextWriteOffset:   0,
-		writeBuffer:       nil,
-		writeBufferOffset: 0,
-		mutex:             &sync.Mutex{},
-	}
-	fsys.log("Created new file handle for writing: %s, %d", fh.Id, fh.inode)
-	return fh, nil
-}
-
 // Writes to files.
 //
 // Note: the file-open operation doesn't state if the file is going to be opened for
@@ -1651,9 +1641,17 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 	// - not initialized for writing
 	// - shared between multiple processes and the parent one changed the access mode when flushing the file
 	// so this file handle is not writable any longer
-	if fh.accessMode != AM_AO_Remote {
+	if fh.accessMode == AM_RO_Remote {
+		fsys.log("WriteFile: the file is not open for writing")
 		return syscall.EPERM
 	}
+	// see if we need to replace the file associated with the inode with a new empty file
+
+	err, ok := replaceFileHandleId(ctx, fsys, fh.inode, &op.Handle)
+	if !ok {
+		return err
+	}
+
 	// One write at a time per fh so that sequential offsets work properly
 	fh.mutex.Lock()
 	defer fh.mutex.Unlock()
