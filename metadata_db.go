@@ -1371,7 +1371,7 @@ func (mdb *MetadataDb) UpdateFileAttrs(
 	updateAttrs += fmt.Sprintf("size=%d", fileSize)
 	updateAttrs += fmt.Sprintf(", mtime=%d", modTimeSec)
 	if mode != nil {
-		updateAttrs += fmt.Sprintf(", mode=%s", (*mode).String())
+		updateAttrs += fmt.Sprintf(", mode=%d", int(*mode))
 	}
 
 	if mdb.options.Verbose {
@@ -1379,7 +1379,7 @@ func (mdb *MetadataDb) UpdateFileAttrs(
 	}
 	sqlStmt = fmt.Sprintf(`
 			 UPDATE data_objects
-					SET '%s'
+					SET %s
 		WHERE inode = '%d';`,
 		updateAttrs, inode)
 
