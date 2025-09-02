@@ -40,5 +40,3 @@ The Filesystem in Userspace [FUSE](https://en.wikipedia.org/wiki/Filesystem_in_U
 ![fuse](./fuse.png)
 
 ​								*Image taken from* [Experiences with FUSE in the Real World](https://www.usenix.org/sites/default/files/conference/protected-files/vault19_slides_pillai.pdf)
-
-Writing a prototype in the [go](https://golang.org/) programming language took approximately a month to write. In terms of performance, it is 25% slower than `dx cat` when streaming 1GiB file.
