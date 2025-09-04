@@ -908,14 +908,13 @@ func (fsys *Filesys) renameDir(
 		check(newName == filepath.Base(oldDir.Dname))
 
 		// move a folder to a new parent
-		objIds := make([]string, 0)
 		folders := make([]string, 1)
 		folders[0] = oldDir.ProjFolder
 
 		err := fsys.ops.DxMove(
 			ctx, oph.httpClient,
 			projId,
-			objIds, folders,
+			nil, folders,
 			newParentDir.ProjFolder)
 		if err != nil {
 			fsys.log("Error in moving directory %s:%s -> %s on dnanexus: %s",
