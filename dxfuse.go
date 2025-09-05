@@ -577,16 +577,18 @@ func replaceFileHandleId(ctx context.Context, fsys *Filesys, inode int64, handle
 		fsys.log("File (%s,%s) is still open, will not be replaced", file.Name, file.Id)
 		return nil, true
 	}
-	// step 1: create new file
+	// step 1: remove old file
+	fsys.removeInodeFile(ctx, oph, file)
+	// step 2: create new file
 	newFileId, err := fsys.createNewDxFile(ctx, oph, parentDir, file.Name)
 	if err != nil {
 		return err, false
 	}
-	// step 2: update the inode with the new fileId
+	// step 3: update the inode with the new fileId
 	fsys.mdb.UpdateInodeFileId(ctx, oph, inode, newFileId)
 	fsys.mdb.UpdateInodeFileState(ctx, oph, inode, "open", true)
 
-	// step 3: update file handle
+	// step 4: update file handle
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
 	fh, ok := fsys.fhTable[*handle]
@@ -606,11 +608,8 @@ func replaceFileHandleId(ctx context.Context, fsys *Filesys, inode int64, handle
 		writeBufferOffset: 0,
 		mutex:             &sync.Mutex{},
 	}
-	// step 4: update file handle table
+	// step 5: update file handle table
 	fsys.fhTable[*handle] = &newfilehandle
-
-	// step 5: remove old file only after we have replace it with a new one
-	_ = fsys.removeInodeFile(ctx, oph, file)
 	return nil, true
 }
 
