@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -70,6 +71,9 @@ type Filesys struct {
 	// description for each mounted project
 	projId2Desc map[string]DxProjectDescription
 
+	// all active inodes
+	fileStateTable map[int64]*FileState
+
 	// all open files
 	fhCounter uint64
 	fhTable   map[fuseops.HandleID]*FileHandle
@@ -95,19 +99,21 @@ const (
 	AM_AO_Remote = 2
 )
 
+type FileState struct {
+	inode  int64
+	fileId string
+	url    *DxDownloadURL
+	size   int64 // this is up-to-date only for remote files
+	// number of open file handles
+	readerCount int64
+	writerCount int64
+}
+
 type FileHandle struct {
 	// a lock allowing multiple readers or a single writer.
 	accessMode int
 	inode      int64
-	size       int64 // this is up-to-date only for remote files
 	hid        fuseops.HandleID
-
-	Id string // To avoid looking up the file-id for each /upload call
-
-	// URL used for downloading file ranges.
-	// Used for read-only files.
-	url *DxDownloadURL
-
 	// For writeable files only
 	// Only flush from original FD
 	Tgid int32
@@ -154,6 +160,7 @@ func NewDxfuse(
 		mutex:          &sync.Mutex{},
 		httpClientPool: httpIoPool,
 		ops:            NewDxOps(dxEnv, options),
+		fileStateTable: make(map[int64]*FileState),
 		fhCounter:      1,
 		fhTable:        make(map[fuseops.HandleID]*FileHandle),
 		dhCounter:      1,
@@ -537,7 +544,8 @@ func (fsys *Filesys) SetInodeAttributes(ctx context.Context, op *fuseops.SetInod
 			fsys.log("SetInodeAttributes: setting file size to 0, removing the remote file")
 
 			// replace the file associated with the inode with a new empty file
-			err, ok := replaceFileHandleId(ctx, fsys, file.Inode, op.Handle)
+			fh := fsys.fhTable[*op.Handle]
+			err, ok := replaceFileForWrite(ctx, fsys, fh.inode)
 			if !ok {
 				return err
 			}
@@ -567,7 +575,7 @@ func (fsys *Filesys) SetInodeAttributes(ctx context.Context, op *fuseops.SetInod
 	return nil
 }
 
-func replaceFileHandleId(ctx context.Context, fsys *Filesys, inode int64, handle *fuseops.HandleID) (error, bool) {
+func replaceFileForWrite(ctx context.Context, fsys *Filesys, inode int64) (error, bool) {
 	oph := fsys.opOpen()
 	defer fsys.opClose(oph)
 
@@ -588,28 +596,10 @@ func replaceFileHandleId(ctx context.Context, fsys *Filesys, inode int64, handle
 	fsys.mdb.UpdateInodeFileId(ctx, oph, inode, newFileId)
 	fsys.mdb.UpdateInodeFileState(ctx, oph, inode, "open", true)
 
-	// step 4: update file handle
-	fsys.mutex.Lock()
-	defer fsys.mutex.Unlock()
-	fh, ok := fsys.fhTable[*handle]
-	if !ok {
-		return nil, false
-	}
-	newfilehandle := FileHandle{
-		accessMode:        AM_AO_Remote,
-		inode:             inode,
-		size:              0,
-		url:               nil,
-		Id:                newFileId,
-		Tgid:              fh.Tgid,
-		lastPartId:        0,
-		nextWriteOffset:   0,
-		writeBuffer:       nil,
-		writeBufferOffset: 0,
-		mutex:             &sync.Mutex{},
-	}
-	// step 5: update file handle table
-	fsys.fhTable[*handle] = &newfilehandle
+	fsys.fileStateTable[inode].fileId = newFileId
+	fsys.fileStateTable[inode].size = 0
+	fsys.fileStateTable[inode].url = nil
+
 	return nil, true
 }
 
@@ -653,6 +643,7 @@ func (fsys *Filesys) ForgetInode(ctx context.Context, op *fuseops.ForgetInodeOp)
 
 	fsys.removeFileHandlesWithInode(int64(op.Inode))
 	fsys.removeDirHandlesWithInode(int64(op.Inode))
+	delete(fsys.fileStateTable, int64(op.Inode))
 
 	return nil
 }
@@ -922,9 +913,6 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 	fh := FileHandle{
 		accessMode:        AM_AO_Remote,
 		inode:             file.Inode,
-		size:              file.Size,
-		url:               nil,
-		Id:                file.Id,
 		Tgid:              tgid,
 		lastPartId:        0,
 		nextWriteOffset:   0,
@@ -935,6 +923,15 @@ func (fsys *Filesys) CreateFile(ctx context.Context, op *fuseops.CreateFileOp) e
 
 	// step 4: insert file handle to table
 	op.Handle = fsys.insertIntoFileHandleTable(&fh)
+
+	fsys.fileStateTable[file.Inode] = &FileState{
+		fileId:      fileId,
+		inode:       file.Inode,
+		size:        0,
+		url:         nil,
+		readerCount: 0,
+		writerCount: 0,
+	}
 	return nil
 }
 
@@ -1212,16 +1209,13 @@ func (fsys *Filesys) Unlink(ctx context.Context, op *fuseops.UnlinkOp) error {
 	}
 
 	// remove the file on the platform
-	objectIds := make([]string, 1)
-	objectIds[0] = fileToRemove.Id
-	if err := fsys.ops.DxRemoveObjects(ctx, oph.httpClient, parentDir.ProjId, objectIds); err != nil {
-		fsys.log("Error in removing %s:%s%s on dnanexus: %s",
-			parentDir.ProjId, parentDir.ProjFolder, op.Name,
-			err.Error())
-		return fsys.translateError(err)
-	}
-	fsys.log("Removed %s, %s:%s%s", op.Name, parentDir.ProjId, parentDir.ProjFolder, op.Name)
+	fsys.removeInodeFile(ctx, oph, fileToRemove)
 
+	// remove any file handles that reference this inode
+	fsys.removeFileHandlesWithInode(fileToRemove.Inode)
+
+	// remove the file state entry
+	delete(fsys.fileStateTable, fileToRemove.Inode)
 	return nil
 }
 
@@ -1375,16 +1369,13 @@ func (fsys *Filesys) openFileHandle(
 	ctx context.Context,
 	oph *OpHandle,
 	op *fuseops.OpenFileOp,
-	f File, access int) (*FileHandle, error) {
+	inode int64, access int) (*FileHandle, error) {
 
 	tgid, _ := GetTgid(op.OpContext.Pid)
 
 	fh := &FileHandle{
 		accessMode:        access,
-		inode:             f.Inode,
-		size:              f.Size,
-		Id:                f.Id,
-		url:               nil,
+		inode:             inode,
 		Tgid:              tgid,
 		lastPartId:        0,
 		nextWriteOffset:   0,
@@ -1392,26 +1383,6 @@ func (fsys *Filesys) openFileHandle(
 		writeBufferOffset: 0,
 		mutex:             &sync.Mutex{},
 	}
-
-	if access == AM_RO_Remote {
-		// A remote (immutable) file.
-		// create a download URL for this file.
-		const secondsInYear int = 60 * 60 * 24 * 365
-		payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
-			f.ProjId, secondsInYear)
-
-		body, err := dxda.DxAPI(ctx, oph.httpClient, NumRetriesDefault, &fsys.dxEnv, fmt.Sprintf("%s/download", f.Id), payload)
-		if err != nil {
-			oph.RecordError(err)
-			return nil, fsys.translateError(err)
-		}
-		var u DxDownloadURL
-		json.Unmarshal(body, &u)
-		fh.url = &u
-	} else if access == AM_AO_Remote {
-		fh.mutex = &sync.Mutex{}
-	}
-
 	return fh, nil
 }
 
@@ -1512,28 +1483,38 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 		return syscall.EACCES
 	}
 
+	if fsys.fileStateTable[file.Inode] == nil {
+		fsys.fileStateTable[file.Inode] = &FileState{
+			writerCount: 0,
+			readerCount: 0,
+			inode:       file.Inode,
+			url:         nil,
+			size:        file.Size,
+		}
+	}
+
 	var fh *FileHandle
-	fh, err = fsys.openFileHandle(ctx, oph, op, file, accessMode)
+	fh, err = fsys.openFileHandle(ctx, oph, op, file.Inode, accessMode)
 	if err != nil {
 		return err
 	}
+
+	// add the file handle to the open-file table, so following operations will use the same file descriptor
+	// created by this OpenFile operation
+	op.Handle = fsys.insertIntoFileHandleTable(fh)
+
 	if accessMode == AM_RO_Remote {
 		// enable page cache for reads because file contents are immutable
 		// page cache enables shared read-only mmap access
 
 		op.KeepPageCache = true
 		op.UseDirectIO = false
-		// Create an entry in the prefetch table
-		fsys.pgs.CreateStreamEntry(fh.hid, file, *fh.url)
 	} else {
 		// disable page cache for writes, files being appended to are not readable
 		op.KeepPageCache = false
 		op.UseDirectIO = true
 	}
 
-	// add the file handle to the open-file table, so following operations will use the same file descriptor
-	// created by this OpenFile operation
-	op.Handle = fsys.insertIntoFileHandleTable(fh)
 	return nil
 }
 
@@ -1541,21 +1522,51 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp, fh *FileHandle) error {
 	// This is a regular file
 	reqSize := int64(len(op.Dst))
-	if fh.size == 0 || reqSize == 0 {
+
+	fileState := fsys.fileStateTable[fh.inode]
+	fsys.log("readRemoteFile: filestate=%+v", fileState)
+
+	// check for special cases
+	if fileState.size == 0 || reqSize == 0 {
 		// The file is empty
 		return nil
 	}
-	if fh.size <= op.Offset {
+	if fileState.size <= op.Offset {
 		// request is beyond the size of the file
 		return nil
 	}
 	endOfs := op.Offset + reqSize - 1
 
 	// make sure we don't go over the file size
-	lastByteInFile := fh.size - 1
+	lastByteInFile := fileState.size - 1
 	endOfs = MinInt64(lastByteInFile, endOfs)
 	reqSize = endOfs - op.Offset + 1
 
+	// A remote (immutable) file.
+	// create a download URL for this file.
+	// get project-id
+	if fileState.url == nil {
+		fsys.mutex.Lock()
+		oph := fsys.opOpen()
+		file, _, _ := fsys.lookupFileByInode(ctx, oph, int64(fh.inode))
+		fsys.opClose(oph)
+		fsys.mutex.Unlock()
+		const secondsInYear int = 60 * 60 * 24 * 365
+		payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
+			file.ProjId, secondsInYear)
+
+		body, err := dxda.DxAPI(ctx, oph.httpClient, NumRetriesDefault, &fsys.dxEnv, fmt.Sprintf("%s/download", file.Id), payload)
+		if err != nil {
+			oph.RecordError(err)
+			return fsys.translateError(err)
+		}
+		var u DxDownloadURL
+		json.Unmarshal(body, &u)
+		fileState.url = &u
+
+		// Create an entry in the prefetch table
+		fsys.pgs.CreateStreamEntry(fh.hid, file, *fileState.url)
+	}
 	// See if the data has already been prefetched.
 	// This call will wait, if a prefetch IO is in progress.
 	len := fsys.pgs.CacheLookup(fh.hid, op.Offset, endOfs, op.Dst)
@@ -1573,7 +1584,7 @@ func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp,
 	headers := make(map[string]string)
 
 	// Copy the immutable headers
-	for key, value := range fh.url.Headers {
+	for key, value := range fileState.url.Headers {
 		headers[key] = value
 	}
 
@@ -1581,7 +1592,7 @@ func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp,
 	headers["Range"] = fmt.Sprintf("bytes=%d-%d", op.Offset, endOfs)
 	if fsys.options.Verbose {
 		fsys.log("network read (inode=%d) ofs=%d len=%d endOfs=%d lastByteInFile=%d",
-			fh.inode, op.Offset, reqSize, endOfs, lastByteInFile)
+			fileState.inode, op.Offset, reqSize, endOfs, lastByteInFile)
 	}
 
 	// Take an http client from the pool. Return it when done.
@@ -1590,7 +1601,7 @@ func (fsys *Filesys) readRemoteFile(ctx context.Context, op *fuseops.ReadFileOp,
 		ctx,
 		httpClient,
 		"GET",
-		fh.url.URL,
+		fileState.url.URL,
 		headers,
 		[]byte("{}"),
 		int(reqSize),
@@ -1609,7 +1620,17 @@ func (fsys *Filesys) ReadFile(ctx context.Context, op *fuseops.ReadFileOp) error
 		fsys.mutex.Unlock()
 		return fuse.EINVAL
 	}
+
+	// if the file is being written, reading is not allowed
+	if atomic.LoadInt64(&fsys.fileStateTable[fh.inode].writerCount) > 0 {
+		fsys.mutex.Unlock()
+		fsys.log("ReadFile: the file is being written, reading is not allowed")
+		return syscall.EPERM
+	}
 	fsys.mutex.Unlock()
+
+	atomic.AddInt64(&fsys.fileStateTable[fh.inode].readerCount, 1)
+	defer atomic.AddInt64(&fsys.fileStateTable[fh.inode].readerCount, -1)
 
 	switch fh.accessMode {
 	case AM_RO_Remote:
@@ -1635,7 +1656,16 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 		fsys.mutex.Unlock()
 		return fuse.EINVAL
 	}
+	fileState := fsys.fileStateTable[fh.inode]
+	if atomic.LoadInt64(&fileState.readerCount) > 0 || atomic.LoadInt64(&fileState.writerCount) > 0 {
+		fsys.mutex.Unlock()
+		fsys.log("WriteFile: the file is being read or written, writing is not allowed")
+		return syscall.EPERM
+	}
 	fsys.mutex.Unlock()
+
+	atomic.AddInt64(&fileState.writerCount, 1)
+	defer atomic.CompareAndSwapInt64(&fileState.writerCount, 1, 0)
 
 	// it is possible that the file handle is
 	// - not initialized for writing
@@ -1646,12 +1676,13 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 		return syscall.EPERM
 	}
 	// see if we need to replace the file associated with the inode with a new empty file
-
-	err, ok := replaceFileHandleId(ctx, fsys, fh.inode, &op.Handle)
+	err, ok := replaceFileForWrite(ctx, fsys, fh.inode)
 	if !ok {
 		return err
 	}
 
+	fsys.log("WriteFile: inode=%d ofs=%d len=%d", fh.inode, op.Offset, len(op.Data))
+	fsys.log("fh: %v", fh)
 	// One write at a time per fh so that sequential offsets work properly
 	fh.mutex.Lock()
 	defer fh.mutex.Unlock()
@@ -1660,6 +1691,7 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 		return fsys.translateError(fh.writeError)
 	}
 
+	fsys.log("start WriteFile: inode=%d ofs=%d len=%d", fh.inode, op.Offset, len(op.Data))
 	if op.Offset != fh.nextWriteOffset {
 		fsys.log("ERROR: Only sequential writes are supported")
 		fsys.log("op.Offset: %d, fh.nextWriteOffset: %d", op.Offset, fh.nextWriteOffset)
@@ -1690,7 +1722,7 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 		fh.writeBuffer = fh.writeBuffer[:sliceUpperBound]
 		// copy data into slice
 		bytesCopied := copy(fh.writeBuffer[fh.writeBufferOffset:sliceUpperBound], bytesToWrite)
-		fh.size += int64(bytesCopied)
+		fileState.size += int64(bytesCopied)
 		// increment next write offset
 		fh.nextWriteOffset += int64(bytesCopied)
 		// increment current buffer slice offset
@@ -1701,7 +1733,7 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 			partId := fh.lastPartId
 			uploadReq := UploadRequest{
 				fh:          fh,
-				fileId:      fh.Id,
+				fileId:      fileState.fileId,
 				writeBuffer: fh.writeBuffer,
 				partId:      partId,
 			}
@@ -1712,7 +1744,7 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 			// Update the file attributes in the database (size, mtime)
 			fsys.mutex.Lock()
 			oph := fsys.opOpenNoHttpClient()
-			if err := fsys.mdb.UpdateFileAttrs(ctx, oph, fh.inode, fh.size, time.Now(), nil); err != nil {
+			if err := fsys.mdb.UpdateFileAttrs(ctx, oph, fileState.inode, fileState.size, time.Now(), nil); err != nil {
 				fsys.log("database error in updating attributes for WriteFile %s", err.Error())
 				fsys.mutex.Unlock()
 				fsys.opClose(oph)
@@ -1730,6 +1762,8 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 		bytesToWrite = bytesToWrite[bytesCopied:]
 
 	}
+
+	fsys.log("end WriteFile: inode=%d ofs=%d len=%d", fh.inode, op.Offset, len(op.Data))
 	return nil
 }
 
@@ -1775,9 +1809,21 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	}
 
 	// Empty files are handled by ReleaseFileHandle
-	if len(fh.writeBuffer) == 0 && fh.size == 0 {
+	fileState := fsys.fileStateTable[fh.inode]
+	if fileState == nil {
+		fsys.log("Ignoring FlushFile: file state is nil")
+		return nil
+	}
+	if fileState.size == 0 {
 		if fsys.ops.options.VerboseLevel > 1 {
 			fsys.log("Ignoring FlushFile: file is empty")
+		}
+		return nil
+	}
+	// Empty files are handled by ReleaseFileHandle
+	if len(fh.writeBuffer) == 0 {
+		if fsys.ops.options.VerboseLevel > 1 {
+			fsys.log("Ignoring FlushFile: write buffer is empty")
 		}
 		return nil
 	}
@@ -1787,7 +1833,7 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	partId := fh.lastPartId
 	uploadReq := UploadRequest{
 		fh:          fh,
-		fileId:      fh.Id,
+		fileId:      fileState.fileId,
 		writeBuffer: fh.writeBuffer,
 		partId:      partId,
 	}
@@ -1803,15 +1849,13 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	}
 
 	// get project-id
-	fsys.mutex.Lock()
 	oph := fsys.opOpenNoHttpClient()
 	file, _, _ := fsys.lookupFileByInode(ctx, oph, int64(op.Inode))
 	fsys.opClose(oph)
-	fsys.mutex.Unlock()
 
 	// close file
 	httpClient := <-fsys.httpClientPool
-	err := fsys.ops.DxFileCloseAndWait(context.TODO(), httpClient, file.ProjId, fh.Id)
+	err := fsys.ops.DxFileCloseAndWait(context.TODO(), httpClient, file.ProjId, fileState.fileId)
 	fsys.httpClientPool <- httpClient
 	if err != nil {
 		return fsys.translateError(err)
@@ -1831,17 +1875,16 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	} else {
 		mode = fileReadOnlyMode
 	}
-	fsys.mutex.Lock()
-	defer fsys.mutex.Unlock()
+
 	oph = fsys.opOpenNoHttpClient()
 	defer fsys.opClose(oph)
 
-	if err := fsys.mdb.UpdateFileAttrs(ctx, oph, fh.inode, fh.size, mtime, &mode); err != nil {
+	if err := fsys.mdb.UpdateFileAttrs(ctx, oph, fileState.inode, fileState.size, mtime, &mode); err != nil {
 		fsys.log("database error in updating attributes for FlushFile %s", err.Error())
 		return fuse.EIO
 	}
 	// marked the file as closed to make it accessible
-	if err := fsys.mdb.UpdateInodeFileState(ctx, oph, fh.inode, "closed", false); err != nil {
+	if err := fsys.mdb.UpdateInodeFileState(ctx, oph, fileState.inode, "closed", false); err != nil {
 		fsys.log("database error in updating attributes for closed FlushFile %s", err.Error())
 		return fuse.EIO
 	}
@@ -1867,6 +1910,8 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 	}
 	// release the file handle itself
 	delete(fsys.fhTable, op.Handle)
+	fileState := fsys.fileStateTable[fh.inode]
+
 	fsys.mutex.Unlock()
 
 	// Clear the state involved with this open file descriptor
@@ -1878,14 +1923,14 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 
 	case AM_AO_Remote:
 		// Special case for empty files which are not uploaded during FlushFile since their size is 0
-		if fh.size == 0 && len(fh.writeBuffer) == 0 && fh.lastPartId == 0 {
+		if fileState.size == 0 && len(fh.writeBuffer) == 0 && fh.lastPartId == 0 {
 			if fsys.ops.options.Verbose {
-				fsys.log("Upload and close empty %s", fh.Id)
+				fsys.log("Upload and close empty %s", fileState.fileId)
 			}
 			fh.lastPartId++
 			partId := fh.lastPartId
 			httpClient := <-fsys.httpClientPool
-			err := fsys.ops.DxFileUploadPart(context.TODO(), httpClient, fh.Id, partId, fh.writeBuffer)
+			err := fsys.ops.DxFileUploadPart(context.TODO(), httpClient, fileState.fileId, partId, fh.writeBuffer)
 			fsys.httpClientPool <- httpClient
 			if err != nil {
 
@@ -1893,12 +1938,12 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 			// get project-id
 			fsys.mutex.Lock()
 			oph := fsys.opOpenNoHttpClient()
-			file, _, _ := fsys.lookupFileByInode(ctx, oph, int64(fh.inode))
+			file, _, _ := fsys.lookupFileByInode(ctx, oph, int64(fileState.inode))
 			fsys.opClose(oph)
 			fsys.mutex.Unlock()
 
 			httpClient = <-fsys.httpClientPool
-			err = fsys.ops.DxFileCloseAndWait(context.TODO(), httpClient, file.ProjId, fh.Id)
+			err = fsys.ops.DxFileCloseAndWait(context.TODO(), httpClient, file.ProjId, fileState.fileId)
 			fsys.httpClientPool <- httpClient
 			if err != nil {
 				return fsys.translateError(err)
@@ -1919,12 +1964,12 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 			oph = fsys.opOpenNoHttpClient()
 			defer fsys.opClose(oph)
 
-			if err := fsys.mdb.UpdateFileAttrs(ctx, oph, fh.inode, fh.size, mtime, &mode); err != nil {
+			if err := fsys.mdb.UpdateFileAttrs(ctx, oph, fileState.inode, fileState.size, mtime, &mode); err != nil {
 				fsys.log("database error in updating attributes for ReleaseFile %s", err.Error())
 				return fuse.EIO
 			}
 			// marked the file as closed to make it accessible
-			if err := fsys.mdb.UpdateInodeFileState(ctx, oph, fh.inode, "closed", false); err != nil {
+			if err := fsys.mdb.UpdateInodeFileState(ctx, oph, fileState.inode, "closed", false); err != nil {
 				fsys.log("database error in updating attributes for closed ReleaseFile %s", err.Error())
 				return fuse.EIO
 			}
