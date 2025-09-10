@@ -1131,7 +1131,7 @@ func (mdb *MetadataDb) LookupInDir(ctx context.Context, oph *OpHandle, dir *Dir,
 	}
 }
 
-func (mdb *MetadataDb) GetFullInfoByInode(ctx context.Context, oph *OpHandle, inode int64) (File, Dir, error) {
+func (mdb *MetadataDb) GetParentDirByInode(ctx context.Context, oph *OpHandle, inode int64) (Dir, error) {
 	// First, get the namespace entry to find the parent
 	sqlStmt := fmt.Sprintf(`
         SELECT parent, name, obj_type
@@ -1140,7 +1140,7 @@ func (mdb *MetadataDb) GetFullInfoByInode(ctx context.Context, oph *OpHandle, in
 
 	rows, err := oph.txn.Query(sqlStmt)
 	if err != nil {
-		return File{}, Dir{}, err
+		return Dir{}, err
 	}
 	defer rows.Close()
 
@@ -1154,23 +1154,18 @@ func (mdb *MetadataDb) GetFullInfoByInode(ctx context.Context, oph *OpHandle, in
 	}
 	rows.Close()
 	if numRows == 0 {
-		return File{}, Dir{}, err
+		return Dir{}, err
 	}
 	if numRows > 1 {
 		log.Panicf("More than one node with inode=%d", inode)
-		return File{}, Dir{}, err
+		return Dir{}, err
 	}
 
 	switch obj_type {
-	case nsDirType:
-		return File{}, Dir{}, err
-	case nsDataObjType:
-		// This is important for a file with multiple hard links. The
-		// parent directory determines which project the file belongs to.
-		file, _, err := mdb.lookupDataObjectByInode(oph, name, inode)
+	case nsDataObjType, nsDirType:
 		projId, projFolder, dirErr := mdb.lookupDirByName(oph, parent)
 		if dirErr != nil {
-			return file, Dir{}, dirErr
+			return Dir{}, dirErr
 		}
 		parentDir := Dir{
 			Parent:     filepath.Dir(parent),
@@ -1179,10 +1174,10 @@ func (mdb *MetadataDb) GetFullInfoByInode(ctx context.Context, oph *OpHandle, in
 			ProjId:     projId,
 			ProjFolder: projFolder,
 		}
-		return file, parentDir, err
+		return parentDir, err
 	default:
 		log.Panicf("Invalid type %d in namespace table", obj_type)
-		return File{}, Dir{}, err
+		return Dir{}, err
 	}
 }
 
