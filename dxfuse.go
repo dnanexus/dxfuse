@@ -199,10 +199,18 @@ func NewDxfuse(
 	}()
 
 	projId2Desc := make(map[string]DxProjectDescription)
+	// Collect all project IDs from both manifest.Directories and manifest.Files
+	allProjects := make(map[string]bool)
 	for _, d := range manifest.Directories {
-		pDesc, err := DxDescribeProject(context.TODO(), httpClient, &fsys.dxEnv, d.ProjId)
+		allProjects[d.ProjId] = true
+	}
+	for _, f := range manifest.Files {
+		allProjects[f.ProjId] = true
+	}
+	for projId := range allProjects {
+		pDesc, err := DxDescribeProject(context.TODO(), httpClient, &fsys.dxEnv, projId)
 		if err != nil {
-			fsys.log("Could not describe project %s, check permissions", d.ProjId)
+			fsys.log("Could not describe project %s, check permissions", projId)
 			return nil, err
 		}
 		projId2Desc[pDesc.Id] = *pDesc
