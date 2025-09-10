@@ -596,19 +596,63 @@ func (fsys *Filesys) removeDirHandlesWithInode(inode int64) {
 	}
 }
 
-// This may be the wrong way to do it. We may need to actually delete the inode at this point,
-// instead of inside RmDir/Unlink.
 func (fsys *Filesys) ForgetInode(ctx context.Context, op *fuseops.ForgetInodeOp) error {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
+	oph := fsys.opOpen()
+	defer fsys.opClose(oph)
 
 	if fsys.options.Verbose {
 		fsys.log("ForgetInode (%d)", op.Inode)
 	}
 
-	fsys.removeFileHandlesWithInode(int64(op.Inode))
-	fsys.removeDirHandlesWithInode(int64(op.Inode))
+	node, ok, err := fsys.mdb.LookupByInode(ctx, oph, int64(op.Inode))
+	if err != nil {
+		fsys.log("database error in ForgetInode %s", err.Error())
+		return fuse.EIO
+	}
+	if !ok {
+		// file doesn't exist
+		return fuse.ENOENT
+	}
 
+	switch node := node.(type) {
+	case Dir:
+		fsys.removeInodeDir(ctx, oph, node)
+		fsys.mdb.RemoveEmptyDir(ctx, oph, node.Inode)
+		fsys.removeDirHandlesWithInode(node.Inode)
+	case File:
+		fsys.removeInodeFile(ctx, oph, node)
+		fsys.mdb.RemoveFile(ctx, oph, node.Inode)
+		fsys.removeFileHandlesWithInode(node.Inode)
+	default:
+		log.Panicf("bad type for node %v", node)
+	}
+	return nil
+}
+
+func (fsys *Filesys) removeInodeDir(ctx context.Context, oph *OpHandle, dir Dir) error {
+	// check that the directory is empty
+	dentries, err := fsys.readEntireDir(ctx, oph, dir)
+	if err != nil {
+		return err
+	}
+	if len(dentries) > 0 {
+		return fuse.ENOTEMPTY
+	}
+	if !dir.faux {
+		// The directory exists and is empty, we can remove it.
+		err = fsys.ops.DxFolderRemove(ctx, oph.httpClient, dir.ProjId, dir.FullPath)
+		if err != nil {
+			fsys.log("Error in removing directory (%s:%s) on dnanexus: %s",
+				dir.ProjId, dir.FullPath, err.Error())
+			oph.RecordError(err)
+			return fsys.translateError(err)
+		}
+	} else {
+		// A faux directory doesn't have a matching project folder.
+		// It exists only on the local machine.
+	}
 	return nil
 }
 
@@ -743,31 +787,8 @@ func (fsys *Filesys) RmDir(ctx context.Context, op *fuseops.RmDirOp) error {
 		childDir = childNode
 	}
 
-	// check that the directory is empty
-	dentries, err := fsys.readEntireDir(ctx, oph, childDir)
-	if err != nil {
-		return err
-	}
-	if len(dentries) > 0 {
-		return fuse.ENOTEMPTY
-	}
-	if !childDir.faux {
-		// The directory exists and is empty, we can remove it.
-		folderFullPath := filepath.Join(parentDir.ProjFolder, op.Name)
-		err = fsys.ops.DxFolderRemove(ctx, oph.httpClient, parentDir.ProjId, folderFullPath)
-		if err != nil {
-			fsys.log("Error in removing directory (%s:%s) on dnanexus: %s",
-				parentDir.ProjId, folderFullPath, err.Error())
-			oph.RecordError(err)
-			return fsys.translateError(err)
-		}
-	} else {
-		// A faux directory doesn't have a matching project folder.
-		// It exists only on the local machine.
-	}
-
 	// Remove the directory from the database
-	if err := fsys.mdb.RemoveEmptyDir(oph, childDir.Inode); err != nil {
+	if err := fsys.mdb.UnlinkInode(ctx, oph, childDir.Inode); err != nil {
 		return err
 	}
 	return nil
@@ -1155,27 +1176,10 @@ func (fsys *Filesys) Unlink(ctx context.Context, op *fuseops.UnlinkOp) error {
 		return fuse.EINVAL
 	}
 
-	if err := fsys.mdb.Unlink(ctx, oph, fileToRemove); err != nil {
+	if err := fsys.mdb.UnlinkInode(ctx, oph, fileToRemove.Inode); err != nil {
 		fsys.log("database error in unlink %s", err.Error())
 		return fuse.EIO
 	}
-
-	// The file has not been created on the platform yet, there is no need to
-	// remove it
-	if fileToRemove.Id == "" {
-		return nil
-	}
-
-	// remove the file on the platform
-	objectIds := make([]string, 1)
-	objectIds[0] = fileToRemove.Id
-	if err := fsys.ops.DxRemoveObjects(ctx, oph.httpClient, parentDir.ProjId, objectIds); err != nil {
-		fsys.log("Error in removing %s:%s%s on dnanexus: %s",
-			parentDir.ProjId, parentDir.ProjFolder, op.Name,
-			err.Error())
-		return fsys.translateError(err)
-	}
-	fsys.log("Removed %s, %s:%s%s", op.Name, parentDir.ProjId, parentDir.ProjFolder, op.Name)
 
 	return nil
 }

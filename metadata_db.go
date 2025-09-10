@@ -593,6 +593,9 @@ func (mdb *MetadataDb) lookupDirByName(oph *OpHandle, dirname string) (string, s
 
 // We wrote a new version of this file, creating a new file-id.
 func (mdb *MetadataDb) UpdateInodeFileId(ctx context.Context, oph *OpHandle, inode int64, fileId string) error {
+	if mdb.options.Verbose {
+		mdb.log("Update inode=%d id=%s", inode, fileId)
+	}
 	sqlStmt := fmt.Sprintf(`
  		        UPDATE data_objects
                         SET id = '%s'
@@ -811,22 +814,13 @@ func (mdb *MetadataDb) CreateDir(
 }
 
 // Remove a directory from the database
-func (mdb *MetadataDb) RemoveEmptyDir(oph *OpHandle, inode int64) error {
+func (mdb *MetadataDb) RemoveEmptyDir(ctx context.Context, oph *OpHandle, inode int64) error {
 	sqlStmt := fmt.Sprintf(`
                 DELETE FROM directories
                 WHERE inode='%d';`,
 		inode)
 	if _, err := oph.txn.Exec(sqlStmt); err != nil {
 		mdb.log("RemoveEmptyDir(%d): error in directories table removal", inode)
-		return oph.RecordError(err)
-	}
-
-	sqlStmt = fmt.Sprintf(`
-                DELETE FROM namespace
-                WHERE inode='%d';`,
-		inode)
-	if _, err := oph.txn.Exec(sqlStmt); err != nil {
-		mdb.log("RemoveEmptyDir(%d): error in namespace table removal", inode)
 		return oph.RecordError(err)
 	}
 
@@ -1327,26 +1321,29 @@ func (mdb *MetadataDb) CreateFile(
 // TODO: take into account the case of ForgetInode, and files that are open, but unlinked.
 //
 // on this file system, since we don't keep track of link count, this amount to removing the file.
-func (mdb *MetadataDb) Unlink(ctx context.Context, oph *OpHandle, file File) error {
+func (mdb *MetadataDb) UnlinkInode(ctx context.Context, oph *OpHandle, inode int64) error {
 	sqlStmt := fmt.Sprintf(`
                            DELETE FROM namespace
                            WHERE inode='%d';`,
-		file.Inode)
+		inode)
 	if _, err := oph.txn.Exec(sqlStmt); err != nil {
 		mdb.log(err.Error())
 		mdb.log("could not delete row for inode=%d from the namespace table",
-			file.Inode)
+			inode)
 		return oph.RecordError(err)
 	}
+	return nil
+}
 
-	sqlStmt = fmt.Sprintf(`
+func (mdb *MetadataDb) RemoveFile(ctx context.Context, oph *OpHandle, inode int64) error {
+	sqlStmt := fmt.Sprintf(`
                            DELETE FROM data_objects
                            WHERE inode='%d';`,
-		file.Inode)
+		inode)
 	if _, err := oph.txn.Exec(sqlStmt); err != nil {
 		mdb.log(err.Error())
 		mdb.log("could not delete row for inode=%d from the data_objects table",
-			file.Inode)
+			inode)
 		return oph.RecordError(err)
 	}
 	return nil
