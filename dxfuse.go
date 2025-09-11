@@ -459,7 +459,7 @@ func (fsys *Filesys) removeInodeFile(ctx context.Context, oph *OpHandle, file Fi
 	if err := fsys.ops.DxRemoveObjects(ctx, oph.httpClient, file.ProjId, fileObjects); err != nil {
 		fsys.log("Error in removing %s:%s on dnanexus: %s",
 			file.ProjId, file.Id, err.Error())
-		return err
+		return fsys.translateError(err)
 	}
 	fsys.log("Removed %s, %s", file.ProjId, file.Name)
 	return nil
