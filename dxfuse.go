@@ -834,11 +834,6 @@ func (fsys *Filesys) renameFile(
 	newParentDir Dir,
 	file File,
 	newName string) error {
-	err := fsys.mdb.MoveFile(ctx, oph, file.Inode, newParentDir, newName)
-	if err != nil {
-		fsys.log("database error in rename")
-		return fuse.EIO
-	}
 
 	if file.Id == "" {
 		// The file has not been uploaded to the platform yet
@@ -871,6 +866,12 @@ func (fsys *Filesys) renameFile(
 			oph.RecordError(err)
 			return fsys.translateError(err)
 		}
+	}
+
+	err := fsys.mdb.MoveFile(ctx, oph, file.Inode, newParentDir, newName)
+	if err != nil {
+		fsys.log("database error in rename")
+		return fuse.EIO
 	}
 
 	return nil
@@ -907,14 +908,13 @@ func (fsys *Filesys) renameDir(
 		check(newName == filepath.Base(oldDir.Dname))
 
 		// move a folder to a new parent
-		objIds := make([]string, 0)
 		folders := make([]string, 1)
 		folders[0] = oldDir.ProjFolder
 
 		err := fsys.ops.DxMove(
 			ctx, oph.httpClient,
 			projId,
-			objIds, folders,
+			nil, folders,
 			newParentDir.ProjFolder)
 		if err != nil {
 			fsys.log("Error in moving directory %s:%s -> %s on dnanexus: %s",
@@ -957,6 +957,10 @@ func (fsys *Filesys) Rename(ctx context.Context, op *fuseops.RenameOp) error {
 		return fuse.ENOENT
 	}
 
+	if !fsys.checkProjectPermissions(oldParentDir.ProjId, PERM_CONTRIBUTE) {
+		return syscall.EPERM
+	}
+
 	// the new parent is supposed to be a directory
 	newParentDir, ok, err := fsys.mdb.LookupDirByInode(ctx, oph, int64(op.NewParent))
 	if err != nil {
@@ -968,32 +972,6 @@ func (fsys *Filesys) Rename(ctx context.Context, op *fuseops.RenameOp) error {
 	}
 	if newParentDir.faux {
 		fsys.log("can not move files into a faux dir")
-		return syscall.EPERM
-	}
-
-	// Find the source file
-	srcNode, ok, err := fsys.mdb.LookupInDir(ctx, oph, &oldParentDir, op.OldName)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		// The source file doesn't exist
-		return fuse.ENOENT
-	}
-
-	// check if the target exists.
-	_, ok, err = fsys.mdb.LookupInDir(ctx, oph, &newParentDir, op.NewName)
-	if err != nil {
-		return err
-	}
-	if ok {
-		fsys.log(`
-Target already exists. We do not support atomically remove in conjunction with
-a rename. You will need to issue a separate remove operation prior to rename.
-`)
-		return syscall.EPERM
-	}
-	if !fsys.checkProjectPermissions(oldParentDir.ProjId, PERM_CONTRIBUTE) {
 		return syscall.EPERM
 	}
 
@@ -1023,6 +1001,29 @@ a rename. You will need to issue a separate remove operation prior to rename.
 		op.OldName == op.NewName {
 		fsys.log("can't move a file onto itself")
 		return syscall.EPERM
+	}
+
+	// check if the target exists.
+	_, ok, err = fsys.mdb.LookupInDir(ctx, oph, &newParentDir, op.NewName)
+	if err != nil {
+		return err
+	}
+	if ok {
+		fsys.log(`
+Target already exists. We do not support atomically remove in conjunction with
+a rename. You will need to issue a separate remove operation prior to rename.
+`)
+		return syscall.EPERM
+	}
+
+	// Find the source file
+	srcNode, ok, err := fsys.mdb.LookupInDir(ctx, oph, &oldParentDir, op.OldName)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		// The source file doesn't exist
+		return fuse.ENOENT
 	}
 
 	switch srcNode := srcNode.(type) {
