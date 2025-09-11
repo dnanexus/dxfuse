@@ -472,7 +472,7 @@ func (fsys *Filesys) createNewDxFile(ctx context.Context, oph *OpHandle, parentD
 		parentDir.FullPath, fileName, parentDir.FullPath)
 
 	newFileId, err := fsys.ops.DxFileNew(
-		context.TODO(), oph.httpClient, NewNonce().String(),
+		ctx, oph.httpClient, NewNonce().String(),
 		parentDir.ProjId,
 		fileName,
 		parentDir.ProjFolder)
@@ -480,7 +480,7 @@ func (fsys *Filesys) createNewDxFile(ctx context.Context, oph *OpHandle, parentD
 		fsys.log("Error in creating new file %s:%s on dnanexus: %s",
 			parentDir.ProjId, fileName, err.Error())
 		oph.RecordError(err)
-		return "", err
+		return "", fsys.translateError(err)
 	}
 	fsys.log("DxNewFile: newFileId=%s", newFileId)
 	return newFileId, nil
@@ -1405,13 +1405,13 @@ func (fsys *Filesys) prepareFileHandleForOverwrite(ctx context.Context,
 	f File) (*FileHandle, error) {
 	tgid, _ := GetTgid(opContext.Pid)
 	// get the file information needed to create a new file
-	// step 1: remove old file
+	// replace the file on the platform with a new empty file
 	newFileId, err := fsys.replaceInodeFile(ctx, oph, f)
 	if err != nil {
 		return nil, err
 	}
 
-	// step 4: create new file handle
+	// create new file handle with the new file
 	newfilehandle := &FileHandle{
 		accessMode:        AM_AO_Remote,
 		inode:             f.Inode,
@@ -1433,32 +1433,47 @@ func (fsys *Filesys) prepareFileHandleForOverwrite(ctx context.Context,
 func (fsys *Filesys) replaceInodeFile(ctx context.Context, oph *OpHandle, file File) (string, error) {
 	parentDir, err := fsys.mdb.GetParentDirByInode(ctx, oph, file.Inode)
 	if err != nil {
-		fsys.log("database error in replaceInodeFile")
+		fsys.log("replaceInodeFile Error: could not find parent directory")
 		return "", fuse.EIO
 	}
 	// step 1: remove old file
 	err = fsys.removeInodeFile(ctx, oph, file)
 	if err != nil {
-		oph.RecordError(err)
-		return "", fsys.translateError(err)
+		fsys.log("replaceInodeFile Error: could not remove old file")
+		return "", fuse.EIO
 	}
 	// step 2: create new file
 	newFileId, err := fsys.createNewDxFile(ctx, oph, parentDir, file.Name)
 	if err != nil {
-		oph.RecordError(err)
-		return "", fsys.translateError(err)
+		fsys.log("replaceInodeFile Error: could not create new file")
+		return "", fuse.EIO
 	}
 	// step 3: update the inode with the new fileId
-	fsys.mdb.UpdateInodeFileId(ctx, oph, file.Inode, newFileId)
-	fsys.mdb.UpdateInodeFileState(ctx, oph, file.Inode, "open", true)
-	fsys.mdb.UpdateFileAttrs(ctx, oph, file.Inode, 0, time.Now(), nil)
+	err = fsys.mdb.UpdateInodeFileId(ctx, oph, file.Inode, newFileId)
+	if err != nil {
+		fsys.log("replaceInodeFile Error: could not update inode file ID")
+		return "", fuse.EIO
+	}
+	// step 4: update the inode state to "open"
+	// so that the new file could be written to
+	err = fsys.mdb.UpdateInodeFileState(ctx, oph, file.Inode, "open", true)
+	if err != nil {
+		fsys.log("replaceInodeFile Error: could not update inode file state")
+		return "", fuse.EIO
+	}
+	// step 5: update the inode attributes
+	// set the file size to 0, and update the modification time
+	err = fsys.mdb.UpdateFileAttrs(ctx, oph, file.Inode, 0, time.Now(), nil)
+	if err != nil {
+		fsys.log("replaceInodeFile Error: could not update file attributes")
+		return "", fuse.EIO
+	}
 
 	fsys.log("File (%s,%s) is replaced with a new file (%s)",
 		file.Name, file.Id, newFileId)
 	return newFileId, nil
 }
 
-// Note: What happens if the file is opened for writing?
 func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error {
 	fsys.log("op: %v", op)
 
