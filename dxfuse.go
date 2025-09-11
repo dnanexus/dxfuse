@@ -614,24 +614,9 @@ func (fsys *Filesys) ForgetInode(ctx context.Context, op *fuseops.ForgetInodeOp)
 		fsys.log("ForgetInode (%d)", op.Inode)
 	}
 
-	node, ok, err := fsys.mdb.LookupByInode(ctx, oph, int64(op.Inode))
-	if err != nil {
-		fsys.log("database error in ForgetInode %s", err.Error())
-		return fuse.EIO
-	}
-	if !ok {
-		// file doesn't exist
-		return fuse.ENOENT
-	}
+	fsys.removeFileHandlesWithInode(int64(op.Inode))
+	fsys.removeDirHandlesWithInode(int64(op.Inode))
 
-	switch node := node.(type) {
-	case Dir:
-		fsys.removeDirHandlesWithInode(node.Inode)
-	case File:
-		fsys.removeFileHandlesWithInode(node.Inode)
-	default:
-		log.Panicf("bad type for node %v", node)
-	}
 	return nil
 }
 
@@ -1993,14 +1978,10 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 	return nil
 }
 
-// ===
-// Extended attributes (xattrs)
-//
-
 func (fsys *Filesys) lookupFileByInode(ctx context.Context, oph *OpHandle, inode int64) (File, bool, error) {
 	node, ok, err := fsys.mdb.LookupByInode(ctx, oph, inode)
 	if err != nil {
-		fsys.log("database error in xattr op: %s", err.Error())
+		fsys.log("database error when looking up inode %d: %s", inode, err.Error())
 		return File{}, false, fuse.EIO
 	}
 	if !ok {
@@ -2017,6 +1998,10 @@ func (fsys *Filesys) lookupFileByInode(ctx context.Context, oph *OpHandle, inode
 	}
 	return file, false, nil
 }
+
+// ===
+// Extended attributes (xattrs)
+//
 
 func (fsys *Filesys) xattrParseName(name string) (string, string, error) {
 	prefixLen := strings.Index(name, ".")
@@ -2263,27 +2248,11 @@ func (fsys *Filesys) SetXattr(ctx context.Context, op *fuseops.SetXattrOp) error
 	}
 
 	// Grab the inode.
-	node, ok, err := fsys.mdb.LookupByInode(ctx, oph, int64(op.Inode))
+	file, _, err := fsys.lookupFileByInode(ctx, oph, int64(op.Inode))
 	if err != nil {
-		fsys.log("database error in SetXattr: %s", err.Error())
-		return fuse.EIO
-	}
-	if !ok {
-		return fuse.ENOENT
+		return err
 	}
 
-	var file File
-	switch node := node.(type) {
-	case File:
-		file = node
-	case Dir:
-		// directories do not have attributes
-		//
-		// Note: we may want to change this for directories
-		// representing projects. This would allow reporting project
-		// tags and properties.
-		return syscall.EINVAL
-	}
 	if !fsys.checkProjectPermissions(file.ProjId, PERM_CONTRIBUTE) {
 		return syscall.EPERM
 	}
