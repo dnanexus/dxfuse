@@ -394,8 +394,8 @@ func (ops *DxOps) DxRename(
 }
 
 type RequestMove struct {
-	Objects     []string `json:"objects"`
-	Folders     []string `json:"folders"`
+	Objects     []string `json:"objects,omitempty"`
+	Folders     []string `json:"folders,omitempty"`
 	Destination string   `json:"destination"`
 }
 

@@ -547,8 +547,12 @@ func (mdb *MetadataDb) LookupDirByInode(ctx context.Context, oph *OpHandle, inod
 		return Dir{}, false, err
 	}
 
-	dir := node.(Dir)
-	return dir, true, nil
+	switch node := node.(type) {
+	case Dir:
+		return node, true, nil
+	default:
+		return Dir{}, false, nil
+	}
 }
 
 // Find information on a directory by searching on its full name.
@@ -960,7 +964,7 @@ func (mdb *MetadataDb) populateDir(
 // 1. An empty directory has been created on the database.
 // 1. The directory has not been queried yet.
 // 2. The global lock is held
-func (mdb *MetadataDb) directoryReadFromDNAx(
+func (mdb *MetadataDb) readDirFromDNAx(
 	ctx context.Context,
 	oph *OpHandle,
 	dinode int64,
@@ -971,7 +975,7 @@ func (mdb *MetadataDb) directoryReadFromDNAx(
 	dirFullName string) error {
 
 	if mdb.options.Verbose {
-		mdb.log("directoryReadFromDNAx: describe folder %s:%s", projId, projFolder)
+		mdb.log("readDirFromDNAx: describe folder %s:%s", projId, projFolder)
 	}
 
 	// describe all (closed) files
@@ -1015,7 +1019,7 @@ func (mdb *MetadataDb) directoryReadFromDNAx(
 		ctimeApprox, mtimeApprox,
 		dirFullName, posixDir.dataObjects, posixDir.subdirs)
 	if err != nil {
-		mdb.log("directoryReadFromDNAx: Error populating directory, err=%s", err.Error())
+		mdb.log("readDirFromDNAx: Error populating directory, err=%s", err.Error())
 		return oph.RecordError(err)
 	}
 
@@ -1033,7 +1037,7 @@ func (mdb *MetadataDb) directoryReadFromDNAx(
 			dirReadWriteMode,
 			fauxDirPath, true)
 		if err != nil {
-			mdb.log("directoryReadFromDNAx: creating faux directory %s, err=%s", fauxDirPath, err.Error())
+			mdb.log("readDirFromDNAx: creating faux directory %s, err=%s", fauxDirPath, err.Error())
 			return oph.RecordError(err)
 		}
 
@@ -1044,7 +1048,7 @@ func (mdb *MetadataDb) directoryReadFromDNAx(
 			ctimeApprox, mtimeApprox,
 			fauxDirPath, fauxFiles, no_subdirs)
 		if err != nil {
-			mdb.log("directoryReadFromDNAx: populating faux directory %s, %s", fauxDirPath, err.Error())
+			mdb.log("readDirFromDNAx: populating faux directory %s, %s", fauxDirPath, err.Error())
 			return oph.RecordError(err)
 		}
 	}
@@ -1059,7 +1063,7 @@ func (mdb *MetadataDb) ReadDirAll(ctx context.Context, oph *OpHandle, dir *Dir) 
 	}
 
 	if !dir.Populated {
-		err := mdb.directoryReadFromDNAx(
+		err := mdb.readDirFromDNAx(
 			ctx,
 			oph,
 			dir.Inode,
