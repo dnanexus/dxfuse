@@ -92,12 +92,12 @@ the risk of network choppiness.
 
 `dxfuse -limitedWrite` mode was primarily designed to support spark file output over the `file:///` protocol.
 
-Creating and writing to files is allowed when dxfuse is mounted with the `-limitedWrite` flag.
-Writing to files is **append only**. Any non-sequential writes will return `ENOTSUP`. Seeking or reading operations are not permitted while a file is being written.
+Creating then writing to new files is allowed when dxfuse is mounted with the `-limitedWrite` flag.
+Writing to these newly created files is **append only**. Any non-sequential writes will return `ENOTSUP`. Seeking or reading operations are not permitted while a file is being written.
 
 ## Supported operations
 
-`-limitedWrite` mode enables the following operations: rename (mv, see [below](#rename-behavior)), unlink (rm), mkdir (see [below](#mkdir-behavior)), and rmdir (empty folders only). Rewriting existing files is not permitted, nor is truncating existing files.
+`-limitedWrite` mode enables the following operations: rename (mv, see [below](#rename-behavior)), unlink (rm), mkdir (see [below](#mkdir-behavior)), and rmdir (empty folders only). Rewriting existing files is not permitted, nor is truncating existing files, unless `-allowOverwrite` is also set. See [below](#allowoverwrite-mode).
 
 ### mkdir behavior
 
@@ -105,7 +105,7 @@ All `mkdir` operations via dxfuse are treated as `mkdir -p`, which creates the p
 
 ### rename behavior
 
-Rename does not allow removing the target file or directory because DNAnexus API does not support this functionality.  Removal of target file or directory must be done as a separate operation before calling the rename (mv) operation.
+Rename does not allow removing the target file or directory because DNAnexus API does not support this functionality. Removal of target file or directory must be done as a separate operation before calling the rename (mv) operation.
 
 ```
 $ ls -lht MNT/file*
@@ -181,7 +181,33 @@ Upload benchmarks are from an Ubuntu 20.04 DNAnexus worker mem2_ssd1_v2_x32 (AWS
 |	37.8  |	87 | 10GiB |
 |	254  |	495 | 100GiB |
 
-## TBA
+
+# AllowOverwrite Mode
+If `-limitedWrite` and `-allowOverwrite` flags are both set when launching dxfuse, overwriting existing files (both created before or during the current session) is enabled, but **only in truncate mode** (with `O_TRUNC` flag at system call level)
+
+Sample use cases:
+- In terminal, write to an existing file by redirecting using '>' or 'tee'
+- In terminal, overwrite an existing file by `cp` or `dd`
+- write and save a file in RStudio editor
+- overwrite an existing file using R commands from an R script or in R console, for example:
+  - base::writeLines()
+  - data.table::fwrite()
+  - readr::write_rds()
+  - saveRDS()
+  - write.table()
+
+Other operations enabled by `-limitedWrite` mode are also supported. However, any other operations that modifies an existing file content without opening in truncate mode is **not supported**, for example:
+- write to an existing file by redirecting using '>>' in terminal
+- open existing file with `O_APPEND` flag
+- truncate file to size 0 using `truncate` command or other commands that call `ftruncate` method
+
+Note: if using `vim` to edit existing file, it is suggested to avoid swap file creation by doing either of the following:
+- turn off swap file: put `set noswapfile` in `~/.vimrc` 
+- set the directory option to the location outside the mounted folder
+  ```
+  mkdir -p ~/.vim/swapfiles  # create a temp dir to store swap files
+  echo "set directory=$HOME/.vim/swapfiles" > ~/.vimrc
+```
 
 # Building
 
