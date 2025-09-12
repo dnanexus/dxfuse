@@ -125,19 +125,6 @@ A hard link is an entry in the namespace that points to an existing data object.
 single i-node can have multiple namespace entries, so it cannot serve as a primary key.
 
 
-# Sequential Prefetch
-
-Performing prefetch for sequential streams incurs overhead and costs
-memory. The goal of the prefetch module is: *if a file is read from start to finish, we want to be
-able to read it in large network requests*. What follows is a simplified description of the algorithm.
-
-In order for a file to be eligible for streaming it has to be at
-8MiB. A bitmap is maintained for areas accessed. If a complete MiB
-is accessed, prefetch is started. This entails sending multiple
-asynchronous IO to fetch up to 16 (remote machine) or 96 (worker) MiB of data. As long as the data
-is fully read, prefetch continues. If a file is not accessed for more
-than five minutes, or, access is outside the prefetched area, the process halts. It will start again if sequential access is detected down the road.
-
 # Manifest
 
 The *manifest* option specifies the initial snapshot of the filesystem
@@ -203,17 +190,6 @@ will create the directory structure:
 
 Browsing through directory `Cards/J`, is equivalent to traversing the remote `proj-1019001:/Joker` folder.
 
-
-# Experimental file creation and modification
-
-dxfuse has an experimental mode that allows creating new files and modifying existing files,
-in spite of the fact that only immutable files exist on DNAx. The
-mismatch between what the filesystem allows (updating a file), and
-what is available natively on the platform makes the update operation
-expensive.
-
-Under `-limitedWrite` mode, when a file is created, a remote DNAnexus file object is created. Sequential write operations are first written to a buffer in memory which maps to a DNAnexus file object part. Part sizes increase as file size grows. Once writing is complete and the file is flushed, the remote file object is closed immutably and can no longer be appended to.  
-marked dirty in the database, then sequential write operation could be done upon this file and the appended data will be uploaded to the remote file synchronously. Once writing file is done and the local file is closed, it would no longer be marked as dirty, and the remote DNAx file will be closed as well and become immutable. 
 
 <!-- A background daemon scans the database periodically and
 uploads dirty files to the platform. If a file `foo` already exists as
