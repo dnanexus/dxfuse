@@ -1,16 +1,93 @@
 # dxfuse: a FUSE filesystem for DNAnexus
 
-A filesystem that allows users access to the DNAnexus storage system.
+dxfuse is a FUSE (Filesystem in Userspace) implementation that allows users to mount DNAnexus cloud storage as a local POSIX-compliant filesystem. The code uses the [FUSE](https://github.com/jacobsa/fuse)
+library, implemented in [golang](https://golang.org). It bridges the gap between DNAnexus's cloud storage system and traditional Unix filesystem expectations.
 
 **For support issues please contact support@dnanexus.com**
 
 **NOTE: This project is designed for read-only use in the DNAnexus worker environment. Use in any other environment (such as macOS or Linux clients) or use of `-limitedWrite` is in beta**
 
-The code uses the [FUSE](https://github.com/jacobsa/fuse)
-library, implemented in [golang](https://golang.org). The DNAnexus
-storage system is not POSIX compliant. It holds not just files and
-directories, but also records, databases, applets, and workflows. It
-allows things that are not POSIX, for example:
+# Usage
+
+To allow regular users access to the fuse device on the local machine:
+```
+chmod u+rw /dev/fuse
+```
+In theory, it should be possible to use `suid` to achieve this instead, but that does
+not currently work.
+
+## mount a single project
+
+To mount a DNAnexus project `mammals` in local directory `/home/jonas/foo` do:
+```
+dxfuse /home/jonas/foo mammals
+```
+Project ids can be used instead of project names. 
+```
+dxfuse /home/jonas/foo project-12345678
+```
+
+Note that dxfuse will hide any existing content of the mount point (e.g. `/home/jonas/foo` directory in the example above) 
+until the dxfuse process is stopped.
+
+The bootstrap process is done asynchronously, so it could take a
+second or two to start up. It spawns a separate process for the filesystem
+server, waits for it to start, and exits. 
+
+## set debug level
+To get more information, use
+the `verbose` flag. Debugging output is written to the log, which is
+placed at `$HOME/.dxfuse/dxfuse.log`. The maximal verbosity level is 2.
+
+```
+dxfuse -verbose 1 MOUNT-POINT PROJECT-NAME
+```
+## mount multiple projects
+To mount several projects, say, `mammals`, `fish`, and `birds`, do:
+```
+dxfuse /home/jonas/foo mammals fish birds
+```
+
+This will create the directory hierarchy:
+```
+/home/jonas/foo
+              |_ mammals
+              |_ fish
+              |_ birds
+```
+
+Note that same DNAnexus file (with the same fileID) may be resided in several projects, each link will be assigned to a distinct inode. And hard linking mounted files is not currently supported.
+
+## mount with manifest
+The manifest option specifies the initial snapshot of the filesystem
+tree as a JSON file. The database is initialized from this snapshot,
+and the filesystem starts its life from that point. This is useful
+for WDL, where we want to mount remote files and directories on a
+pre-specified tree.
+
+The manifest contains two tables, one for individual files to be mounted, and the other for directories. To learn how to write the manifest, please refer to the [manifest schema](doc/Internals.md#manifest).
+
+## limitedWrite and allowOverwrite mode
+
+dxfuse provides three modes for mounting:
+- (default) read-only
+- `-limitedWrite` : allows creating new file
+- `-limitedWrite` + `-allowOverwrite`: allows creating new file and overwrite existing file.
+See detailed behaviors [here](./doc/Implementation.md#semantics)
+
+## stop mounting
+To stop the dxfuse process do:
+```
+fusermount -u MOUNT-POINT
+```
+
+# Supported Filesystem Operations and corresponding DNAnexus API
+
+See [supported operations](doc/Implementation.md#filesystem-operations)
+
+# POSIX approximation
+The DNAnexus storage system is not POSIX compliant. It holds not just files and
+directories, but also records, databases, applets, and workflows. It allows things that are not POSIX, for example:
 1. Files in a directory can have the same name
 2. A filename can include slashes
 3. A file and a directory may share a name
@@ -33,9 +110,6 @@ underscore. As a rule, directories are not moved, nor are their
 characters modified. However, if a directory name contains a slash, it
 is dropped, and a warning is emitted to the log.
 
-dxfuse provides a read-only view of the DNAnexus storage unless launched with an optional `-limitedWrite` flag.
-limitedWrite mode allows writing data in append-only fashion that enables support of spark file outputs.
-
 dxfuse approximates a normal POSIX filesystem, but does not always have the same semantics. For example:
 1. Metadata like last access time are not supported
 2. Directories have approximate create/modify times. This is because DNAx does not keep such attributes for directories.
@@ -45,143 +119,8 @@ There are several limitations currently:
 - Limits directories to 255,000 elements
 - Updates to the project emanating from other machines are not reflected locally
 - Does not support hard links
-- limitedWrite mode has additional limitations described in the [Limited Write Mode](#limited-write-mode) section
+- limitedWrite mode has additional limitations. See details in the [Limited Write Mode](doc/Implementation.md#limitedwrite-mode) section
 
-# Download benchmarks
-
-Streaming a file from DNAnexus using dxfuse performs similarly to dx-toolkit.
-The following table shows performance across several
-instance types. The benchmark was *how many seconds does it take to
-download a file of size X?* The lower the number, the better. The two
-download methods were (1) `dx cat`, and (2) `cat` from a dxfuse mount point.
-
-| instance type   | dx cat (seconds) | dxfuse cat (seconds) | file size |
-| ----            | ----             | ---                  |  ----     |
-| mem1\_ssd1\_v2\_x4|	         207 |	219                 |       17G |
-| mem1\_ssd1\_v2\_x4|	          66 |      	         77 |      5.9G |
-| mem1\_ssd1\_v2\_x4|		6|	4 | 705M|
-| mem1\_ssd1\_v2\_x4|		3|	3 | 285M|
-| | | | |
-| mem1\_ssd1\_v2\_x16|	57|	49 | 17G|
-| mem1\_ssd1\_v2\_x16|		22|	24 | 5.9G|
-| mem1\_ssd1\_v2\_x16|		3|	3 | 705M|
-| mem1\_ssd1\_v2\_x16|		2|	1 | 285M|
-| | | | |
-| mem3\_ssd1\_v2\_x32|		52|	51 | 17G|
-| mem3\_ssd1\_v2\_x32|		20	| 15 | 5.9G |
-| mem3\_ssd1\_v2\_x32|		4|	2 | 705M|
-| mem3\_ssd1\_v2\_x32|		2|	1 | 285M|
-
-# Implementation overview
-
-The implementation uses a [sqlite](https://www.sqlite.org/index.html)
-database, located on `/var/dxfuse/metadata.db`. It stores files and
-directories in tables, indexed to speed up common queries.
-
-Load on the DNAnexus API servers and the cloud object system is carefully controlled. Bulk calls
-are used to describe data objects, and the number of parallel IO requests is bounded.
-
-dxfuse operations can sometimes be slow, for example, if the server is
-slow to respond, or has been temporarily shut down (503 mode). This
-may cause the filesystem to lose its interactive feel. Running it on a
-cloud worker reduces network latency significantly, and is the way it
-is used in the product. Running on a local, non cloud machine, runs
-the risk of network choppiness.
-
-# Limited Write Mode
-
-`dxfuse -limitedWrite` mode was primarily designed to support spark file output over the `file:///` protocol.
-
-Creating and writing to files is allowed when dxfuse is mounted with the `-limitedWrite` flag.
-Writing to files is **append only**. Any non-sequential writes will return `ENOTSUP`. Seeking or reading operations are not permitted while a file is being written.
-
-## Supported operations
-
-`-limitedWrite` mode enables the following operations: rename (mv, see [below](#rename-behavior)), unlink (rm), mkdir (see [below](#mkdir-behavior)), and rmdir (empty folders only). Rewriting existing files is not permitted, nor is truncating existing files.
-
-### mkdir behavior
-
-All `mkdir` operations via dxfuse are treated as `mkdir -p`, which creates the parent directory if needed, and does not fail if the directory already exists. This is because dxfuse does not present the realtime state of the project. Folders can be created outside of dxfuse (or in another dxfuse process), and therefore not be visible to the current running dxfuse. A subsequent `mkdir` --> `project-xxxx/newFolder` would return a 422 error, because dxfuse did not know the directory already exists. This design is due to spark behavior where multiple worker nodes sometimes attempt to create the same output directory.
-
-### rename behavior
-
-Rename does not allow removing the target file or directory because DNAnexus API does not support this functionality.  Removal of target file or directory must be done as a separate operation before calling the rename (mv) operation.
-
-```
-$ ls -lht MNT/file*
--r--r--r-- 1 root root 6 Aug 20 21:23 file1
--r--r--r-- 1 root root 6 Aug 20 21:23 file
-$ mv MNT/file MNT/file1
-mv: cannot move 'file' to 'file1': Operation not permitted
-
-# Supported via 2 distinct operations:
-$ rm MNT/file1
-$ mv MNT/file MNT/file1
-```
-
-## File upload and closing
-
-Each dxfuse file open for writing is allocated a 16MiB write buffer in memory, which is uploaded as a DNAnexus file part when full. This buffer increases in size for each part `1.1^n * 16MiB` up to a maximum 700MiB. dxfuse uploads up to 4 parts in parallel across all files being uploaded.
-
-The upload of the last DNAnexus file part and the call of `file-xxxx/close` DNAnexus API operation are performed by dxfuse only when the OS process that created the OS file descriptor closes the OS file descriptor, triggering `FlushFile` fuse operation.
-
-### File descriptor duplication and empty files
-
-Applications which immediately duplicate a file descriptor after opening it are supported, but writing and the subsequent file descriptor duplication  is not supported, as this triggers the `FlushFile` fuse operation. See the below supported syscall access pattern, where `FlushFile` op triggered by `close(3)` is ignored for an empty open file.
-```
-# Supported access pattern
-openat(AT_FDCWD, "MNT/project/writefile", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
-dup2(3, 1)                              = 1
-# Triggers a FlushFile ignored by dxfuse since the file is empty
-close(3)                                = 0
-read(0, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"..., 1024) = 1024
-write(1, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"..., 1024) = 1024
-```
-The example below closes the file descriptor after writing, which closes the DNAnexus file, causing subsequent writes to fail.
-```
-# Unsupported access pattern
-openat(AT_FDCWD, "MNT/project/writefile", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
-read(0, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"..., 1024) = 1024
-write(3, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"..., 1024) = 1024
-dup2(3, 1)                              = 1
-# Triggers a FlushFile --> file-xxxx/close by dxfuse since the file size is greater than 0
-close(3)                                = 0
-# Returns EPERM error since the file has been closed already
-write(1, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"..., 1024) = -1
-```
-
-Ignoring the `FlushFile` op for empty files creates an edge case for creating empty files in dxfuse-mounted folders. For empty files, the empty part upload and `file-xxxx/close` are not called until the `ReleaseFileHandle` fuse operation is triggered by the kernel when the last open file descriptor for a given file has been closed. The downside of this behavior is that the dxfuse client application creating the empty file is unable to catch errors that may happen during `file-xxxxx/close` API call as it does for non-empty files closed via `FlushFile` fuse operation triggered by application's call to `close(3)`.
-
-
-### File closing error checking
-
-dxfuse clients should check errors from `close(3)` call to make sure the corresponding DNAnexus file has been transitioned out of the `open` state,
-as DNAnexus files left in open state are eventually removed by the DNAnexus cleanup daemon.
-
-### Spark output artifacts
-
-Spark output through dxfuse uses the spark `file://` protocol. Due to this each output produced by spark will have a corresponding `.crc` file. These files can be removed. 
-
-## Upload benchmarks
-
-Upload benchmarks are from an Ubuntu 20.04 DNAnexus worker mem2_ssd1_v2_x32 (AWS m5d.8xlarge) instance running kernel 5.4.0-1055-aws.
-`dx` and `dxfuse` benchmark commands were run like so. These benchmarks are not exact because they include the wait time until the uploaded file is transitioned to the `closed` state.
-
-`time dd if=/dev/zero bs=1M count=$SIZE | dx upload --wait -`
-
-`time dd if=/dev/zero bs=1M count=$SIZE of=MNT/project/$SIZE`
-| dx upload --wait (seconds) | dxfuse upload(seconds) | file size |
-| ---                        |  ----                  | ----      |
-|	4.4 |	3.5 | 100MiB |
-|	4.8  |	4.2 | 200MiB |
-|	5.9 |	4.8 | 400MiB |
-|	5.9 |	6.8 | 800MiB |
-|	7 |	10 | 1GiB |
-|	22.5 |	19.2 | 2GiB |
-|	37.8  |	87 | 10GiB |
-|	254  |	495 | 100GiB |
-
-## TBA
 
 # Building
 
@@ -192,86 +131,6 @@ cd dxfuse
 go build -o dxfuse cli/main.go
 ```
 
-# Usage
-
-Allow regular users access to the fuse device on the local machine:
-```
-chmod u+rw /dev/fuse
-```
-
-In theory, it should be possible to use `suid` to achieve this instead, but that does
-not currently work.
-
-To mount a DNAnexus project `mammals` in local directory `/home/jonas/foo` do:
-```
-dxfuse /home/jonas/foo mammals
-```
-
-Note that dxfuse will hide any existing content of the mount point (e.g. `/home/jonas/foo` directory in the example above) 
-until the dxfuse process is stopped.
-
-The bootstrap process has some asynchrony, so it could take a
-second or two to start up. It spawns a separate process for the filesystem
-server, waits for it to start, and exits. To get more information, use
-the `verbose` flag. Debugging output is written to the log, which is
-placed at `$HOME/.dxfuse/dxfuse.log`. The maximal verbosity level is 2.
-
-```
-dxfuse -verbose 1 MOUNT-POINT PROJECT-NAME
-```
-
-Project ids can be used instead of project names. To mount several projects, say, `mammals`, `fish`, and `birds`, do:
-```
-dxfuse /home/jonas/foo mammals fish birds
-```
-
-This will create the directory hierarchy:
-```
-/home/jonas/foo
-              |_ mammals
-              |_ fish
-              |_ birds
-```
-
-Note that files may be hard linked from several projects. These will appear as a single inode with
-a link count greater than one.
-
-To stop the dxfuse process do:
-```
-fusermount -u MOUNT-POINT
-```
-
-## Extended attributes (xattrs)
-
-DNAx data objects have properties and tags, these are exposed as POSIX extended attributes. Xattrs can be read, written, and removed. The package we use here is `attr`, it can installed with `sudo apt-get install attr` on Linux. On OSX the `xattr` package comes packaged with the base operating system, and can be used to the same effect.
-
-DNAx tags and properties are prefixed. For example, if `zebra.txt` is a file then `attr -l zebra.txt` will print out all the tags, properties, and attributes that have no POSIX equivalent. These are split into three corresponding prefixes _tag_, _prop_, and _base_ all under the `user` Linux namespace.
-
-Here `zebra.txt` has no properties or tags.
-```
-$ attr -l zebra.txt
-
-base.state: closed
-base.archivalState: live
-base.id: file-xxxx
-```
-
-Add a property named `family` with value `mammal`
-```
-$ attr -s prop.family -V mammal zebra.txt
-```
-
-Add a tag `africa`
-```
-$ attr -s tag.africa -V XXX zebra.txt
-```
-
-Remove the `family` property:
-```
-$ attr -r prop.family zebra.txt
-```
-
-You cannot modify _base.*_ attributes, these are read-only. Setting and deleting xattrs can be done only for files that are closed on the platform.
 
 ## macOS
 
