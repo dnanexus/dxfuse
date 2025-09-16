@@ -88,7 +88,7 @@ cloud worker reduces network latency significantly, and is the way it
 is used in the product. Running on a local, non cloud machine, runs
 the risk of network choppiness.
 
-# Limited Write Mode
+# `-limitedWrite` Mode
 
 `dxfuse -limitedWrite` mode was primarily designed to support spark file output over the `file:///` protocol.
 
