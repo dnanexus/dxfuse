@@ -97,7 +97,7 @@ Writing to these newly created files is **append only**. Any non-sequential writ
 
 ## Supported operations
 
-`-limitedWrite` mode enables the following operations: rename (mv, see [below](#rename-behavior)), unlink (rm), mkdir (see [below](#mkdir-behavior)), and rmdir (empty folders only). Rewriting existing files is not permitted, nor is truncating existing files, unless `-allowOverwrite` is also set. See [below](#allowoverwrite-mode).
+`-limitedWrite` mode enables the following operations: rename (mv, see [below](#rename-behavior)), unlink (rm), mkdir (see [below](#mkdir-behavior)), and rmdir (empty folders only). Rewriting existing files is not permitted, nor is truncating existing files, unless `-allowOverwrite` is also specified. See [below](#allowoverwrite-mode).
 
 ### mkdir behavior
 
@@ -182,31 +182,32 @@ Upload benchmarks are from an Ubuntu 20.04 DNAnexus worker mem2_ssd1_v2_x32 (AWS
 |	254  |	495 | 100GiB |
 
 
-# AllowOverwrite Mode
-If `-limitedWrite` and `-allowOverwrite` flags are both set when launching dxfuse, overwriting existing files (both created before or during the current session) is enabled, but **only in truncate mode** (with `O_TRUNC` flag at system call level)
+# `-allowOverwrite` Mode
+`-allowOverwrite` flag requires `-limitedWrite` flag to be specified as well.
+
+Launching dxfuse with `-limitedWrite -allowOverwrite` flags allows dxfuse clients to truncate and overwrite existing files created both before and during the current dxfuse session (files must be opened with`O_TRUNC` flag at system call level) in addition to other operations allowed by `-limitedWrite`.  Append-only limitations of the `-limitedWrite` mode apply to the overwritten files.
 
 Sample use cases:
-- In terminal, write to an existing file by redirecting using '>' or 'tee'
-- In terminal, overwrite an existing file by `cp` or `dd`
-- write and save a file in RStudio editor
-- overwrite an existing file using R commands from an R script or in R console, for example:
+- In a terminal, overwrite an existing file using `>`, `tee`, `cp`, `dd`
+- Save a modified file in RStudio editor
+- Overwrite an existing file using the following R commands:
   - base::writeLines()
   - data.table::fwrite()
   - readr::write_rds()
   - saveRDS()
   - write.table()
 
-Other operations enabled by `-limitedWrite` mode are also supported. However, any other operations that modifies an existing file content without opening in truncate mode is **not supported**, for example:
-- write to an existing file by redirecting using '>>' in terminal
-- open existing file with `O_APPEND` flag
-- truncate file to size 0 using `truncate` command or other commands that call `ftruncate` method
+Operations that attempt to modify an existing file without opening it in truncate mode are not supported. For example the following operations operations will fail:
+- In a terminal, appending to an existing with `>>`
+- Opening an existing file with `O_APPEND` flag
+- Truncating and existing file to size 0 using `truncate` command or other commands that call `ftruncate` system call
 
-Note: if using `vim` to edit existing file, it is suggested to avoid swap file creation by doing either of the following:
-- turn off swap file: put `set noswapfile` in `~/.vimrc` 
-- set the directory option to the location outside the mounted folder
+Note: When using `vim` to edit existing dxfuse-backed files, avoid swap file creation in dxfuse-backed folders by doing either of the following:
+- turn off swap file by adding `set noswapfile` to your `~/.vimrc` 
+- set the directory option to a non-dxfuse folder
   ```
-  mkdir -p ~/.vim/swapfiles  # create a temp dir to store swap files
-  echo "set directory=$HOME/.vim/swapfiles" > ~/.vimrc
+  mkdir -p ~/.vim/swapfiles  # create a temp dir to store swap files outside of the dxfuse folder
+  echo "set directory=$HOME/.vim/swapfiles" >> ~/.vimrc
 ```
 
 # Building
