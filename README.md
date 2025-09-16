@@ -97,7 +97,7 @@ Writing to these newly created files is **append only**. Any non-sequential writ
 
 ## Supported operations
 
-`-limitedWrite` mode enables the following operations: rename (mv, see [below](#rename-behavior)), unlink (rm), mkdir (see [below](#mkdir-behavior)), and rmdir (empty folders only). Rewriting existing files is not permitted, nor is truncating existing files, unless `-allowOverwrite` is also specified. See [below](#allowoverwrite-mode).
+`-limitedWrite` mode enables the following operations: rename (mv, see [below](#rename-behavior)), unlink (rm), mkdir (see [below](#mkdir-behavior)), and rmdir (empty folders only). Rewriting existing files is not permitted, nor is truncating existing files, unless `-allowOverwrite` is also specified. See [below](#-allowoverwrite-mode).
 
 ### mkdir behavior
 
@@ -198,16 +198,15 @@ Sample use cases:
   - write.table()
 
 Operations that attempt to modify an existing file without opening it in truncate mode are not supported. For example the following operations operations will fail:
-- In a terminal, appending to an existing with `>>`
+- In a terminal, appending to an existing with `>>` operator
 - Opening an existing file with `O_APPEND` flag
-- Truncating and existing file to size 0 using `truncate` command or other commands that call `ftruncate` system call
-
-Note: When using `vim` to edit existing dxfuse-backed files, avoid swap file creation in dxfuse-backed folders by doing either of the following:
+- Truncating an existing file to size 0 using `truncate` command or other commands that call `ftruncate` system call  
+Note: When editing dxfuse-backed files in `vim`,  avoid `vim` swap file creation in dxfuse-backed folders to make editing more efficient and less error-prone by following one of the following approaches:  
 - turn off swap file by adding `set noswapfile` to your `~/.vimrc` 
 - set the directory option to a non-dxfuse folder
-  ```
-  mkdir -p ~/.vim/swapfiles  # create a temp dir to store swap files outside of the dxfuse folder
-  echo "set directory=$HOME/.vim/swapfiles" >> ~/.vimrc
+```
+mkdir -p $HOME/.vim/swapfiles  # create a temp dir to store swap files outside of the dxfuse folder
+echo "set directory=$HOME/.vim/swapfiles" >> ~/.vimrc
 ```
 
 # Building
