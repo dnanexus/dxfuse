@@ -6,9 +6,11 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jacobsa/fuse/fuseops"
+	"github.com/shirou/gopsutil/host"
 	"github.com/shirou/gopsutil/process"
 )
 
@@ -340,4 +342,16 @@ func GetTgid(pid uint32) (tgid int32, err error) {
 		return -1, err
 	}
 	return tgid, nil
+}
+
+func GetPlatformInfo() (string, error) {
+	platform, _, version, err := host.PlatformInformation()
+	if err != nil {
+		return "", err
+	}
+	// Capitalize the first character of platform
+	if len(platform) > 0 {
+		platform = strings.ToUpper(string(platform[0])) + platform[1:]
+	}
+	return platform + " " + version, nil
 }
