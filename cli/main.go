@@ -19,6 +19,7 @@ import (
 
 	"github.com/jacobsa/fuse"
 	"github.com/jacobsa/fuse/fuseutil"
+	"github.com/shirou/gopsutil/host"
 
 	// The dxda package has the get-environment code
 	"github.com/dnanexus/dxda"
@@ -502,7 +503,11 @@ func main() {
 	logFile := filepath.Join(cfg.options.StateFolder, dxfuse.LogFile)
 	fmt.Printf("The log file is located at %s\n", logFile)
 
-	dxda.UserAgent = fmt.Sprintf("dxfuse/%s (%s)", dxfuse.Version, runtime.GOOS)
+	info, err := host.Info()
+	if err != nil {
+		log.Fatal(err)
+	}
+	dxda.UserAgent = fmt.Sprintf("dxfuse/%s (%s, %s)", dxfuse.Version, info.Platform, info.PlatformVersion)
 
 	if *daemon {
 		// This will be true -only- in the child sub-process
