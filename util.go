@@ -29,7 +29,7 @@ const (
 	NumRetriesDefault         = 10
 	InitialUploadPartSize     = 16 * MiB
 	MaxUploadPartSize         = 700 * MiB
-	Version                   = "v1.5.0"
+	Version                   = "v1.6.0"
 )
 const (
 	InodeInvalid = 0
@@ -42,6 +42,7 @@ const (
 	dirReadWriteMode  = 0777 | os.ModeDir
 	fileReadOnlyMode  = 0444
 	fileWriteOnlyMode = 0222
+	fileReadWriteMode = 0644
 )
 const (
 	// flags for writing files to disk
@@ -66,7 +67,7 @@ type DxDownloadURL struct {
 
 type Options struct {
 	ReadOnly       bool
-	AllowOverWrite bool
+	AllowOverwrite bool
 	Verbose        bool
 	VerboseLevel   int
 	Uid            uint32

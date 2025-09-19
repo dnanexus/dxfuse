@@ -112,11 +112,11 @@ func (m Manifest) log(a string, args ...interface{}) {
 }
 
 func (m *Manifest) Clean() {
-	for i, _ := range m.Files {
+	for i := range m.Files {
 		fl := &m.Files[i]
 		fl.Parent = filepath.Clean(fl.Parent)
 	}
-	for i, _ := range m.Directories {
+	for i := range m.Directories {
 		d := &m.Directories[i]
 		d.Dirname = filepath.Clean(d.Dirname)
 	}
@@ -146,20 +146,31 @@ func ReadManifest(fname string) (*Manifest, error) {
 	return m, nil
 }
 
-func MakeManifestFromProjectIds(
+func BuildManifestFromProjects(
 	ctx context.Context,
 	dxEnv dxda.DXEnvironment,
-	projectIds []string) (*Manifest, error) {
+	projectIdsOrNames []string) (*Manifest, error) {
 	// describe the projects, retrieve metadata for them
 	tmpHttpClient := dxda.NewHttpClient()
-	projDescs := make(map[string]DxDescribePrj)
-	for _, pId := range projectIds {
-		pDesc, err := DxDescribeProject(ctx, tmpHttpClient, &dxEnv, pId)
-		if err != nil {
-			LogMsg("Could not describe project %s, check permissions", pId)
-			return nil, err
+	projDescs := make(map[string]DxProjectDescription)
+	for _, proj := range projectIdsOrNames {
+		if validProject(proj) {
+			pDesc, err := DxDescribeProject(ctx, tmpHttpClient, &dxEnv, proj)
+			if err != nil {
+				log.Printf("Could not describe project %s, check permissions", proj)
+				return nil, err
+			}
+			projDescs[pDesc.Id] = *pDesc
+		} else {
+			// This is a project name, describe it, and
+			// return the project description.
+			pDesc, err := DxFindProject(ctx, tmpHttpClient, &dxEnv, proj)
+			if err != nil {
+				log.Printf("Could not find project with name %s", proj)
+				return nil, err
+			}
+			projDescs[pDesc.Id] = *pDesc
 		}
-		projDescs[pDesc.Id] = *pDesc
 	}
 
 	// validate that the projects have good names
@@ -315,7 +326,7 @@ func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnviron
 		}
 	}
 
-	var describedObjects = make(map[string]DxDescribeDataObject)
+	var describedObjects = make(map[string]DxDataObjectDescription)
 	// batch calls per project-id
 	for projectId, fileIds := range fileIdsPerProject {
 		dataObjs, err := DxDescribeBulkObjects(ctx, tmpHttpClient, &dxEnv, projectId, fileIds)
@@ -362,7 +373,7 @@ func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnviron
 	}
 
 	// describe the projects, retrieve metadata for them
-	projDescs := make(map[string]DxDescribePrj)
+	projDescs := make(map[string]DxProjectDescription)
 	for pId, _ := range projectIds {
 		pDesc, err := DxDescribeProject(ctx, tmpHttpClient, &dxEnv, pId)
 		if err != nil {
