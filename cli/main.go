@@ -26,9 +26,11 @@ import (
 )
 
 type Config struct {
-	mountpoint string
-	dxEnv      dxda.DXEnvironment
-	options    dxfuse.Options
+	mountpoint    string
+	dxEnv         dxda.DXEnvironment
+	options       dxfuse.Options
+	mountProjects []string
+	manifest      string
 }
 
 var progName = filepath.Base(os.Args[0])
@@ -296,7 +298,16 @@ func parseCmdLineArgs() Config {
 	}
 
 	mountpoint := flag.Arg(0)
-
+	var manifest string
+	var mountProjects []string
+	// distinguish between the case of a manifest, and a list of projects.
+	if numArgs == 2 && strings.HasSuffix(flag.Arg(1), ".json") {
+		manifest = flag.Arg(1)
+	} else {
+		// process the project inputs, and convert to an array of verified
+		// project IDs
+		mountProjects = flag.Args()[1:]
+	}
 	uid, gid := initUidGid()
 	options := dxfuse.Options{
 		ReadOnly:       !*limitedWrite,
@@ -315,9 +326,11 @@ func parseCmdLineArgs() Config {
 	}
 
 	return Config{
-		mountpoint: mountpoint,
-		dxEnv:      dxEnv,
-		options:    options,
+		mountpoint:    mountpoint,
+		dxEnv:         dxEnv,
+		options:       options,
+		manifest:      manifest,
+		mountProjects: mountProjects,
 	}
 }
 
@@ -337,12 +350,9 @@ func validateMountpointPath(cfg Config) {
 }
 
 func getManifest(cfg Config) (*dxfuse.Manifest, error) {
-	numArgs := flag.NArg()
-
 	// distinguish between the case of a manifest, and a list of projects.
-	if numArgs == 2 && strings.HasSuffix(flag.Arg(1), ".json") {
-		p := flag.Arg(1)
-		manifest, err := dxfuse.ReadManifest(p)
+	if cfg.manifest != "" {
+		manifest, err := dxfuse.ReadManifest(cfg.manifest)
 		if err != nil {
 			return nil, err
 		}
@@ -350,17 +360,17 @@ func getManifest(cfg Config) (*dxfuse.Manifest, error) {
 			return nil, err
 		}
 		return manifest, nil
-	} else {
+	} else if len(cfg.mountProjects) > 0 {
 		// process the project inputs, and convert to an array of verified
 		// project IDs
-		var projectIds []string = flag.Args()[1:]
-
-		manifest, err := dxfuse.BuildManifestFromProjects(context.TODO(), cfg.dxEnv, projectIds)
+		manifest, err := dxfuse.BuildManifestFromProjects(context.TODO(), cfg.dxEnv, cfg.mountProjects)
 		if err != nil {
 			return nil, err
 		}
 		return manifest, nil
 	}
+	// If neither manifest nor mountProjects are provided, return nil and an error
+	return nil, fmt.Errorf("no manifest or mount projects provided")
 }
 
 func startDaemon(cfg Config, logFile string) {
@@ -492,6 +502,42 @@ func startDaemonAndWaitForInitializationToComplete(cfg Config, logFile string) {
 	fmt.Println("Daemon started successfully")
 }
 
+func sendLaunchConfig(
+	ctx context.Context,
+	cfg Config) error {
+	httpClient := dxda.NewHttpClient()
+	var mode string
+	if cfg.options.ReadOnly {
+		mode = "readOnly"
+	} else if cfg.options.AllowOverwrite {
+		mode = "allowOverwrite"
+	} else {
+		mode = "limitedWrite"
+	}
+
+	request := map[string]string{
+		"mode":          mode,
+		"mountProjects": fmt.Sprintf("%v", cfg.mountProjects),
+		"manifest":      cfg.manifest,
+	}
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("recording launch config: %s\n", string(payload))
+
+	_, err = dxda.DxAPI(
+		ctx, httpClient, dxfuse.NumRetriesDefault, &cfg.dxEnv,
+		"system/greet",
+		string(payload))
+	if err != nil {
+		fmt.Printf("error recording launch config: %s\n", err.Error())
+		return err
+	}
+	return nil
+}
+
 func main() {
 	// parse command line options
 	flag.Usage = usage
@@ -513,5 +559,6 @@ func main() {
 		return
 	}
 
+	sendLaunchConfig(context.TODO(), cfg)
 	startDaemonAndWaitForInitializationToComplete(cfg, logFile)
 }
