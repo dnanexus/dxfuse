@@ -42,6 +42,7 @@ const (
 	dirReadWriteMode  = 0777 | os.ModeDir
 	fileReadOnlyMode  = 0444
 	fileWriteOnlyMode = 0222
+	fileReadWriteMode = 0644
 )
 const (
 	// flags for writing files to disk

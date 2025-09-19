@@ -264,7 +264,7 @@ function file_create_existing {
         exit 1
     fi
     result=$(cat /tmp/cmd_results.txt)
-    if [[ ( ! $result =~ "Permission denied" ) && ( ! $result =~ "Operation not permitted" ) ]]; then
+    if [[ ( ! $result =~ "Permission denied" ) && ( ! $result =~ "Operation not permitted" ) && ( ! $result =~ "Operation not supported" )]]; then
         echo "Error, incorrect command results, writing to hello.txt"
         cat /tmp/cmd_results.txt
 

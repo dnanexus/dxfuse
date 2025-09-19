@@ -1,3 +1,4 @@
+#!/bin/bash
 ######################################################################
 ## constants
 CRNT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
@@ -42,21 +43,20 @@ trap teardown EXIT
 # copy a file and check that platform has the correct content
 #
 function check_file_write_content {
-    local top_dir=$1
-    local target_dir=$2
-    local write_dir=$top_dir/$target_dir
+    local dx_dest_dir=$1
+    local write_dir=$2
 
-    echo "write_dir = $write_dir"
-
+    mkdir -p $write_dir
     # create a small file through the filesystem interface
     echo $line1 > $write_dir/A.txt
     ls -l $write_dir/A.txt
 
 
-    dx wait $projName:/$target_dir/A.txt
+    dx wait $projName:/$dx_dest_dir/A.txt
 
     # compare the data
-    local content=$(dx cat $projName:/$target_dir/A.txt)
+    local content
+    content=$(dx cat $projName:/$dx_dest_dir/A.txt)
     if [[ "$content" == "$line1" ]]; then
         echo "correct"
     else
@@ -66,21 +66,111 @@ function check_file_write_content {
     fi
 }
 
-function check_overwrite_fails {
-    local top_dir=$1
-    local target_dir=$2
-    local write_dir=$top_dir/$target_dir
+function verify_replacement {
+    local write_dir=$1
+    local dx_dest_dir=$2
+
+    # Compare local file content
+    local content
+    content=$(cat $write_dir/A.txt)
+    if [[ "$content" == "$line2" ]]; then
+        echo "correct, line content is replaced"
+    else
+        echo "bad content"
+        echo "should be: $line2"
+        echo "found: $content"
+    fi
+
+    # Compare remote file content
+    local content2
+    content2=$(dx cat $projName:/$dx_dest_dir/A.txt)
+    if [[ "$content2" == "$line2" ]]; then
+        echo "correct"
+    else
+        echo "bad content"
+        echo "should be: $line2"
+        echo "found: $content2"
+    fi
+
+    # Check the dx file is replaced
+    num_files=$(dx ls $projName:/$dx_dest_dir | grep A.txt -c)
+    if [[ $num_files != 1 ]]; then
+        echo "Should see 1 files. Instead, can see $num_files files."
+        exit 1
+    else
+        echo "correct, can see 1 files"
+    fi
+}
+
+function check_echo {
+    local test_dir="echo"
+    local dx_dest_dir=$base_dir/$test_dir
+    local write_dir="$mountpoint/$projName/$dx_dest_dir"
+
+    echo "writing a small file"
+    check_file_write_content $dx_dest_dir $write_dir
 
     echo "write_dir = $write_dir"
     set +e
-    echo $line2 >> $write_dir/A.txt
+    echo $line2 > $write_dir/A.txt
     rc=$?
     set -e
-    if [[ $rc == 0 ]]; then
-        echo "Error, appending to remote file should fail"
+    if [[ $rc != 0 ]]; then
+        echo "Error, overwriting existing file with echo failed"
         exit 1
     fi
-    cat $write_dir/A.txt
+
+    echo "verify replacement result: check_echo_existing"
+    verify_replacement "$write_dir" "$dx_dest_dir" "$line2"
+
+}
+
+function check_tee {
+    local test_dir="tee"
+    local dx_dest_dir=$base_dir/$test_dir
+    local write_dir="$mountpoint/$projName/$dx_dest_dir"
+
+    echo "writing a small file"
+    check_file_write_content $dx_dest_dir $write_dir
+
+    echo "write_dir = $write_dir"
+    set +e
+    echo $line2 | tee $write_dir/A.txt
+    rc=$?
+    set -e
+    if [[ $rc != 0 ]]; then
+        echo "Error, overwriting existing file with tee failed"
+        exit 1
+    fi
+
+    echo "verify replacement result: check_tee"
+    verify_replacement "$write_dir" "$dx_dest_dir" "$line2"
+
+}
+
+function check_tail {
+    local test_dir="tail"
+    local dx_dest_dir=$base_dir/$test_dir
+    local write_dir="$mountpoint/$projName/$dx_dest_dir"
+
+    echo "writing a small file"
+    check_file_write_content $dx_dest_dir $write_dir
+
+    echo "write_dir = $write_dir"
+    set +e
+    touch /tmp/B.txt
+
+    # tail will trigger openat(AT_FDCWD, "$write_dir/A.txt", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
+    tail -f /tmp/B.txt > $write_dir/A.txt &
+    TAIL_PID=$!
+    echo $line2 > /tmp/B.txt
+    sleep 5  # Give tail time to process
+    kill $TAIL_PID 2>/dev/null
+    wait $TAIL_PID
+    set -e
+
+    echo "verify replacement result: check_tail"
+    verify_replacement "$write_dir" "$dx_dest_dir" "$line2"
 }
 
 function file_overwrite {
@@ -108,23 +198,22 @@ function file_overwrite {
 
     # Start the dxfuse daemon in the background, and wait for it to initialize.
     echo "Mounting dxfuse"
-    flags="-limitedWrite"
+    flags="-limitedWrite -allowOverwrite"
     if [[ $verbose != "" ]]; then
         flags="$flags -verbose 2"
     fi
-    $dxfuse $flags $mountpoint dxfuse_test_data
-    sleep 1
-
-    echo "writing a small file"
-    check_file_write_content $mountpoint/$projName $base_dir
-
-    fusermount -u $mountpoint
 
     # now we are ready for an overwrite experiment
     $dxfuse $flags $mountpoint dxfuse_test_data
 
-    echo "Rewriting a file is not allowed"
-    check_overwrite_fails $mountpoint/$projName $base_dir
+    echo "Overwrite a file: echo"
+    check_echo $mountpoint/$projName $base_dir
+    
+    echo "Overwrite a file: tee"
+    check_tee $mountpoint/$projName $base_dir
+    
+    echo "Overwrite a file: tail"
+    check_tail $mountpoint/$projName $base_dir
 
     teardown
 }
