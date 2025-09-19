@@ -214,6 +214,8 @@ expensive.
 
 Under `-limitedWrite` mode, when a file is created, it is marked as dirty in the database and a remote DNAx file object is created. Sequential write operations are first written to a buffer in memory which maps to a remote file object part. Part sizes increase as file size grows. Once writing is complete, the local file is flushed and closed and would no longer be marked as dirty, and the remote file object is also closed and become immutable, and can no longer be appended to. 
 
+If using `-allowOverwrite` and `-limitedWrite`, overwrite dxfuse-backed files created both before the start and during the current dxfuse session is supported. Opening dxfuse-backed files will remove the old DNAnexus file id when the operating system catches a file truncation operating system call (`open` or `openat` operation with `O_TRUNC` flag), and will then accept append-only writes similar to how the current `-limitedWrite` mode works for the newly-created dxfuse-backed files.
+
 <!-- A background daemon scans the database periodically and
 uploads dirty files to the platform. If a file `foo` already exists as
 object `file-xxxx`, a new version of it is uploaded, and when done,
