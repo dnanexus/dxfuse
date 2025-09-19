@@ -488,7 +488,7 @@ func (fsys *Filesys) createNewDxFile(ctx context.Context, oph *OpHandle, parentD
 
 // if the file is writable, we can modify some of the attributes.
 // otherwise, this is a permission error.
-// invoked by chmod(2) ftruncate(2) etc.
+// invoked by chmod(2). ftruncate(2) is unsupported
 func (fsys *Filesys) SetInodeAttributes(ctx context.Context, op *fuseops.SetInodeAttributesOp) error {
 	fsys.mutex.Lock()
 	defer fsys.mutex.Unlock()
@@ -509,16 +509,13 @@ func (fsys *Filesys) SetInodeAttributes(ctx context.Context, op *fuseops.SetInod
 	}
 
 	// mtime could be set during `touch` so we allow it if not read-only
-	// but changing mode and size could lead to potential file overwrite so we only allow it
-	// if AllowOverwrite is set.
+	// but ftruncate operations (size changes) are not supported
 	var perm = PERM_VIEW
-	if op.Mode != nil && op.Size != nil {
-		if !fsys.options.AllowOverwrite {
-			fsys.log("SetInodeAttributes: cannot change mode and size if not in allow overwrite mode")
-			return syscall.EPERM
-		} else {
-			perm = PERM_CONTRIBUTE
-		}
+
+	// Explicitly reject any size changes (ftruncate operations)
+	if op.Size != nil {
+		fsys.log("SetInodeAttributes: ftruncate operations are not supported")
+		return syscall.ENOTSUP
 	}
 
 	var file File
@@ -536,24 +533,6 @@ func (fsys *Filesys) SetInodeAttributes(ctx context.Context, op *fuseops.SetInod
 
 	// update the file
 	attrs := file.GetAttrs()
-	if op.Size != nil {
-		if *op.Size > 0 {
-			fsys.log("SetInodeAttributes: cannot change size to %d, only to 0", *op.Size)
-			return syscall.ENOSYS
-		} else if *op.Size == 0 && attrs.Size > 0 {
-			// the file size is set to 0, so we will remove the old remote file and create a new one
-			fsys.log("SetInodeAttributes: setting file size to 0, removing the remote file")
-
-			// replace the file associated with the inode with a new empty file
-			// step 1: remove old file
-			fh, _ := fsys.prepareFileHandleForOverwrite(ctx, oph, &op.OpContext, file)
-			if op.Handle != nil {
-				fsys.fhTable[*op.Handle] = fh
-			}
-			attrs.Mtime = time.Now()
-			attrs.Size = *op.Size
-		}
-	}
 	if op.Mode != nil {
 		attrs.Mode = *op.Mode
 	}
