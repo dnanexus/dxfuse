@@ -417,3 +417,58 @@ func DxDescribe(
 	}
 	return oDesc, nil
 }
+
+type DxDescribeJobRequest struct {
+	DefaultFields bool            `json:"defaultFields"`
+	Fields        map[string]bool `json:"fields,omitempty"`
+}
+
+type DxDescribeJobReply struct {
+	Id             string `json:"id"`
+	Name           string `json:"name"`
+	ExecutableName string `json:"executableName"`
+	BillTo         string `json:"billTo"`
+	Project        string `json:"project"`
+	Workspace      string `json:"workspace"`
+	LaunchedBy     string `json:"launchedBy"`
+}
+
+type DxJobDescription struct {
+	Id             string
+	Name           string
+	ExecutableName string
+	BillTo         string
+	Project        string
+	Workspace      string
+	LaunchedBy     string
+}
+
+func DxDescribeJob(
+	ctx context.Context,
+	httpClient *http.Client,
+	dxEnv *dxda.DXEnvironment,
+	jobId string) (*DxJobDescription, error) {
+
+	var request DxDescribeJobRequest
+	request.DefaultFields = true
+
+	var payload []byte
+	payload, err := json.Marshal(request)
+	if err != nil {
+		return nil, err
+	}
+
+	dxRequest := fmt.Sprintf("%s/describe", jobId)
+	repJs, err := dxda.DxAPI(ctx, httpClient, NumRetriesDefault, dxEnv, dxRequest, string(payload))
+	if err != nil {
+		return nil, err
+	}
+
+	var reply DxDescribeJobReply
+	if err := json.Unmarshal(repJs, &reply); err != nil {
+		return nil, err
+	}
+
+	job := DxJobDescription(reply)
+	return &job, nil
+}

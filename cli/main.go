@@ -537,6 +537,20 @@ func sendLaunchInfo(
 		"Manifest":      dxfuse.GetOrDefault(cfg.manifest, "None", ""),
 	}
 
+	if cfg.dxEnv.DxJobId != "" {
+		jobDesc, err := dxfuse.DxDescribeJob(ctx, httpClient, &cfg.dxEnv, cfg.dxEnv.DxJobId)
+		if err != nil {
+			log.Fatal(err)
+		}
+		// Add job fields to metadata
+		metadata["JobId"] = jobDesc.Id
+		metadata["ExecutableName"] = jobDesc.ExecutableName
+		metadata["BillTo"] = jobDesc.BillTo
+		metadata["Project"] = jobDesc.Project
+		metadata["Workspace"] = jobDesc.Workspace
+		metadata["LaunchedBy"] = jobDesc.LaunchedBy
+	}
+
 	var metaPairs []string
 	for key, value := range metadata {
 		metaPairs = append(metaPairs, fmt.Sprintf("%s=%s", key, value))
