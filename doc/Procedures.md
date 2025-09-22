@@ -30,10 +30,10 @@ To locate specific dxFUSE launch events, use the following sample Splunk queries
 
 ```splunk
 index="dxstaging" user-agent="dxfuse*" /system/greet 
-| rex field=user-agent "(?P<OS>(?<=OS=)[^,\)]+)"
+| rex field=user-agent "(?P<billTo>(?<=BillTo=)[^,\)]+)"
 ```
 
-**Analyze usage by mode**
+**Analyze usage by `mode`**
 ```splunk
 index="dxstaging" user-agent="dxfuse*" "/system/greet"
 | rex field=user-agent "(?<=Mode=)(?P<mode>[^\),]+)"
