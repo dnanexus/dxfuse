@@ -66,14 +66,19 @@ type DxDownloadURL struct {
 	Headers map[string]string `json:"headers"`
 }
 
+const (
+	ReadOnly       = "ReadOnly"
+	LimitedWrite   = "LimitedWrite"
+	AllowOverwrite = "AllowOverwrite"
+)
+
 type Options struct {
-	ReadOnly       bool
-	AllowOverwrite bool
-	Verbose        bool
-	VerboseLevel   int
-	Uid            uint32
-	Gid            uint32
-	StateFolder    string
+	Mode         string // One of {ReadOnly, LimitedWrite, AllowOverwrite}
+	Verbose      bool
+	VerboseLevel int
+	Uid          uint32
+	Gid          uint32
+	StateFolder  string
 }
 
 // A node is a generalization over files and directories
@@ -314,6 +319,13 @@ func boolToInt(b bool) int {
 
 func intToBool(x int) bool {
 	return x > 0
+}
+
+func GetOrDefault(value, defaultValue string, emptyValue string) string {
+	if value == emptyValue {
+		return defaultValue
+	}
+	return value
 }
 
 // create a directory for all dxfuse files. Manifest, log, sqlite db, etc.
