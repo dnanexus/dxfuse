@@ -4,7 +4,7 @@ A filesystem that allows users access to the DNAnexus storage system.
 
 **For support issues please contact support@dnanexus.com**
 
-**NOTE: This project is designed for read-only use in the DNAnexus worker environment. Use in any other environment (such as macOS or Linux clients) or use of `-limitedWrite` is in beta**
+**NOTE: This project is designed for read-only use in the DNAnexus worker environment. Use in any other environment (such as macOS or Linux clients) or use of `-limitedWrite` and `-allowOverwrite` are in beta**
 
 The code uses the [FUSE](https://github.com/jacobsa/fuse)
 library, implemented in [golang](https://golang.org). The DNAnexus
@@ -201,6 +201,7 @@ Operations that attempt to modify an existing file without opening it in truncat
 - In a terminal, appending to an existing with `>>` operator
 - Opening an existing file with `O_APPEND` flag
 - Truncating an existing file to size 0 using `truncate` command or other commands that call `ftruncate` system call  
+
 Note: When editing dxfuse-backed files in `vim`,  avoid `vim` swap file creation in dxfuse-backed folders to make editing more efficient and less error-prone by following one of the following approaches:  
 - turn off swap file by adding `set noswapfile` to your `~/.vimrc` 
 - set the directory option to a non-dxfuse folder
