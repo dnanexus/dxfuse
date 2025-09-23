@@ -29,13 +29,13 @@ To locate specific dxFUSE launch events, use the following sample Splunk queries
 **Find the `billTo`s of all dxFUSE sessions**
 
 ```splunk
-index="dxstaging" user-agent="dxfuse*" /system/greet 
+index="dxstaging" user-agent="dxfuse*" url="/system/greet"
 | rex field=user-agent "(?P<billTo>(?<=BillTo=)[^,\)]+)"
 ```
 
 **Analyze usage by `mode`**
 ```splunk
-index="dxstaging" user-agent="dxfuse*" "/system/greet"
+index="dxstaging" user-agent="dxfuse*" url="/system/greet"
 | rex field=user-agent "(?<=Mode=)(?P<mode>[^\),]+)"
 | stats count by mode
 ```
