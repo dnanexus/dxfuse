@@ -17,14 +17,14 @@ git push origin $version
 
 Launch information is automatically recorded in the `user-agent` field of `/system/greet` API call when creating a new dxFUSE session:
 ```
-dxfuse/v1.6.0 (OS=Ubuntu 22.04, Project=project-1111, LaunchedBy=user-BBB, MountProjects=[project-1111], Manifest=None, Workspace=container-2222, Mode=AllowOverwrite, JobId=job-1234, ExecutableName=test_app, BillTo=org-AAA)
+dxfuse/v1.6.0 (OS=Ubuntu 22.04, Project=project-1111, LaunchedBy=user-BBB, MountProjects=[project-xxxx, project-yyyy], Manifest=None, Mode=AllowOverwrite, JobId=job-1234, ExecutableName=test_app, BillTo=org-AAA)
 ```
 with following information are included:
 - dxFUSE version: `dxfuse/v1.6.0`
 - Platform information:`OS=Ubuntu 24.04`
 - Command-line options used at launch: 
     - `Mode=ReadOnly`: one of the valid modes: ReadOnly, LimitedWrite, AllowOverwrite
-    - `MountProjects=[project-xxxx, project-yyyy]`: list of projects IDs mounted if the mounting targets was specified by project IDs/names when launching, `[]` otherwise
+    - `MountProjects=[project-xxxx, project-yyyy]`: list of projects IDs mounted if the mounting targets was specified by project IDs/names, `[]` otherwise
     - `Manifest=my_manifest.json`: path of manifest JSON file if launching dxfuse with a manifest file, `None` if not specified
 - Job environment details (when launched within a DNAnexus job): 
     - `JobId=job-1234`: job ID
@@ -33,7 +33,7 @@ with following information are included:
     - `BillTo=org-AAA`: billTo of the job
     - `LaunchedBy=user-BBB`: user who launched the job
 
-### Common troubleshooting queries
+### Common lookup and analysis queries
 
 To locate specific dxFUSE launch events, use the following sample Splunk queries. 
 
