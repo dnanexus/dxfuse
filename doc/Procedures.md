@@ -15,12 +15,23 @@ git push origin $version
 
 ## Track usage with Splunk logs
 
-Launch information is automatically recorded in the `user-agent` field of `/system/greet` API call when creating a new dxFUSE session, with the following fields included:
-- dxFUSE version and platform information:`OS=Ubuntu 24.04`
+Launch information is automatically recorded in the `user-agent` field of `/system/greet` API call when creating a new dxFUSE session:
+```
+dxfuse/v1.6.0 (OS=Ubuntu 22.04, Project=project-1111, LaunchedBy=user-BBB, MountProjects=[project-1111], Manifest=None, Workspace=container-2222, Mode=AllowOverwrite, JobId=job-1234, ExecutableName=test_app, BillTo=org-AAA)
+```
+with following information are included:
+- dxFUSE version: `dxfuse/v1.6.0`
+- Platform information:`OS=Ubuntu 24.04`
 - Command-line options used at launch: 
-    - `Mode=ReadOnly, MountProjects=[project-xxxx, project-yyyy], Manifest=None` when using project names/ids as mount targets
-    - `Mode=ReadOnly, MountProjects=[], Manifest=my_manifest.json` when using a manifest file
-- Job environment details (when launched within a DNAnexus job): `JobId=job-J38vzkQ04J9GG9BY4vGFZ74Z, ExecutableName=app_test, Project=project-1111, BillTo=org-AAA, Workspace=container-2222, LaunchedBy=user-BBB`
+    - `Mode=ReadOnly`: one of the valid modes: ReadOnly, LimitedWrite, AllowOverwrite
+    - `MountProjects=[project-xxxx, project-yyyy]`: list of projects IDs mounted if the mounting targets was specified by project IDs/names when launching, `[]` otherwise
+    - `Manifest=my_manifest.json`: path of manifest JSON file if launching dxfuse with a manifest file, `None` if not specified
+- Job environment details (when launched within a DNAnexus job): 
+    - `JobId=job-1234`: job ID
+    - `ExecutableName=test_app`: the executable name that the job is running
+    - `Project=project-1111`: project in which the job is launched
+    - `BillTo=org-AAA`: billTo of the job
+    - `LaunchedBy=user-BBB`: user who launched the job
 
 ### Common troubleshooting queries
 

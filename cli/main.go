@@ -547,7 +547,6 @@ func sendLaunchInfo(
 		metadata["ExecutableName"] = jobDesc.ExecutableName
 		metadata["BillTo"] = jobDesc.BillTo
 		metadata["Project"] = jobDesc.Project
-		metadata["Workspace"] = jobDesc.Workspace
 		metadata["LaunchedBy"] = jobDesc.LaunchedBy
 	}
 
