@@ -1,4 +1,62 @@
 # Release Notes
+## v1.6.1 Track dxFUSE launch information
+- Track dxFUSE launch information (dxFUSE version, platform, launch options, job execution context) in the `user-agent` field of `/system/greet` API call when creating a new session
+
+## v1.6.0 -allowOverwrite mode
+- New flag `-allowOverwrite` for use with -limitedWrite mode enabled. Supports opening a file with O_TRUNC to allow overwriting dxfuse backed files. This mode is in beta similar to -limitedWrite.
+
+## v1.5.0 -stateFolder argument
+- Add a `-stateFolder` argument which takes a string directory path where dxfuse will write its logfile and database. Default location if not provided is $HOME/.dxfuse, matching the behavior of previous versions of dxfuse.
+
+## v1.4.1 Fix crash when read offset precedes cache offset
+- Fix dxfuse crash for a non sequential read with an offset prior to the current sequential read cache.
+
+## v1.4.0 Fix truncated reads from cache
+- Fixed bug where dxfuse returned truncated data when it mistakenly expected data to be in its prefetch cache.
+- Revert /listFolder changes from e3f92d8 as the DNAnexus API was not optimized for this.
+
+## v1.3.0 List folder objects and describe content in a single request
+- List folder objects and describe content in a single /listFolder request instead of /listFolder and then iterating with /system/findDataObjects.
+- Update MacOS runner version in GHA.
+
+## v1.2.0 Fix dnanexus files that are symlinks
+- Fix downloading dnanexus files that are backed by symlinks. Previously this only worked for symlinks on a public s3 bucket.
+- Update Linux build from Ubuntu 18.04 --> 20.04 github action runner as 18.04 was deprecated.
+
+## v1.1.1 Remove command server
+- Remove the command server functionality that was previously used in dxfuse -sync which was deprecated in v1.0.0. This will allow multiple dxfuse processes to run on the same machine without port conflicts.
+
+## v1.1.0 Write temporary manifest to $HOME/.dxfuse/
+- Write temporary manifest to `$HOME/.dxfuse/` instead of `/tmp/` to allow multiple users to run an instance dxfuse concurrently on the same machine.
+
+## v1.0.1 Fix crash when file-xxxx/download returns error
+- Switch back to go-sqlite3 with CGO_ENABLED build for sqlite dependency.
+- Fix crash when file-xxxx/download returns error
+
+## v1.0.0 -limitedWrite mode
+- Backwards incompatible release v1.0.0.
+- New flag `-limitedWrite` for supporting append only writes to DNAnexus files. See README for supported operations and limitations of this mode.
+- Remove dxfuse -sync command previously used for syncing writeable files to DNAnexus.
+- Enable FUSE options for kernel readahead and pagecache. Enabling pagecache adds support for shared read-only mmap which is used by many applications, e.g. gatk, tidyverse readr. Kernel readahead fixes some dxfuse crashes with prefetching and may be more stable.
+
+## v0.25.0 Fix folders with quotes, noatime
+- Mount with noatime option. Fix sql statements to handle folder names with quotes.
+
+## v0.24.3 Fix manifest input
+- Do not throw an error if a manifest file is provided as input and the file contains all of the describe information.
+
+## v0.24.2 Support single quote ' in filename
+- Utilize prepared SQL statements for queries with filenames. Allows filenames with ' single quotes.
+
+## v0.24.1 Increase startup wait time
+- Increase wait for dxfuse to initialize from 10 seconds to 90 seconds.
+
+## v0.24.0 Optimize first read of remote directory
+- Reduce time to list folder contents with thousands of objects upon first read of directory by optimizing the posix conversion for objects.
+Bump to golang 1.15.7
+
+## v0.23.3 Log go panics to logfile
+- Log go panics to the dxfuse logfile by redirecting the daemon subprocess's stderr to the logfile.
 
 ## v0.23.2
 - Increase the default number of retries of http requests from 3 --> 10.
