@@ -31,7 +31,7 @@ const (
 	NumRetriesDefault         = 10
 	InitialUploadPartSize     = 16 * MiB
 	MaxUploadPartSize         = 700 * MiB
-	Version                   = "v1.6.0"
+	Version                   = "v1.6.1"
 )
 const (
 	InodeInvalid = 0
