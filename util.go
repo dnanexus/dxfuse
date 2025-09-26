@@ -6,9 +6,11 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jacobsa/fuse/fuseops"
+	"github.com/shirou/gopsutil/host"
 	"github.com/shirou/gopsutil/process"
 )
 
@@ -65,14 +67,19 @@ type DxDownloadURL struct {
 	Headers map[string]string `json:"headers"`
 }
 
+const (
+	ReadOnly       = "ReadOnly"
+	LimitedWrite   = "LimitedWrite"
+	AllowOverwrite = "AllowOverwrite"
+)
+
 type Options struct {
-	ReadOnly       bool
-	AllowOverwrite bool
-	Verbose        bool
-	VerboseLevel   int
-	Uid            uint32
-	Gid            uint32
-	StateFolder    string
+	Mode         string // One of {ReadOnly, LimitedWrite, AllowOverwrite}
+	Verbose      bool
+	VerboseLevel int
+	Uid          uint32
+	Gid          uint32
+	StateFolder  string
 }
 
 // A node is a generalization over files and directories
@@ -315,6 +322,13 @@ func intToBool(x int) bool {
 	return x > 0
 }
 
+func GetOrDefault(value, defaultValue string, emptyValue string) string {
+	if value == emptyValue {
+		return defaultValue
+	}
+	return value
+}
+
 // create a directory for all dxfuse files. Manifest, log, sqlite db, etc.
 func MakeDxfuseBaseDir(dxfuseBaseDir string) string {
 	if _, err := os.Stat(dxfuseBaseDir); err != nil {
@@ -341,4 +355,16 @@ func GetTgid(pid uint32) (tgid int32, err error) {
 		return -1, err
 	}
 	return tgid, nil
+}
+
+func GetPlatformInfo() (string, error) {
+	platform, _, version, err := host.PlatformInformation()
+	if err != nil {
+		return "", err
+	}
+	// Capitalize the first character of platform
+	if len(platform) > 0 {
+		platform = strings.ToUpper(string(platform[0])) + platform[1:]
+	}
+	return platform + " " + version, nil
 }

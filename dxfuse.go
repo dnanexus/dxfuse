@@ -217,7 +217,7 @@ func NewDxfuse(
 	}
 	fsys.projId2Desc = projId2Desc
 
-	if options.ReadOnly {
+	if options.Mode == ReadOnly {
 		// we don't need the file upload module
 		return fsys, nil
 	}
@@ -279,7 +279,7 @@ func (fsys *Filesys) Shutdown() {
 
 // check if a user has sufficient permissions to read/write a project
 func (fsys *Filesys) checkProjectPermissions(projId string, requiredPerm int) bool {
-	if fsys.options.ReadOnly {
+	if fsys.options.Mode == ReadOnly {
 		// if the filesystem is mounted read-only, we
 		// allow only operations that require VIEW level access
 		if requiredPerm > PERM_VIEW {
@@ -1515,7 +1515,7 @@ func (fsys *Filesys) OpenFile(ctx context.Context, op *fuseops.OpenFileOp) error
 			accessMode = AM_RO_Remote
 			perm = PERM_VIEW
 			// O_TRUNC is set, check if we can overwrite the file
-		} else if !fsys.options.AllowOverwrite {
+		} else if fsys.options.Mode != AllowOverwrite {
 			fsys.log("OpenFileOp: overwriting is not allowed if not using -allow-overwrite mode")
 			return syscall.EACCES
 			// O_TRUNC is set and we are in the -allow-overwrite mode
@@ -1845,7 +1845,7 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	// If AllowOverwrite is true, we can keep the file's current mode
 	// otherwise, flushing a file will make it read-only.
 	var mode os.FileMode
-	if fsys.options.AllowOverwrite {
+	if fsys.options.Mode == AllowOverwrite {
 		mode = file.Mode
 	} else {
 		mode = fileReadOnlyMode
@@ -1928,7 +1928,7 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 			// If AllowOverwrite is true, we can keep using file's current mode
 			// otherwise, change the mode to read-only.
 			var mode os.FileMode
-			if fsys.options.AllowOverwrite {
+			if fsys.options.Mode == AllowOverwrite {
 				mode = file.Mode
 			} else {
 				mode = fileReadOnlyMode

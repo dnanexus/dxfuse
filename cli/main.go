@@ -26,9 +26,11 @@ import (
 )
 
 type Config struct {
-	mountpoint string
-	dxEnv      dxda.DXEnvironment
-	options    dxfuse.Options
+	mountpoint    string
+	dxEnv         dxda.DXEnvironment
+	options       dxfuse.Options
+	mountProjects []string
+	manifest      string
 }
 
 var progName = filepath.Base(os.Args[0])
@@ -147,9 +149,9 @@ func fsDaemon(
 		// Required for sequential writes
 		DisableWritebackCaching: true,
 		// Pass read-only mount option if not in limitedWrite
-		ReadOnly: options.ReadOnly,
+		ReadOnly: options.Mode == dxfuse.ReadOnly,
 		// Allow overwriting files if requested
-		EnableAtomicTrunc: options.AllowOverwrite,
+		EnableAtomicTrunc: options.Mode == dxfuse.AllowOverwrite,
 		Options:           mountOptions,
 	}
 
@@ -296,16 +298,32 @@ func parseCmdLineArgs() Config {
 	}
 
 	mountpoint := flag.Arg(0)
-
+	var manifest string
+	var mountProjects []string
+	// distinguish between the case of a manifest, and a list of projects.
+	if numArgs == 2 && strings.HasSuffix(flag.Arg(1), ".json") {
+		manifest = flag.Arg(1)
+	} else {
+		// process the project inputs, and convert to an array of verified
+		// project IDs
+		mountProjects = flag.Args()[1:]
+	}
 	uid, gid := initUidGid()
+
+	mode := dxfuse.ReadOnly
+	if *limitedWrite {
+		mode = dxfuse.LimitedWrite
+	}
+	if *allowOverwrite {
+		mode = dxfuse.AllowOverwrite
+	}
 	options := dxfuse.Options{
-		ReadOnly:       !*limitedWrite,
-		AllowOverwrite: *allowOverwrite,
-		Verbose:        *verbose > 0,
-		VerboseLevel:   *verbose,
-		Uid:            uid,
-		Gid:            gid,
-		StateFolder:    *stateFolder,
+		Mode:         mode,
+		Verbose:      *verbose > 0,
+		VerboseLevel: *verbose,
+		Uid:          uid,
+		Gid:          gid,
+		StateFolder:  *stateFolder,
 	}
 
 	dxEnv, _, err := dxda.GetDxEnvironment()
@@ -315,9 +333,11 @@ func parseCmdLineArgs() Config {
 	}
 
 	return Config{
-		mountpoint: mountpoint,
-		dxEnv:      dxEnv,
-		options:    options,
+		mountpoint:    mountpoint,
+		dxEnv:         dxEnv,
+		options:       options,
+		manifest:      manifest,
+		mountProjects: mountProjects,
 	}
 }
 
@@ -336,13 +356,10 @@ func validateMountpointPath(cfg Config) {
 	}
 }
 
-func getManifest(cfg Config) (*dxfuse.Manifest, error) {
-	numArgs := flag.NArg()
-
+func buildManifest(cfg *Config) (*dxfuse.Manifest, error) {
 	// distinguish between the case of a manifest, and a list of projects.
-	if numArgs == 2 && strings.HasSuffix(flag.Arg(1), ".json") {
-		p := flag.Arg(1)
-		manifest, err := dxfuse.ReadManifest(p)
+	if cfg.manifest != "" {
+		manifest, err := dxfuse.ReadManifest(cfg.manifest)
 		if err != nil {
 			return nil, err
 		}
@@ -350,17 +367,18 @@ func getManifest(cfg Config) (*dxfuse.Manifest, error) {
 			return nil, err
 		}
 		return manifest, nil
-	} else {
-		// process the project inputs, and convert to an array of verified
-		// project IDs
-		var projectIds []string = flag.Args()[1:]
-
-		manifest, err := dxfuse.BuildManifestFromProjects(context.TODO(), cfg.dxEnv, projectIds)
+	} else if len(cfg.mountProjects) > 0 {
+		// process the project inputs, and convert to an array of verified project IDs
+		manifest, projectIds, err := dxfuse.BuildManifestFromProjects(context.TODO(), cfg.dxEnv, cfg.mountProjects)
+		// store the verified project IDs back into the config
+		cfg.mountProjects = projectIds
 		if err != nil {
 			return nil, err
 		}
 		return manifest, nil
 	}
+	// If neither manifest nor mountProjects are provided, return nil and an error
+	return nil, fmt.Errorf("no manifest or mount projects provided")
 }
 
 func startDaemon(cfg Config, logFile string) {
@@ -377,7 +395,14 @@ func startDaemon(cfg Config, logFile string) {
 		os.Exit(1)
 	}
 
-	logger.Printf("configuration=%v", cfg)
+	logger.Printf("configuration={%+v}", cfg.options)
+
+	// reset user-agent to include only the dxfuse version and platform info
+	platformInfo, err := dxfuse.GetPlatformInfo()
+	if err != nil {
+		log.Fatal(err)
+	}
+	dxda.UserAgent = fmt.Sprintf("dxfuse/%s (%s)", dxfuse.Version, platformInfo)
 
 	err = fsDaemon(cfg.mountpoint, cfg.dxEnv, *manifest, cfg.options, logf, logger)
 	if err != nil {
@@ -428,7 +453,7 @@ func buildDaemonCommandLine(cfg Config, fullManifestPath string) []string {
 
 // We are in the parent process.
 func startDaemonAndWaitForInitializationToComplete(cfg Config, logFile string) {
-	manifest, err := getManifest(cfg)
+	manifest, err := buildManifest(&cfg)
 	if err != nil {
 		fmt.Print(err.Error())
 		os.Exit(1)
@@ -450,6 +475,8 @@ func startDaemonAndWaitForInitializationToComplete(cfg Config, logFile string) {
 			fullManifestPath, err.Error())
 		os.Exit(1)
 	}
+
+	sendLaunchInfo(context.TODO(), cfg)
 
 	// Mount in a subprocess, and wait for the filesystem to start.
 	// If there is an error, report it. Otherwise, return after the filesystem
@@ -492,6 +519,54 @@ func startDaemonAndWaitForInitializationToComplete(cfg Config, logFile string) {
 	fmt.Println("Daemon started successfully")
 }
 
+// Send launch info via /system/greet
+// by adding dxfuse version, platform info and startup arguments to dxda user-agent
+func sendLaunchInfo(
+	ctx context.Context,
+	cfg Config) error {
+	httpClient := dxda.NewHttpClient()
+
+	platformInfo, err := dxfuse.GetPlatformInfo()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	metadata := map[string]string{
+		"Mode":          cfg.options.Mode,
+		"MountProjects": fmt.Sprintf("%v", cfg.mountProjects),
+		"Manifest":      dxfuse.GetOrDefault(cfg.manifest, "None", ""),
+	}
+
+	if cfg.dxEnv.DxJobId != "" {
+		jobDesc, err := dxfuse.DxDescribeJob(ctx, httpClient, &cfg.dxEnv, cfg.dxEnv.DxJobId)
+		if err != nil {
+			log.Fatal(err)
+		}
+		// Add job fields to metadata
+		metadata["JobId"] = jobDesc.Id
+		metadata["ExecutableName"] = jobDesc.ExecutableName
+		metadata["BillTo"] = jobDesc.BillTo
+		metadata["Project"] = jobDesc.Project
+		metadata["LaunchedBy"] = jobDesc.LaunchedBy
+	}
+
+	var metaPairs []string
+	for key, value := range metadata {
+		metaPairs = append(metaPairs, fmt.Sprintf("%s=%s", key, value))
+	}
+	metaString := strings.Join(metaPairs, ", ")
+	dxda.UserAgent = fmt.Sprintf("dxfuse/%s (OS=%s, %s)", dxfuse.Version, platformInfo, metaString)
+	_, err = dxda.DxAPI(
+		ctx, httpClient, dxfuse.NumRetriesDefault, &cfg.dxEnv,
+		"system/greet",
+		"")
+	if err != nil {
+		fmt.Printf("error recording launch config: %s\n", err.Error())
+		return err
+	}
+	return nil
+}
+
 func main() {
 	// parse command line options
 	flag.Usage = usage
@@ -502,13 +577,10 @@ func main() {
 	logFile := filepath.Join(cfg.options.StateFolder, dxfuse.LogFile)
 	fmt.Printf("The log file is located at %s\n", logFile)
 
-	dxda.UserAgent = fmt.Sprintf("dxfuse/%s (%s)", dxfuse.Version, runtime.GOOS)
-
 	if *daemon {
 		// This will be true -only- in the child sub-process
 		startDaemon(cfg, logFile)
 		return
 	}
-
 	startDaemonAndWaitForInitializationToComplete(cfg, logFile)
 }

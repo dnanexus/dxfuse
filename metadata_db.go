@@ -885,7 +885,7 @@ func (mdb *MetadataDb) populateDir(
 	}
 
 	var fileMode os.FileMode
-	if mdb.options.AllowOverwrite {
+	if mdb.options.Mode == AllowOverwrite {
 		fileMode = fileReadWriteMode
 	} else {
 		fileMode = fileReadOnlyMode
@@ -1215,7 +1215,7 @@ func (mdb *MetadataDb) PopulateRoot(ctx context.Context, oph *OpHandle, manifest
 
 	// create individual files
 	var fileMode os.FileMode
-	if mdb.options.AllowOverwrite {
+	if mdb.options.Mode == AllowOverwrite {
 		fileMode = fileReadWriteMode
 	} else {
 		fileMode = fileReadOnlyMode

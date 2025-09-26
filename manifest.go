@@ -149,7 +149,7 @@ func ReadManifest(fname string) (*Manifest, error) {
 func BuildManifestFromProjects(
 	ctx context.Context,
 	dxEnv dxda.DXEnvironment,
-	projectIdsOrNames []string) (*Manifest, error) {
+	projectIdsOrNames []string) (*Manifest, []string, error) {
 	// describe the projects, retrieve metadata for them
 	tmpHttpClient := dxda.NewHttpClient()
 	projDescs := make(map[string]DxProjectDescription)
@@ -158,7 +158,7 @@ func BuildManifestFromProjects(
 			pDesc, err := DxDescribeProject(ctx, tmpHttpClient, &dxEnv, proj)
 			if err != nil {
 				log.Printf("Could not describe project %s, check permissions", proj)
-				return nil, err
+				return nil, nil, err
 			}
 			projDescs[pDesc.Id] = *pDesc
 		} else {
@@ -167,7 +167,7 @@ func BuildManifestFromProjects(
 			pDesc, err := DxFindProject(ctx, tmpHttpClient, &dxEnv, proj)
 			if err != nil {
 				log.Printf("Could not find project with name %s", proj)
-				return nil, err
+				return nil, nil, err
 			}
 			projDescs[pDesc.Id] = *pDesc
 		}
@@ -178,12 +178,14 @@ func BuildManifestFromProjects(
 		if !FilenameIsPosixCompliant(pDesc.Name) {
 			err := fmt.Errorf("Project %s has a non posix compliant name (%s)",
 				pDesc.Id, pDesc.Name)
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
 	dirs := make([]ManifestDir, 0)
-	for _, pDesc := range projDescs {
+	projIds := make([]string, 0)
+
+	for pId, pDesc := range projDescs {
 		mstDir := ManifestDir{
 			ProjId:       pDesc.Id,
 			Folder:       "/",
@@ -192,6 +194,7 @@ func BuildManifestFromProjects(
 			MtimeSeconds: pDesc.MtimeSeconds,
 		}
 		dirs = append(dirs, mstDir)
+		projIds = append(projIds, pId)
 	}
 
 	var emptyFiles []ManifestFile
@@ -201,9 +204,9 @@ func BuildManifestFromProjects(
 	}
 
 	if err := manifest.Validate(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return manifest, nil
+	return manifest, projIds, nil
 }
 
 // return all the parents of a directory.
