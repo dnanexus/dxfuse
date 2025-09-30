@@ -18,6 +18,22 @@ const (
 	fileCloseMaxWaitTime = 10 * time.Minute
 )
 
+type DxOpsInterface interface {
+	DxRemoveObjects(ctx context.Context, httpClient *http.Client, projId string, objects []string) error
+	DxFileNew(ctx context.Context, httpClient *http.Client, nonce, projId, fileName, projFolder string) (string, error)
+	DxFolderNew(ctx context.Context, httpClient *http.Client, projId, folderPath string) error
+	DxFolderRemove(ctx context.Context, httpClient *http.Client, projId, folderPath string) error
+	DxRename(ctx context.Context, httpClient *http.Client, projId, fileId, newName string) error
+	DxMove(ctx context.Context, httpClient *http.Client, projId string, objects, folders []string, destination string) error
+	DxRenameFolder(ctx context.Context, httpClient *http.Client, projId, folderPath, newName string) error
+	DxFileCloseAndWait(ctx context.Context, httpClient *http.Client, projId, fileId string) error
+	DxFileUploadPart(ctx context.Context, httpClient *http.Client, fileId string, partId int, data []byte) error
+	DxAddTags(ctx context.Context, httpClient *http.Client, projId, fileId string, tags []string) error
+	DxRemoveTags(ctx context.Context, httpClient *http.Client, projId, fileId string, tags []string) error
+	DxSetProperties(ctx context.Context, httpClient *http.Client, projId, fileId string, props map[string](*string)) error
+	DxAPI(ctx context.Context, httpClient *http.Client, retries int, dxEnv *dxda.DXEnvironment, endpoint string, payload string) ([]byte, error)
+}
+
 type DxOps struct {
 	dxEnv   dxda.DXEnvironment
 	options Options
@@ -664,4 +680,25 @@ func (ops *DxOps) DxRemoveTags(
 	}
 
 	return nil
+}
+
+func (ops *DxOps) DxAPI(
+	ctx context.Context,
+	httpClient *http.Client,
+	retries int,
+	dxEnv *dxda.DXEnvironment,
+	endpoint string,
+	payload string) ([]byte, error) {
+
+	var body []byte
+	var err error
+
+	for i := 0; i < retries; i++ {
+		body, err = dxda.DxAPI(ctx, httpClient, retries, dxEnv, endpoint, payload)
+		if err == nil {
+			return body, nil
+		}
+	}
+
+	return nil, err
 }

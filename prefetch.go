@@ -129,6 +129,13 @@ type PrefetchFileMetadata struct {
 }
 
 // global limits
+
+type PrefetchGlobalStateInterface interface {
+	Shutdown()
+	CreateStreamEntry(hid fuseops.HandleID, file File, url DxDownloadURL)
+	RemoveStreamEntry(hid fuseops.HandleID)
+	CacheLookup(hid fuseops.HandleID, offset, endOfs int64, dst []byte) int
+}
 type PrefetchGlobalState struct {
 	mutex                 sync.Mutex // Lock used to control the files table
 	verbose               bool

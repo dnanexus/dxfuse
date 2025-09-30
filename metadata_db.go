@@ -66,32 +66,11 @@ func (mdb *MetadataDb) log(a string, args ...interface{}) {
 func (mdb *MetadataDb) BeginTxn() (*sql.Tx, error) {
 	return mdb.db.Begin()
 }
-
-func (mdb *MetadataDb) opOpen() *OpHandle {
-	txn, err := mdb.db.Begin()
-	if err != nil {
-		log.Panic("Could not open transaction")
-	}
-
-	return &OpHandle{
-		httpClient: nil,
-		txn:        txn,
-		err:        nil,
-	}
+func (mdb *MetadataDb) Commit(oph *OpHandle) error {
+	return oph.txn.Commit()
 }
-
-func (mdb *MetadataDb) opClose(oph *OpHandle) {
-	if oph.err == nil {
-		err := oph.txn.Commit()
-		if err != nil {
-			log.Panic("could not commit transaction")
-		}
-	} else {
-		err := oph.txn.Rollback()
-		if err != nil {
-			log.Panic("could not rollback transaction")
-		}
-	}
+func (mdb *MetadataDb) Rollback(oph *OpHandle) error {
+	return oph.txn.Rollback()
 }
 
 // Construct a local sql database that holds metadata for
@@ -802,6 +781,7 @@ func (mdb *MetadataDb) createEmptyDir(
 
 // Assumption: the directory does not already exist in the database.
 func (mdb *MetadataDb) CreateDir(
+	ctx context.Context,
 	oph *OpHandle,
 	projId string,
 	projFolder string,
@@ -1642,9 +1622,7 @@ func (mdb *MetadataDb) UpdateFileTagsAndProperties(
 
 // Get a list of all the dirty files, and reset the table. The files can be modified again,
 // which will set the flag to true.
-func (mdb *MetadataDb) DirtyFilesGetAndReset(flag int) ([]DirtyFileInfo, error) {
-	oph := mdb.opOpen()
-	defer mdb.opClose(oph)
+func (mdb *MetadataDb) DirtyFilesGetAndReset(flag int, oph *OpHandle) ([]DirtyFileInfo, error) {
 
 	var loThreshSec int64 = 0
 	switch flag {
