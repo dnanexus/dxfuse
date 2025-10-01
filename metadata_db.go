@@ -21,6 +21,44 @@ const (
 	nsDataObjType = 2
 )
 
+// MetadataDbInterface defines the interface for metadata database operations
+// This allows for easy mocking and testing of Filesys methods
+type MetadataDbInterface interface {
+	// Database lifecycle
+	Init() error
+	BeginTxn() (*sql.Tx, error)
+	Commit(oph *OpHandle) error
+	Rollback(oph *OpHandle) error
+	Shutdown()
+
+	// Root population
+	PopulateRoot(ctx context.Context, oph *OpHandle, manifest Manifest) error
+
+	// Directory operations
+	LookupDirByInode(ctx context.Context, oph *OpHandle, inode int64) (Dir, bool, error)
+	ReadDirAll(ctx context.Context, oph *OpHandle, dir *Dir) (map[string]File, map[string]Dir, error)
+	CreateDir(ctx context.Context, oph *OpHandle, projId, projFolder string, ctime, mtime int64, mode os.FileMode, fullPath string) (int64, error)
+	RemoveEmptyDir(ctx context.Context, oph *OpHandle, inode int64) error
+	MoveDir(ctx context.Context, oph *OpHandle, oldParent, newParent, dir Dir, newName string) error
+
+	// File operations
+	LookupInDir(ctx context.Context, oph *OpHandle, dir *Dir, name string) (Node, bool, error)
+	LookupByInode(ctx context.Context, oph *OpHandle, inode int64) (Node, bool, error)
+	CreateFile(ctx context.Context, oph *OpHandle, parentDir *Dir, name string, mode os.FileMode, fileId string) (File, error)
+	RemoveFile(ctx context.Context, oph *OpHandle, inode int64) error
+	MoveFile(ctx context.Context, oph *OpHandle, inode int64, newParent Dir, newName string) error
+	GetParentDirByInode(ctx context.Context, oph *OpHandle, inode int64) (Dir, error)
+
+	// File attribute operations
+	UpdateFileAttrs(ctx context.Context, oph *OpHandle, inode int64, size int64, mtime time.Time, mode *os.FileMode) error
+	UpdateInodeFileState(ctx context.Context, oph *OpHandle, inode int64, state string, uploading bool) error
+	UpdateInodeFileId(ctx context.Context, oph *OpHandle, inode int64, fileId string) error
+	UpdateFileTagsAndProperties(ctx context.Context, oph *OpHandle, file File) error
+
+	// Inode operations
+	UnlinkInode(ctx context.Context, oph *OpHandle, inode int64) error
+}
+
 type MetadataDb struct {
 	// an open handle to the database
 	db         *sql.DB
