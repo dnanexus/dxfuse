@@ -614,21 +614,21 @@ func (sybx *SyncDbDx) sweep(flag int) error {
 	// find all the dirty files. We need to lock
 	// the database while we are doing this.
 	sybx.mutex.Lock()
-	dirtyFiles, err := sybx.mdb.DirtyFilesGetAndReset(flag)
-	if err != nil {
-		sybx.mutex.Unlock()
-		return err
-	}
+	// dirtyFiles, err := sybx.mdb.DirtyFilesGetAndReset(flag)
+	// if err != nil {
+	// 	sybx.mutex.Unlock()
+	// 	return err
+	// }
 	sybx.mutex.Unlock()
 
-	if sybx.options.Verbose {
-		sybx.log("%d dirty files", len(dirtyFiles))
-	}
+	// if sybx.options.Verbose {
+	// 	sybx.log("%d dirty files", len(dirtyFiles))
+	// }
 
 	// enqueue them on the "to-upload" list
-	for _, file := range dirtyFiles {
-		sybx.enqueueUpdateFileReq(file)
-	}
+	// for _, file := range dirtyFiles {
+	// 	sybx.enqueueUpdateFileReq(file)
+	// }
 
 	if sybx.options.Verbose {
 		sybx.log("]")

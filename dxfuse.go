@@ -50,19 +50,19 @@ type Filesys struct {
 	httpClientPool chan (*http.Client)
 
 	// metadata database
-	mdb *MetadataDb
+	mdb MetadataDbInterface
 
 	// prefetch state for all files
-	pgs *PrefetchGlobalState
+	pgs PrefetchGlobalStateInterface
 
 	// parallel part uploader
-	uploader *FileUploader
+	uploader FileUploaderInterface
 
 	// sync daemon
 	sybx *SyncDbDx
 
 	// API to dx
-	ops *DxOps
+	ops DxOpsInterface
 
 	// A way to send external commands to the filesystem
 	// cmdSrv *CmdServer
@@ -323,13 +323,13 @@ func (fsys *Filesys) opClose(oph *OpHandle) {
 	}
 
 	if oph.err == nil {
-		err := oph.txn.Commit()
+		err := fsys.mdb.Commit(oph)
 		if err != nil {
 			fsys.log("Txn commit error: %v", err.Error())
 			log.Panic("could not commit transaction")
 		}
 	} else {
-		err := oph.txn.Rollback()
+		err := fsys.mdb.Rollback(oph)
 		if err != nil {
 			log.Panic("could not rollback transaction")
 		}
@@ -671,6 +671,7 @@ func (fsys *Filesys) MkDir(ctx context.Context, op *fuseops.MkDirOp) error {
 	now := time.Now()
 	nowSeconds := now.Unix()
 	dnode, err := fsys.mdb.CreateDir(
+		ctx,
 		oph,
 		parentDir.ProjId,
 		folderFullPath,
@@ -1338,7 +1339,7 @@ func (fsys *Filesys) getRemoteFileHandleForRead(
 	payload := fmt.Sprintf("{\"project\": \"%s\", \"duration\": %d}",
 		f.ProjId, secondsInYear)
 
-	body, err := dxda.DxAPI(ctx, oph.httpClient, NumRetriesDefault, &fsys.dxEnv, fmt.Sprintf("%s/download", f.Id), payload)
+	body, err := fsys.ops.DxAPI(ctx, oph.httpClient, NumRetriesDefault, &fsys.dxEnv, fmt.Sprintf("%s/download", f.Id), payload)
 	if err != nil {
 		oph.RecordError(err)
 		return nil, fsys.translateError(err)
@@ -1725,7 +1726,7 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 				partId:      partId,
 			}
 			fh.wg.Add(1)
-			fsys.uploader.uploadQueue <- uploadReq
+			fsys.uploader.UploadPart(uploadReq)
 			fh.writeBuffer = nil
 			fh.writeBufferOffset = 0
 			// Update the file attributes in the database (size, mtime)
@@ -1770,7 +1771,7 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	}
 	if fh.accessMode != AM_AO_Remote {
 		// This isn't a writeable file, either an read-only one or already been flushed
-		if fsys.ops.options.VerboseLevel > 1 {
+		if fsys.options.VerboseLevel > 1 {
 			fsys.log("Ignoring flush of inode %d, file is not writeable", op.Inode)
 		}
 		return nil
@@ -1795,7 +1796,7 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 
 	// Empty files are handled by ReleaseFileHandle
 	if len(fh.writeBuffer) == 0 && fh.size == 0 {
-		if fsys.ops.options.VerboseLevel > 1 {
+		if fsys.options.VerboseLevel > 1 {
 			fsys.log("Ignoring FlushFile: file is empty")
 		}
 		return nil
@@ -1811,9 +1812,9 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 		partId:      partId,
 	}
 	fh.wg.Add(1)
-	fsys.uploader.uploadQueue <- uploadReq
+	fsys.uploader.UploadPart(uploadReq)
 	fh.writeBuffer = nil
-	<-fsys.uploader.writeBufferChan
+	fsys.uploader.WaitForWriteBuffer()
 
 	fh.wg.Wait()
 	// Check if there was an error uploading the last part
@@ -1898,7 +1899,7 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 	case AM_AO_Remote:
 		// Special case for empty files which are not uploaded during FlushFile since their size is 0
 		if fh.size == 0 && len(fh.writeBuffer) == 0 && fh.lastPartId == 0 {
-			if fsys.ops.options.Verbose {
+			if fsys.options.Verbose {
 				fsys.log("Upload and close empty %s", fh.Id)
 			}
 			fh.lastPartId++

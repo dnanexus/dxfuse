@@ -36,6 +36,13 @@ type UploadRequest struct {
 	partId      int
 }
 
+type FileUploaderInterface interface {
+	AllocateWriteBuffer(partId int, block bool) []byte
+	UploadPart(req UploadRequest)
+	WaitForWriteBuffer()
+	Shutdown()
+}
+
 type FileUploader struct {
 	verbose           bool
 	uploadQueue       chan UploadRequest
@@ -96,4 +103,12 @@ func (uploader *FileUploader) uploadWorker() {
 		}
 		uploadReq.fh.wg.Done()
 	}
+}
+
+func (uploader *FileUploader) UploadPart(req UploadRequest) {
+	uploader.uploadQueue <- req
+}
+
+func (uploader *FileUploader) WaitForWriteBuffer() {
+	<-uploader.writeBufferChan
 }
