@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -112,11 +112,11 @@ func (m Manifest) log(a string, args ...interface{}) {
 }
 
 func (m *Manifest) Clean() {
-	for i, _ := range m.Files {
+	for i := range m.Files {
 		fl := &m.Files[i]
 		fl.Parent = filepath.Clean(fl.Parent)
 	}
-	for i, _ := range m.Directories {
+	for i := range m.Directories {
 		d := &m.Directories[i]
 		d.Dirname = filepath.Clean(d.Dirname)
 	}
@@ -124,12 +124,12 @@ func (m *Manifest) Clean() {
 
 // read the manifest from a file into a memory structure
 func ReadManifest(fname string) (*Manifest, error) {
-	srcData, err := ioutil.ReadFile(fname)
+	srcData, err := os.ReadFile(fname)
 	if err != nil {
 		log.Panic(err)
 	}
 	br := bytes.NewReader(srcData)
-	data, err := ioutil.ReadAll(br)
+	data, err := io.ReadAll(br)
 	if err != nil {
 		log.Panic(err)
 	}
@@ -146,34 +146,46 @@ func ReadManifest(fname string) (*Manifest, error) {
 	return m, nil
 }
 
-func MakeManifestFromProjectIds(
+func BuildManifestFromProjects(
 	ctx context.Context,
 	dxEnv dxda.DXEnvironment,
-	projectIds []string) (*Manifest, error) {
+	projectIdsOrNames []string) (*Manifest, []string, error) {
 	// describe the projects, retrieve metadata for them
 	tmpHttpClient := dxda.NewHttpClient()
-	projDescs := make(map[string]DxDescribePrj)
-	for _, pId := range projectIds {
-		pDesc, err := DxDescribeProject(ctx, tmpHttpClient, &dxEnv, pId)
-		if err != nil {
-			LogMsg("Could not describe project %s, check permissions", pId)
-			return nil, err
+	projDescs := make(map[string]DxProjectDescription)
+	for _, proj := range projectIdsOrNames {
+		if validProject(proj) {
+			pDesc, err := DxDescribeProject(ctx, tmpHttpClient, &dxEnv, proj)
+			if err != nil {
+				log.Printf("Could not describe project %s, check permissions", proj)
+				return nil, nil, err
+			}
+			projDescs[pDesc.Id] = *pDesc
+		} else {
+			// This is a project name, describe it, and
+			// return the project description.
+			pDesc, err := DxFindProject(ctx, tmpHttpClient, &dxEnv, proj)
+			if err != nil {
+				log.Printf("Could not find project with name %s", proj)
+				return nil, nil, err
+			}
+			projDescs[pDesc.Id] = *pDesc
 		}
-		projDescs[pDesc.Id] = *pDesc
 	}
 
 	// validate that the projects have good names
 	for _, pDesc := range projDescs {
 		if !FilenameIsPosixCompliant(pDesc.Name) {
-			err := errors.New(
-				fmt.Sprintf("Project %s has a non posix compliant name (%s)",
-					pDesc.Id, pDesc.Name))
-			return nil, err
+			err := fmt.Errorf("Project %s has a non posix compliant name (%s)",
+				pDesc.Id, pDesc.Name)
+			return nil, nil, err
 		}
 	}
 
 	dirs := make([]ManifestDir, 0)
-	for _, pDesc := range projDescs {
+	projIds := make([]string, 0)
+
+	for pId, pDesc := range projDescs {
 		mstDir := ManifestDir{
 			ProjId:       pDesc.Id,
 			Folder:       "/",
@@ -182,6 +194,7 @@ func MakeManifestFromProjectIds(
 			MtimeSeconds: pDesc.MtimeSeconds,
 		}
 		dirs = append(dirs, mstDir)
+		projIds = append(projIds, pId)
 	}
 
 	var emptyFiles []ManifestFile
@@ -191,9 +204,9 @@ func MakeManifestFromProjectIds(
 	}
 
 	if err := manifest.Validate(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return manifest, nil
+	return manifest, projIds, nil
 }
 
 // return all the parents of a directory.
@@ -208,7 +221,7 @@ func ancestors(p string) []string {
 	parent := filepath.Dir(p)
 	ators := ancestors(parent)
 	if len(ators) == 0 {
-		log.Panic(fmt.Sprintf("cannot create ancestor list for path %s", p))
+		log.Panicf("cannot create ancestor list for path %s", p)
 	}
 	return append(ators, filepath.Clean(p))
 }
@@ -297,10 +310,7 @@ func (m *Manifest) DirSkeleton() ([]string, error) {
 	for _, d := range m.Directories {
 		_, ok := tree[d.Dirname]
 		if ok {
-			return nil, fmt.Errorf(`
-manifest error: %s is a not leaf on the directory scaffolding (%v).
-It is a node in the middle, which is illegal.
-`,
+			return nil, fmt.Errorf("manifest error: %s is a not leaf on the directory scaffolding (%v). It is a node in the middle, which is illegal",
 				d.Dirname, de.elems)
 		}
 	}
@@ -319,7 +329,7 @@ func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnviron
 		}
 	}
 
-	var describedObjects = make(map[string]DxDescribeDataObject)
+	var describedObjects = make(map[string]DxDataObjectDescription)
 	// batch calls per project-id
 	for projectId, fileIds := range fileIdsPerProject {
 		dataObjs, err := DxDescribeBulkObjects(ctx, tmpHttpClient, &dxEnv, projectId, fileIds)
@@ -366,7 +376,7 @@ func (m *Manifest) FillInMissingFields(ctx context.Context, dxEnv dxda.DXEnviron
 	}
 
 	// describe the projects, retrieve metadata for them
-	projDescs := make(map[string]DxDescribePrj)
+	projDescs := make(map[string]DxProjectDescription)
 	for pId, _ := range projectIds {
 		pDesc, err := DxDescribeProject(ctx, tmpHttpClient, &dxEnv, pId)
 		if err != nil {

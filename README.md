@@ -8,7 +8,7 @@ A filesystem that allows users access to the DNAnexus storage system.
 
 The code uses the [FUSE](https://github.com/jacobsa/fuse)
 library, implemented in [golang](https://golang.org). The DNAnexus
-storage system is not POSIX compilant. It holds not just files and
+storage system is not POSIX compliant. It holds not just files and
 directories, but also records, databases, applets, and workflows. It
 allows things that are not POSIX, for example:
 1. Files in a directory can have the same name
@@ -49,7 +49,7 @@ There are several limitations currently:
 
 # Download benchmarks
 
-Streaming a file from DNAnexus using dxfuse performs similiarly to dx-toolkit.
+Streaming a file from DNAnexus using dxfuse performs similarly to dx-toolkit.
 The following table shows performance across several
 instance types. The benchmark was *how many seconds does it take to
 download a file of size X?* The lower the number, the better. The two
@@ -88,24 +88,24 @@ cloud worker reduces network latency significantly, and is the way it
 is used in the product. Running on a local, non cloud machine, runs
 the risk of network choppiness.
 
-# Limited Write Mode
+# `-limitedWrite` Mode
 
-`dxfuse -limitedWrite` mode was primarly designed to support spark file output over the `file:///` protocol.
+`dxfuse -limitedWrite` mode was primarily designed to support spark file output over the `file:///` protocol.
 
-Creating and writing to files is allowed when dxfuse is mounted with the `-limitedWrite` flag.
-Writing to files is **append only**. Any non-sequential writes will return `ENOTSUP`. Seeking or reading operations are not permitted while a file is being written.
+Creating then writing to new files is allowed when dxfuse is mounted with the `-limitedWrite` flag.
+Writing to these newly created files is **append only**. Any non-sequential writes will return `ENOTSUP`. Seeking or reading operations are not permitted while a file is being written.
 
 ## Supported operations
 
-`-limitedWrite` mode enables the following operations: rename (mv, see [below](#rename-behavior)), unlink (rm), mkdir (see [below](#mkdir-behavior)), and rmdir (empty folders only). Rewriting existing files is not permitted, nor is truncating existing files.
+`-limitedWrite` mode enables the following operations: rename (mv, see [below](#rename-behavior)), unlink (rm), mkdir (see [below](#mkdir-behavior)), and rmdir (empty folders only). Rewriting existing files is not permitted, nor is truncating existing files, unless `-allowOverwrite` is also specified. See [below](#-allowoverwrite-mode).
 
 ### mkdir behavior
 
-All `mkdir` operations via dxfuse are treated as `mkdir -p`. This is because dxfuse does not present the realtime state of the project. Folders can be created outside of dxfuse (or in another dxfuse process), and therefore not be visible to the current running dxfuse. A subsequent `mkdir` --> `project-xxxx/newFolder` would return a 422 error, because dxfuse did not know the directory already exists. This design is due to spark behavior where multiple worker nodes sometimes attempt to create the same output directory.
+All `mkdir` operations via dxfuse are treated as `mkdir -p`, which creates the parent directory if needed, and does not fail if the directory already exists. This is because dxfuse does not present the realtime state of the project. Folders can be created outside of dxfuse (or in another dxfuse process), and therefore not be visible to the current running dxfuse. A subsequent `mkdir` --> `project-xxxx/newFolder` would return a 422 error, because dxfuse did not know the directory already exists. This design is due to spark behavior where multiple worker nodes sometimes attempt to create the same output directory.
 
 ### rename behavior
 
-Rename does not allow removing the target file or directory because DNAnexus API does not support this functionality.  Removal of target file or directory must be done as a separate operation before calling the rename (mv) operation.
+Rename does not allow removing the target file or directory because DNAnexus API does not support this functionality. Removal of target file or directory must be done as a separate operation before calling the rename (mv) operation.
 
 ```
 $ ls -lht MNT/file*
@@ -137,7 +137,7 @@ close(3)                                = 0
 read(0, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"..., 1024) = 1024
 write(1, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0"..., 1024) = 1024
 ```
-The example below closes the file descriptor after writing, which closes the dnanexus file, causing subsequent writes to fail.
+The example below closes the file descriptor after writing, which closes the DNAnexus file, causing subsequent writes to fail.
 ```
 # Unsupported access pattern
 openat(AT_FDCWD, "MNT/project/writefile", O_WRONLY|O_CREAT|O_TRUNC, 0666) = 3
@@ -182,6 +182,33 @@ Upload benchmarks are from an Ubuntu 20.04 DNAnexus worker mem2_ssd1_v2_x32 (AWS
 |	254  |	495 | 100GiB |
 
 
+# `-allowOverwrite` Mode
+`-allowOverwrite` flag requires `-limitedWrite` flag to be specified as well.
+
+Launching dxfuse with `-limitedWrite -allowOverwrite` flags allows dxfuse clients to truncate and overwrite existing files created both before and during the current dxfuse session (files must be opened with`O_TRUNC` flag at system call level) in addition to other operations allowed by `-limitedWrite`.  Append-only limitations of the `-limitedWrite` mode apply to the overwritten files.
+
+Sample use cases:
+- In a terminal, overwrite an existing file using `>`, `tee`, `cp`, `dd`
+- Save a modified file in RStudio editor
+- Overwrite an existing file using the following R commands:
+  - base::writeLines()
+  - data.table::fwrite()
+  - readr::write_rds()
+  - saveRDS()
+  - write.table()
+
+Operations that attempt to modify an existing file without opening it in truncate mode are not supported. For example the following operations operations will fail:
+- In a terminal, appending to an existing with `>>` operator
+- Opening an existing file with `O_APPEND` flag
+- Truncating an existing file to size 0 using `truncate` command or other commands that call `ftruncate` system call  
+Note: When editing dxfuse-backed files in `vim`,  avoid `vim` swap file creation in dxfuse-backed folders to make editing more efficient and less error-prone by following one of the following approaches:  
+- turn off swap file by adding `set noswapfile` to your `~/.vimrc` 
+- set the directory option to a non-dxfuse folder
+```
+mkdir -p $HOME/.vim/swapfiles  # create a temp dir to store swap files outside of the dxfuse folder
+echo "set directory=$HOME/.vim/swapfiles" >> ~/.vimrc
+```
+
 # Building
 
 To build the code from source, you'll need, at the very least, the `go` and `git` tools.
@@ -198,10 +225,10 @@ Allow regular users access to the fuse device on the local machine:
 chmod u+rw /dev/fuse
 ```
 
-In theory, it should be possible to use `suid` to achive this instead, but that does
+In theory, it should be possible to use `suid` to achieve this instead, but that does
 not currently work.
 
-To mount a dnanexus project `mammals` in local directory `/home/jonas/foo` do:
+To mount a DNAnexus project `mammals` in local directory `/home/jonas/foo` do:
 ```
 dxfuse /home/jonas/foo mammals
 ```
@@ -209,8 +236,8 @@ dxfuse /home/jonas/foo mammals
 Note that dxfuse will hide any existing content of the mount point (e.g. `/home/jonas/foo` directory in the example above) 
 until the dxfuse process is stopped.
 
-The bootstrap process has some asynchrony, so it could take it a
-second two to start up. It spawns a separate process for the filesystem
+The bootstrap process has some asynchrony, so it could take a
+second or two to start up. It spawns a separate process for the filesystem
 server, waits for it to start, and exits. To get more information, use
 the `verbose` flag. Debugging output is written to the log, which is
 placed at `$HOME/.dxfuse/dxfuse.log`. The maximal verbosity level is 2.
@@ -242,9 +269,9 @@ fusermount -u MOUNT-POINT
 
 ## Extended attributes (xattrs)
 
-DNXa data objects have properties and tags, these are exposed as POSIX extended attributes. Xattrs can be read, written, and removed. The package we use here is `attr`, it can installed with `sudo apt-get install attr` on Linux. On OSX the `xattr` package comes packaged with the base operating system, and can be used to the same effect.
+DNAx data objects have properties and tags, these are exposed as POSIX extended attributes. Xattrs can be read, written, and removed. The package we use here is `attr`, it can installed with `sudo apt-get install attr` on Linux. On OSX the `xattr` package comes packaged with the base operating system, and can be used to the same effect.
 
-DNAx tags and properties are prefixed. For example, if `zebra.txt` is a file then `attr -l zebra.txt` will print out all the tags, properties, and attributes that have no POSIX equivalent. These are split into three correspnding prefixes _tag_, _prop_, and _base_ all under the `user` Linux namespace.
+DNAx tags and properties are prefixed. For example, if `zebra.txt` is a file then `attr -l zebra.txt` will print out all the tags, properties, and attributes that have no POSIX equivalent. These are split into three corresponding prefixes _tag_, _prop_, and _base_ all under the `user` Linux namespace.
 
 Here `zebra.txt` has no properties or tags.
 ```
@@ -276,7 +303,7 @@ You cannot modify _base.*_ attributes, these are read-only. Setting and deleting
 
 For OSX you will need to install [macFUSE](https://osxfuse.github.io/). Note that Your Milage May Vary (YMMV) on this platform, we are mostly focused on Linux.
 
-Feaures such as kernel read-ahead, pagecache, mmap, and PID tracking may not work on macOS.
+Features such as kernel read-ahead, pagecache, mmap, and PID tracking may not work on macOS.
 
 ## mmap
 
@@ -291,6 +318,6 @@ mmap.mmap(fd.fileno(), 0, flags=mmap.MAP_SHARED, prot=mmap.PROT_READ)
 
 # Common problems
 
-If a project appears empty, or is missing files, it could be that the dnanexus token does not have permissions for it. Try to see if you can do `dx ls YOUR_PROJECT:`.
+If a project appears empty, or is missing files, it could be that the DNAnexus token does not have permissions for it. Try to see if you can do `dx ls YOUR_PROJECT:`.
 
 There is no natural match for DNAnexus applets and workflows, so they are presented as block devices. They do not behave like block devices, but the shell colors them differently from files and directories.

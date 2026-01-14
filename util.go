@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jacobsa/fuse/fuseops"
+	"github.com/shirou/gopsutil/host"
 	"github.com/shirou/gopsutil/process"
 )
 
@@ -31,10 +32,10 @@ const (
 	NumRetriesDefault         = 10
 	InitialUploadPartSize     = 16 * MiB
 	MinUploadPartSize         = 5 * MiB
-	MaxUploadPartSize         = 512 * MiB
+	MaxUploadPartSize         = 700 * MiB
 	MinNumWriteBuffers        = 8
 	MaxNumWriteBuffers        = 144
-	Version                   = "v2.0.0"
+	Version                   = "v1.6.1"
 )
 
 // EffectiveNumCPUs returns the effective CPU parallelism for the process.
@@ -97,6 +98,7 @@ const (
 	dirReadWriteMode  = 0777 | os.ModeDir
 	fileReadOnlyMode  = 0444
 	fileWriteOnlyMode = 0222
+	fileReadWriteMode = 0644
 )
 const (
 	// flags for writing files to disk
@@ -119,8 +121,14 @@ type DxDownloadURL struct {
 	Headers map[string]string `json:"headers"`
 }
 
+const (
+	ReadOnly       = "ReadOnly"
+	LimitedWrite   = "LimitedWrite"
+	AllowOverwrite = "AllowOverwrite"
+)
+
 type Options struct {
-	ReadOnly          bool
+	Mode              string // One of {ReadOnly, LimitedWrite, AllowOverwrite}
 	Verbose           bool
 	VerboseLevel      int
 	Uid               uint32
@@ -366,10 +374,14 @@ func boolToInt(b bool) int {
 }
 
 func intToBool(x int) bool {
-	if x > 0 {
-		return true
+	return x > 0
+}
+
+func GetOrDefault(value, defaultValue string, emptyValue string) string {
+	if value == emptyValue {
+		return defaultValue
 	}
-	return false
+	return value
 }
 
 // create a directory for all dxfuse files. Manifest, log, sqlite db, etc.
@@ -441,4 +453,17 @@ func FindWaitingGoroutines(stackTrace string, mutexName string) string {
 	}
 
 	return result.String()
+
+}
+
+func GetPlatformInfo() (string, error) {
+	platform, _, version, err := host.PlatformInformation()
+	if err != nil {
+		return "", err
+	}
+	// Capitalize the first character of platform
+	if len(platform) > 0 {
+		platform = strings.ToUpper(string(platform[0])) + platform[1:]
+	}
+	return platform + " " + version, nil
 }

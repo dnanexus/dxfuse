@@ -82,7 +82,7 @@ func (box *CmdServerBox) GetLine(arg string, reply *bool) error {
 		// Error out if another sync operation has been run by the cmd client
 		// https://stackoverflow.com/questions/45208536/good-way-to-return-on-locked-mutex-in-go
 		if !sem.TryAcquire(1) {
-			cmdSrv.log("Rejecting sync operation as another is already runnning")
+			cmdSrv.log("Rejecting sync operation as another is already running")
 			return errors.New("another sync operation is already running")
 		}
 		defer sem.Release(1)

@@ -257,7 +257,7 @@ func (pfm *PrefetchFileMetadata) logReport(now time.Time) {
 
 // Got an error. Release all waiting IO.
 func (pfm *PrefetchFileMetadata) cancelIOs() {
-	for i, _ := range pfm.cache.iovecs {
+	for i := range pfm.cache.iovecs {
 		iovec := pfm.cache.iovecs[i]
 		iovec.state = IOV_ERRORED
 		iovec.cond.Broadcast()
@@ -407,7 +407,7 @@ func (pgs *PrefetchGlobalState) Shutdown() {
 	// clear the entire table
 	var allHandles []fuseops.HandleID
 	pgs.mutex.Lock()
-	for hid, _ := range pgs.handlesInfo {
+	for hid := range pgs.handlesInfo {
 		allHandles = append(allHandles, hid)
 	}
 	pgs.mutex.Unlock()
@@ -726,7 +726,7 @@ func (pgs *PrefetchGlobalState) tableCleanupWorker() {
 		var candidates []fuseops.HandleID
 
 		pgs.mutex.Lock()
-		for hid, _ := range pgs.handlesInfo {
+		for hid := range pgs.handlesInfo {
 			candidates = append(candidates, hid)
 		}
 		pgs.mutex.Unlock()

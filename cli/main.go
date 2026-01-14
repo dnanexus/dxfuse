@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -26,9 +26,11 @@ import (
 )
 
 type Config struct {
-	mountpoint string
-	dxEnv      dxda.DXEnvironment
-	options    dxfuse.Options
+	mountpoint    string
+	dxEnv         dxda.DXEnvironment
+	options       dxfuse.Options
+	mountProjects []string
+	manifest      string
 }
 
 var progName = filepath.Base(os.Args[0])
@@ -38,9 +40,10 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "    %s [options] MOUNTPOINT PROJECT1 PROJECT2 ...\n", progName)
 	fmt.Fprintf(os.Stderr, "    %s [options] MOUNTPOINT manifest.json\n", progName)
 	fmt.Fprintf(os.Stderr, "options:\n")
-	// Hide experimental options
+	// Hide deprecated, internal and experimental options
+	hiddenOptions := []string{"readOnly", "limitedWrite", "daemon", "allowOverwrite", "maxMemoryUsageMiB"}
 	flag.VisitAll(func(f *flag.Flag) {
-		if f.Name == "readOnly" || f.Name == "limitedWrite" || f.Name == "daemon" || f.Name == "maxMemoryUsageMiB" {
+		if slices.Contains(hiddenOptions, f.Name) {
 			return
 		}
 		name, usage := flag.UnquoteUsage(f)
@@ -54,32 +57,18 @@ func usage() {
 var (
 	debugFuseFlag = flag.Bool("debugFuse", false, "Tap into FUSE debugging information")
 	daemon        = flag.Bool("daemon", false, "An internal flag, do not use it")
-	// fsSync        = flag.Bool("sync", false, "Sychronize the filesystem and exit")
+	// fsSync        = flag.Bool("sync", false, "Synchronize the filesystem and exit")
 	help              = flag.Bool("help", false, "display program options")
-	readOnly          = flag.Bool("readOnly", true, "DEPRECATED, now the default behavior. Mount the filesystem in read-only mode")
+	readOnly          = flag.Bool("readOnly", true, "DEPRECATED, now the default behavior is True. Mount the filesystem in read-only mode")
 	limitedWrite      = flag.Bool("limitedWrite", false, "Allow removing files and folders, creating files and appending to them. (Experimental, not recommended), default is read-only")
+	allowOverwrite    = flag.Bool("allowOverwrite", false, "Allow overwriting files (Experimental, not recommended). Only works with -limitedWrite, default is read-only and no overwriting allowed")
 	uid               = flag.Int("uid", -1, "User id (uid)")
 	gid               = flag.Int("gid", -1, "User group id (gid)")
 	verbose           = flag.Int("verbose", 0, "Enable verbose debugging")
 	version           = flag.Bool("version", false, "Print the version and exit")
 	stateFolder       = flag.String("stateFolder", getDefaultStateFolder(), "Directory to use for dxfuse's internal state (log file, database, etc). Created if does not exist. Defaults to "+getDefaultStateFolder())
-	maxMemoryUsageMiB = flag.Int("maxMemoryUsageMiB", 0, "Soft Maximum memory limit in MiB. Defaults to 50% of system memory. (Experimental)")
+	maxMemoryUsageMiB = flag.Int("maxMemoryUsageMiB", 0, "Soft maximum memory limit in MiB. Defaults to 50% of system memory. (Experimental)")
 )
-
-func lookupProject(dxEnv *dxda.DXEnvironment, projectIdOrName string) (string, error) {
-	if strings.HasPrefix(projectIdOrName, "project-") {
-		// This is a project ID
-		return projectIdOrName, nil
-	}
-	if strings.HasPrefix(projectIdOrName, "container-") {
-		// This is a container ID
-		return projectIdOrName, nil
-	}
-
-	// This is a project name, describe it, and
-	// return the project-id.
-	return dxfuse.DxFindProject(context.TODO(), dxEnv, projectIdOrName)
-}
 
 func initLog(logFile string) *os.File {
 	// Redirect the log output to a file
@@ -140,10 +129,7 @@ func fsDaemon(
 		logger.Printf("started the filesystem as root, allowing other users access")
 		mountOptions["allow_other"] = ""
 	}
-	// Pass read-only mount option if not in limitedWrite
-	if options.ReadOnly {
-		mountOptions["ro"] = ""
-	}
+
 	mountOptions["max_read"] = "1048576"
 
 	// capture debug output from the FUSE subsystem
@@ -155,6 +141,7 @@ func fsDaemon(
 	logger.Printf("building config")
 
 	// Fuse mount
+	// MountConfig https://github.com/jacobsa/fuse/blob/3e9d24d5e3ffe84da952c40fc8d3f42df661466d/mount_config.go#L215
 	cfg := &fuse.MountConfig{
 		FSName:      "dxfuse",
 		ErrorLogger: logger,
@@ -162,13 +149,18 @@ func fsDaemon(
 
 		// Required for sequential writes
 		DisableWritebackCaching: true,
-		Options:                 mountOptions,
+		// Pass read-only mount option if not in limitedWrite
+		ReadOnly: options.Mode == dxfuse.ReadOnly,
+		// Allow overwriting files if requested
+		EnableAtomicTrunc: options.Mode == dxfuse.AllowOverwrite,
+		Options:           mountOptions,
 	}
 
-	logger.Printf("mounting-dxfuse")
 	mfs, err := fuse.Mount(mountpoint, server, cfg)
 	if err != nil {
-		logger.Printf(err.Error())
+		logger.Printf("Mounting dxfuse failed: %s", err.Error())
+	} else {
+		logger.Printf("Mounting dxfuse succeeded")
 	}
 
 	// By default fuse will use 128kb read-ahead even though we ask for 1024kb
@@ -176,21 +168,21 @@ func fsDaemon(
 	if user.Uid == "0" && runtime.GOOS == "linux" {
 		mntInfo, err := os.Stat(mountpoint)
 		if err != nil {
-			logger.Printf(err.Error())
+			logger.Print(err.Error())
 		}
 		dxfuseDeviceNumber := mntInfo.Sys().(*syscall.Stat_t).Dev
 		readAheadFile := fmt.Sprintf("/sys/class/bdi/0:%d/read_ahead_kb", dxfuseDeviceNumber)
-		data, err := ioutil.ReadFile(readAheadFile)
+		data, err := os.ReadFile(readAheadFile)
 		if err != nil {
 			logger.Printf("Unable to get current read-ahead value")
-			logger.Printf(err.Error())
+			logger.Print(err.Error())
 		}
 		initialReadAhead, err := strconv.Atoi(strings.TrimSpace(string(data)))
 		if initialReadAhead < 1024 {
-			err = ioutil.WriteFile(readAheadFile, []byte("1024"), 0644)
+			err = os.WriteFile(readAheadFile, []byte("1024"), 0644)
 			if err != nil {
 				logger.Printf("Error raising read-ahead to 1024kb")
-				logger.Printf(err.Error())
+				logger.Print(err.Error())
 			} else {
 				logger.Printf("Raised kernel read-ahead from %dkb to 1024kb", initialReadAhead)
 			}
@@ -216,15 +208,15 @@ func waitForReady(logFile string) string {
 		time.Sleep(1 * time.Second)
 
 		// read the log file and look for either "ready" or "error"
-		data, err := ioutil.ReadFile(logFile)
+		data, err := os.ReadFile(logFile)
 		if err != nil {
 			continue
 		}
 		content := string(data)
-		if strings.Contains(content, "mounting-dxfuse") {
+		if strings.Contains(content, "Mounting dxfuse succeeded") {
 			return "ready"
 		}
-		if strings.Contains(content, "error") {
+		if strings.Contains(content, "Mounting dxfuse failed") {
 			return "error"
 		}
 	}
@@ -278,15 +270,24 @@ func parseCmdLineArgs() Config {
 	// -readOnly and -limitedWrite flags are mutually exclusive
 	readOnlyFlagSet := false
 	limitedWriteFlagSet := false
+	allowOverwriteFlagSet := false
 	flag.Visit(func(f *flag.Flag) {
-		if f.Name == "readOnly" {
+		switch f.Name {
+		case "readOnly":
 			readOnlyFlagSet = true
-		} else if f.Name == "limitedWrite" {
+		case "limitedWrite":
 			limitedWriteFlagSet = true
+		case "allowOverwrite":
+			allowOverwriteFlagSet = true
 		}
 	})
 	if limitedWriteFlagSet && readOnlyFlagSet {
 		fmt.Printf("Cannot provide both -readOnly and -limitedWrite flags\n")
+		usage()
+		os.Exit(2)
+	}
+	if allowOverwriteFlagSet && !limitedWriteFlagSet {
+		fmt.Printf("Cannot provide -allowOverwrite without -limitedWrite\n")
 		usage()
 		os.Exit(2)
 	}
@@ -298,10 +299,27 @@ func parseCmdLineArgs() Config {
 	}
 
 	mountpoint := flag.Arg(0)
-
+	var manifest string
+	var mountProjects []string
+	// distinguish between the case of a manifest, and a list of projects.
+	if numArgs == 2 && strings.HasSuffix(flag.Arg(1), ".json") {
+		manifest = flag.Arg(1)
+	} else {
+		// process the project inputs, and convert to an array of verified
+		// project IDs
+		mountProjects = flag.Args()[1:]
+	}
 	uid, gid := initUidGid()
+
+	mode := dxfuse.ReadOnly
+	if *limitedWrite {
+		mode = dxfuse.LimitedWrite
+	}
+	if *allowOverwrite {
+		mode = dxfuse.AllowOverwrite
+	}
 	options := dxfuse.Options{
-		ReadOnly:          !*limitedWrite,
+		Mode:              mode,
 		Verbose:           *verbose > 0,
 		VerboseLevel:      *verbose,
 		MaxMemoryUsageMiB: *maxMemoryUsageMiB,
@@ -317,13 +335,15 @@ func parseCmdLineArgs() Config {
 	}
 
 	return Config{
-		mountpoint: mountpoint,
-		dxEnv:      dxEnv,
-		options:    options,
+		mountpoint:    mountpoint,
+		dxEnv:         dxEnv,
+		options:       options,
+		manifest:      manifest,
+		mountProjects: mountProjects,
 	}
 }
 
-func validateConfig(cfg Config) {
+func validateMountpointPath(cfg Config) {
 	fileInfo, err := os.Stat(cfg.mountpoint)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -338,13 +358,10 @@ func validateConfig(cfg Config) {
 	}
 }
 
-func parseManifest(cfg Config) (*dxfuse.Manifest, error) {
-	numArgs := flag.NArg()
-
+func buildManifest(cfg *Config) (*dxfuse.Manifest, error) {
 	// distinguish between the case of a manifest, and a list of projects.
-	if numArgs == 2 && strings.HasSuffix(flag.Arg(1), ".json") {
-		p := flag.Arg(1)
-		manifest, err := dxfuse.ReadManifest(p)
+	if cfg.manifest != "" {
+		manifest, err := dxfuse.ReadManifest(cfg.manifest)
 		if err != nil {
 			return nil, err
 		}
@@ -352,28 +369,18 @@ func parseManifest(cfg Config) (*dxfuse.Manifest, error) {
 			return nil, err
 		}
 		return manifest, nil
-	} else {
-		// process the project inputs, and convert to an array of verified
-		// project IDs
-		var projectIds []string
-		for i := 1; i < numArgs; i++ {
-			projectIdOrName := flag.Arg(i)
-			projId, err := lookupProject(&cfg.dxEnv, projectIdOrName)
-			if err != nil {
-				return nil, err
-			}
-			if projId == "" {
-				return nil, fmt.Errorf("no project with name %s", projectIdOrName)
-			}
-			projectIds = append(projectIds, projId)
-		}
-
-		manifest, err := dxfuse.MakeManifestFromProjectIds(context.TODO(), cfg.dxEnv, projectIds)
+	} else if len(cfg.mountProjects) > 0 {
+		// process the project inputs, and convert to an array of verified project IDs
+		manifest, projectIds, err := dxfuse.BuildManifestFromProjects(context.TODO(), cfg.dxEnv, cfg.mountProjects)
+		// store the verified project IDs back into the config
+		cfg.mountProjects = projectIds
 		if err != nil {
 			return nil, err
 		}
 		return manifest, nil
 	}
+	// If neither manifest nor mountProjects are provided, return nil and an error
+	return nil, fmt.Errorf("no manifest or mount projects provided")
 }
 
 func startDaemon(cfg Config, logFile string) {
@@ -390,11 +397,18 @@ func startDaemon(cfg Config, logFile string) {
 		os.Exit(1)
 	}
 
-	logger.Printf("configuration=%v", cfg)
+	logger.Printf("configuration={%+v}", cfg.options)
+
+	// reset user-agent to include only the dxfuse version and platform info
+	platformInfo, err := dxfuse.GetPlatformInfo()
+	if err != nil {
+		log.Fatal(err)
+	}
+	dxda.UserAgent = fmt.Sprintf("dxfuse/%s (%s)", dxfuse.Version, platformInfo)
 
 	err = fsDaemon(cfg.mountpoint, cfg.dxEnv, *manifest, cfg.options, logf, logger)
 	if err != nil {
-		logger.Printf(err.Error())
+		logger.Print(err.Error())
 		os.Exit(1)
 	}
 }
@@ -421,6 +435,9 @@ func buildDaemonCommandLine(cfg Config, fullManifestPath string) []string {
 	if *limitedWrite {
 		daemonArgs = append(daemonArgs, "-limitedWrite")
 	}
+	if *allowOverwrite {
+		daemonArgs = append(daemonArgs, "-allowOverwrite")
+	}
 	if *uid != -1 {
 		args := []string{"-uid", strconv.FormatInt(int64(*uid), 10)}
 		daemonArgs = append(daemonArgs, args...)
@@ -441,9 +458,9 @@ func buildDaemonCommandLine(cfg Config, fullManifestPath string) []string {
 
 // We are in the parent process.
 func startDaemonAndWaitForInitializationToComplete(cfg Config, logFile string) {
-	manifest, err := parseManifest(cfg)
+	manifest, err := buildManifest(&cfg)
 	if err != nil {
-		fmt.Printf(err.Error())
+		fmt.Print(err.Error())
 		os.Exit(1)
 	}
 
@@ -457,12 +474,14 @@ func startDaemonAndWaitForInitializationToComplete(cfg Config, logFile string) {
 	// This could be converted into a random temporary file to avoid collisions
 
 	fullManifestPath := filepath.Join(cfg.options.StateFolder, "dxfuse_manifest.json")
-	err = ioutil.WriteFile(fullManifestPath, manifestJSON, 0644)
+	err = os.WriteFile(fullManifestPath, manifestJSON, 0644)
 	if err != nil {
 		fmt.Printf("Error writing out fully elaborated manifest to %s (%s)\n",
 			fullManifestPath, err.Error())
 		os.Exit(1)
 	}
+
+	sendLaunchInfo(context.TODO(), cfg)
 
 	// Mount in a subprocess, and wait for the filesystem to start.
 	// If there is an error, report it. Otherwise, return after the filesystem
@@ -505,23 +524,68 @@ func startDaemonAndWaitForInitializationToComplete(cfg Config, logFile string) {
 	fmt.Println("Daemon started successfully")
 }
 
+// Send launch info via /system/greet
+// by adding dxfuse version, platform info and startup arguments to dxda user-agent
+func sendLaunchInfo(
+	ctx context.Context,
+	cfg Config) error {
+	httpClient := dxda.NewHttpClient()
+
+	platformInfo, err := dxfuse.GetPlatformInfo()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	metadata := map[string]string{
+		"Mode":          cfg.options.Mode,
+		"MountProjects": fmt.Sprintf("%v", cfg.mountProjects),
+		"Manifest":      dxfuse.GetOrDefault(cfg.manifest, "None", ""),
+	}
+
+	if cfg.dxEnv.DxJobId != "" {
+		jobDesc, err := dxfuse.DxDescribeJob(ctx, httpClient, &cfg.dxEnv, cfg.dxEnv.DxJobId)
+		if err != nil {
+			log.Fatal(err)
+		}
+		// Add job fields to metadata
+		metadata["JobId"] = jobDesc.Id
+		metadata["ExecutableName"] = jobDesc.ExecutableName
+		metadata["BillTo"] = jobDesc.BillTo
+		metadata["Project"] = jobDesc.Project
+		metadata["LaunchedBy"] = jobDesc.LaunchedBy
+	}
+
+	var metaPairs []string
+	for key, value := range metadata {
+		metaPairs = append(metaPairs, fmt.Sprintf("%s=%s", key, value))
+	}
+	metaString := strings.Join(metaPairs, ", ")
+	dxda.UserAgent = fmt.Sprintf("dxfuse/%s (OS=%s, %s)", dxfuse.Version, platformInfo, metaString)
+	_, err = dxda.DxAPI(
+		ctx, httpClient, dxfuse.NumRetriesDefault, &cfg.dxEnv,
+		"system/greet",
+		"")
+	if err != nil {
+		fmt.Printf("error recording launch config: %s\n", err.Error())
+		return err
+	}
+	return nil
+}
+
 func main() {
 	// parse command line options
 	flag.Usage = usage
 	flag.Parse()
 	cfg := parseCmdLineArgs()
-	validateConfig(cfg)
+	validateMountpointPath(cfg)
 	dxfuse.MakeDxfuseBaseDir(cfg.options.StateFolder)
 	logFile := filepath.Join(cfg.options.StateFolder, dxfuse.LogFile)
 	fmt.Printf("The log file is located at %s\n", logFile)
-
-	dxda.UserAgent = fmt.Sprintf("dxfuse/%s (%s)", dxfuse.Version, runtime.GOOS)
 
 	if *daemon {
 		// This will be true -only- in the child sub-process
 		startDaemon(cfg, logFile)
 		return
 	}
-
 	startDaemonAndWaitForInitializationToComplete(cfg, logFile)
 }
