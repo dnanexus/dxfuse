@@ -126,9 +126,9 @@ type PrefetchFileMetadata struct {
 
 	// Heuristics for detecting sequential access.
 	// lastReadEnd is the end offset of the previous user read; -1 means unset.
-	lastReadEnd  int64
-	seqScore     int
-	nonSeqScore  int
+	lastReadEnd int64
+	seqScore    int
+	nonSeqScore int
 
 	// cached io vectors.
 	// The assumption is that the user is accessing the last io-vector.
@@ -1309,8 +1309,6 @@ func (pgs *PrefetchGlobalState) CacheLookup(hid fuseops.HandleID, startOfs int64
 		return 0
 	}
 	// the PFM is locked now.
-	// make sure it is unlocked when we leave.
-	defer pfm.mutex.Unlock()
 
 	// accounting and statistics
 	pfm.lastIoTimestamp = time.Now()
@@ -1318,21 +1316,41 @@ func (pgs *PrefetchGlobalState) CacheLookup(hid fuseops.HandleID, startOfs int64
 	pfm.mw.numIOs++
 	pfm.updateSequentialScore(startOfs, endOfs)
 
+	shouldMarkNonSequential := func() bool {
+		// Require repeated non-sequential evidence
+		// If the access becomes sequential again, seqScore will recover and nonSeqScore will decay.
+		return pfm.nonSeqScore >= 2 && pfm.seqScore == 0
+	}
+	if shouldMarkNonSequential() {
+		pgs.resetPfm(pfm)
+		pfm.mutex.Unlock()
+		pgs.markNonSequential(hid)
+		return 0
+	}
+
 	switch pfm.state {
 	case PFM_NIL:
 		pgs.firstAccessToStream(pfm, startOfs)
 		pfm.state = PFM_DETECT_SEQ
 		pgs.markAccessedAndMaybeStartPrefetch(pfm, startOfs, endOfs)
+		pfm.mutex.Unlock()
 		return 0
 
 	case PFM_DETECT_SEQ:
 		// No data is cached. Only detecting if there is sequential access.
 		ok := pgs.markAccessedAndMaybeStartPrefetch(pfm, startOfs, endOfs)
 		if !ok {
-			// Non-sequential access detected
-			pgs.markNonSequential(pfm.hid)
+			// Access outside the current window. Reset and only mark non-sequential if we've
+			// seen repeated non-sequential behavior.
+			markNonSequential := shouldMarkNonSequential()
 			pgs.resetPfm(pfm)
+			pfm.mutex.Unlock()
+			if markNonSequential {
+				pgs.markNonSequential(hid)
+			}
+			return 0
 		}
+		pfm.mutex.Unlock()
 		return 0
 
 	case PFM_PREFETCH_IN_PROGRESS:
@@ -1340,11 +1358,17 @@ func (pgs *PrefetchGlobalState) CacheLookup(hid fuseops.HandleID, startOfs int64
 		pgs.markAccessedAndMaybeStartPrefetch(pfm, startOfs, endOfs)
 		retCode, len := pgs.getDataFromCache(pfm, startOfs, endOfs, data)
 		if retCode == DATA_OUTSIDE_CACHE {
-			// The file is not accessed sequentially.
-			// Mark it as non-sequential, then zero out the cache and start over.
-			pgs.markNonSequential(pfm.hid)
+			// Cache miss / outside window. Reset and only mark non-sequential if we've
+			// seen repeated non-sequential behavior.
+			markNonSequential := shouldMarkNonSequential()
 			pgs.resetPfm(pfm)
+			pfm.mutex.Unlock()
+			if markNonSequential {
+				pgs.markNonSequential(hid)
+			}
+			return 0
 		}
+		pfm.mutex.Unlock()
 		return len
 
 	case PFM_EOF:
@@ -1354,9 +1378,11 @@ func (pgs *PrefetchGlobalState) CacheLookup(hid fuseops.HandleID, startOfs int64
 			// The file is being accessed again, perhaps reading from a different region
 			pgs.resetPfm(pfm)
 		}
+		pfm.mutex.Unlock()
 		return len
 	default:
 		log.Panicf("bad state %d for fileId=%s", pfm.state, pfm.id)
+		pfm.mutex.Unlock()
 		return 0
 	}
 }

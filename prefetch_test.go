@@ -353,13 +353,18 @@ func TestPrefetch_NonSequentialJumpMarksHandle(t *testing.T) {
 		t.Fatalf("expected DETECT_SEQ after first read, got %d", pfm.state)
 	}
 
-	// Large jump outside the initial cache window should be treated as non-sequential.
+	// First large jump outside the initial cache window should reset, but not immediately blacklist.
 	pgs.CacheLookup(hid, 10*MiB, 10*MiB+4095, buf)
-
 	if pfm.state != PFM_NIL {
 		t.Fatalf("expected state reset to NIL after non-sequential access, got %d", pfm.state)
 	}
+	if pgs.nonSequentialHandles[hid] {
+		t.Fatalf("expected handle not to be blacklisted after a single jump")
+	}
+
+	// A second large jump should be enough evidence to blacklist.
+	pgs.CacheLookup(hid, 20*MiB, 20*MiB+4095, buf)
 	if !pgs.nonSequentialHandles[hid] {
-		t.Fatalf("expected handle to be marked non-sequential")
+		t.Fatalf("expected handle to be marked non-sequential after repeated jumps")
 	}
 }
