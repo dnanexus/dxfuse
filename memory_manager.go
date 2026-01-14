@@ -1,89 +1,46 @@
 package dxfuse
 
 import (
-	"runtime"
-	"runtime/debug"
-	"sync"
+	"context"
 	"sync/atomic"
-	"time"
 
-	"github.com/shirou/gopsutil/mem"
+	"golang.org/x/sync/semaphore"
 )
 
 type MemoryManager struct {
-	mutex                   sync.Mutex
-	cond                    *sync.Cond // Condition variable for signaling
-	maxMemory               int64      // Maximum memory allowed (in bytes)
-	maxMemoryUsagePerModule int64      // Maximum memory (in bytes) a single module can use
-	usedMemory              int64      // Currently used memory (in bytes)
-	readsWaiting            int32      // Number of prefetch threads waiting for memory
-	writesWaiting           int32      // Number of write threads waiting for memory
-	writeMemory             int64      // Memory allocated for writes and uploads
-	readMemory              int64      // Memory allocated for read cache and prefetch
-	verboseLevel            int        // Verbose level for logging
+	maxMemory               int64 // Maximum memory allowed (in bytes)
+	maxMemoryUsagePerModule int64 // Maximum memory (in bytes) a single module can use
+	verboseLevel            int
+
+	// Budgets enforce limits; counters are best-effort telemetry.
+	totalBudget *semaphore.Weighted
+	readBudget  *semaphore.Weighted
+	writeBudget *semaphore.Weighted
+
+	usedMemory  atomic.Int64 // total reserved bytes
+	readMemory  atomic.Int64 // reserved bytes for reads/prefetch
+	writeMemory atomic.Int64 // reserved bytes for writes/uploads
 }
 
 func NewMemoryManager(verboseLevel int, maxMemory int64, maxMemoryUsagePerModule int64) *MemoryManager {
+	if maxMemory < 0 {
+		maxMemory = 0
+	}
+	if maxMemoryUsagePerModule < 0 {
+		maxMemoryUsagePerModule = 0
+	}
+	if maxMemoryUsagePerModule > maxMemory {
+		maxMemoryUsagePerModule = maxMemory
+	}
+
 	mm := &MemoryManager{
 		maxMemory:               maxMemory,
 		maxMemoryUsagePerModule: maxMemoryUsagePerModule,
-		usedMemory:              0,
 		verboseLevel:            verboseLevel,
+		totalBudget:             semaphore.NewWeighted(maxMemory),
+		readBudget:              semaphore.NewWeighted(maxMemoryUsagePerModule),
+		writeBudget:             semaphore.NewWeighted(maxMemoryUsagePerModule),
 	}
-	mm.cond = sync.NewCond(&mm.mutex) // Initialize the condition variable
-
-	// Trigger garbage collection and log memory usage every 30 seconds
-	go func() {
-		i := 0
-		for {
-			if verboseLevel > 1 {
-				vmStat, err := mem.VirtualMemory()
-				if err == nil {
-					mm.debug("System memory: total=%.2f MiB, free=%.2f MiB, used=%.2f MiB",
-						float64(vmStat.Total)/1024/1024,
-						float64(vmStat.Free)/1024/1024,
-						float64(vmStat.Used)/1024/1024)
-				}
-
-				// log MemoryManager usage
-				mm.debug("MemoryManager: usedMemory=%.2f MiB, writeMemory=%.2f MiB, readMemory=%.2f MiB, readsWaiting=%d, writesWaiting=%d",
-					float64(mm.GetUsedMemory())/1024/1024,
-					float64(mm.GetUsedWriteMemory())/1024/1024,
-					float64(mm.GetUsedReadMemory())/1024/1024,
-					atomic.LoadInt32(&mm.readsWaiting),
-					atomic.LoadInt32(&mm.writesWaiting))
-
-				// Log Go runtime memory usage
-				var memStats runtime.MemStats
-				runtime.ReadMemStats(&memStats)
-				mm.debug("Go runtime memory: Alloc=%.2f MiB, Sys=%.2f MiB, HeapAlloc=%.2f MiB, HeapSys=%.2f MiB",
-					float64(memStats.Alloc)/1024/1024,
-					float64(memStats.Sys)/1024/1024,
-					float64(memStats.HeapAlloc)/1024/1024,
-					float64(memStats.HeapSys)/1024/1024)
-
-				// Check if we have a significant number of waiting goroutines
-				readsWaiting := atomic.LoadInt32(&mm.readsWaiting)
-				writesWaiting := atomic.LoadInt32(&mm.writesWaiting)
-				// If there are multiple goroutines waiting, print stack traces to help diagnose deadlocks
-				stackTrace := GetDumpableStackTraces()
-				waitingGoroutines := FindWaitingGoroutines(stackTrace, "")
-
-				mm.log("POTENTIAL DEADLOCK: %d read threads and %d write threads waiting for memory",
-					readsWaiting, writesWaiting)
-				mm.log("Goroutines waiting on locks:\n%s", waitingGoroutines)
-			}
-			i++
-			time.Sleep(30 * time.Second)
-
-			if i%3 == 0 {
-				debug.FreeOSMemory()
-			} else {
-				runtime.GC()
-			}
-		}
-	}()
-
 	return mm
 }
 
@@ -99,15 +56,26 @@ func (mm *MemoryManager) debug(a string, args ...interface{}) {
 
 // Separate functions for read and write buffer allocation
 func (mm *MemoryManager) AllocateReadBuffer(size int64) []byte {
-	return mm.allocate(size, false, true)
+	return mm.allocate(context.Background(), size, false)
+}
+
+// TryAllocateReadBuffer attempts to reserve memory without blocking.
+// Useful for best-effort background work (e.g. prefetch).
+func (mm *MemoryManager) TryAllocateReadBuffer(size int64) []byte {
+	return mm.tryAllocate(size, false)
 }
 
 func (mm *MemoryManager) AllocateWriteBuffer(size int64) []byte {
-	return mm.allocate(size, true, true)
+	return mm.allocate(context.Background(), size, true)
+}
+
+// TryAllocateWriteBuffer attempts to reserve write memory without blocking.
+func (mm *MemoryManager) TryAllocateWriteBuffer(size int64) []byte {
+	return mm.tryAllocate(size, true)
 }
 
 func (mm *MemoryManager) ReleaseReadBuffer(buf []byte) {
-	mm.debug("Releasing read buffer of size %d", len(buf))
+	mm.debug("Releasing read buffer of size %d", cap(buf))
 	mm.release(buf, false)
 }
 
@@ -115,91 +83,122 @@ func (mm *MemoryManager) ReleaseWriteBuffer(buf []byte) {
 	mm.release(buf, true)
 }
 
-// Internal helper functions for allocation and release
-func (mm *MemoryManager) allocate(size int64, isWriteBuffer bool, waitIndefinitely bool) []byte {
-	mm.debug("Getting lock: isWriteBuffer=%v, size=%d, maxMemory=%d, usedMemory=%d, writeMemory=%d, readMemory=%d", isWriteBuffer, size, mm.maxMemory, mm.GetUsedMemory(), mm.GetUsedWriteMemory(), mm.GetUsedReadMemory())
-	mm.mutex.Lock()
-	mm.debug("Got lock for allocation: size=%d, isWriteBuffer=%v, maxMemory=%d, usedMemory=%d, writeMemory=%d, readMemory=%d", size, isWriteBuffer, mm.maxMemory, mm.GetUsedMemory(), mm.GetUsedWriteMemory(), mm.GetUsedReadMemory())
-	if isWriteBuffer {
-		atomic.AddInt32(&mm.writesWaiting, 1)
-	} else {
-		atomic.AddInt32(&mm.readsWaiting, 1)
-	}
-	defer func() {
-		if isWriteBuffer {
-			atomic.AddInt32(&mm.writesWaiting, -1)
-		} else {
-			atomic.AddInt32(&mm.readsWaiting, -1)
-		}
-		mm.mutex.Unlock()
-	}()
-
-	for atomic.LoadInt64(&mm.usedMemory)+size > mm.maxMemory ||
-		(isWriteBuffer && atomic.LoadInt64(&mm.writeMemory)+size > mm.maxMemoryUsagePerModule) ||
-		(!isWriteBuffer && atomic.LoadInt64(&mm.readMemory)+size > mm.maxMemoryUsagePerModule) {
-		if !waitIndefinitely || size > mm.maxMemory {
-			// If we can't wait indefinitely or the requested buffer size exceeds maxMemory, return nil
-			mm.debug("Memory allocation failed: waitIndefinitely=%v, isWriteBuffer=%v size=%d, maxMemory=%d, usedMemory=%d, writeMemory=%d, readMemory=%d", waitIndefinitely, isWriteBuffer, size, mm.maxMemory, mm.GetUsedMemory(), mm.GetUsedWriteMemory(), mm.GetUsedReadMemory())
-			return nil
-		}
-
-		// Wait for notification using condition variable
-		mm.debug("Waiting for memory allocation: waitIndefinitely=%v, isWriteBuffer=%v size=%d, maxMemory=%d, usedMemory=%d, writeMemory=%d, readMemory=%d", waitIndefinitely, isWriteBuffer, size, mm.maxMemory, mm.GetUsedMemory(), mm.GetUsedWriteMemory(), mm.GetUsedReadMemory())
-		mm.cond.Wait()
-		mm.debug("Received notification for memory allocation size=%d, isWriteBuffer=%v, maxMemory=%d, usedMemory=%d, writeMemory=%d, readMemory=%d", size, isWriteBuffer, mm.maxMemory, mm.GetUsedMemory(), mm.GetUsedWriteMemory(), mm.GetUsedReadMemory())
+// Internal helper for allocation. Reserves bytes from both the total budget and the
+// per-module (read/write) budget, then allocates the backing slice.
+func (mm *MemoryManager) allocate(ctx context.Context, size int64, isWriteBuffer bool) []byte {
+	if size <= 0 {
+		return make([]byte, 0)
 	}
 
-	atomic.AddInt64(&mm.usedMemory, size)
+	// Avoid deadlock on impossible requests: a semaphore Acquire(n) blocks forever
+	// if n > capacity.
+	if size > mm.maxMemory {
+		return nil
+	}
+	if size > mm.maxMemoryUsagePerModule {
+		return nil
+	}
+
+	mm.debug("Reserve memory: isWriteBuffer=%v size=%d used=%d write=%d read=%d",
+		isWriteBuffer, size, mm.usedMemory.Load(), mm.writeMemory.Load(), mm.readMemory.Load())
+
+	if err := mm.totalBudget.Acquire(ctx, size); err != nil {
+		return nil
+	}
+	reservedTotal := true
+
+	var budget *semaphore.Weighted
 	if isWriteBuffer {
-		atomic.AddInt64(&mm.writeMemory, size)
+		budget = mm.writeBudget
 	} else {
-		atomic.AddInt64(&mm.readMemory, size)
+		budget = mm.readBudget
+	}
+	if err := budget.Acquire(ctx, size); err != nil {
+		if reservedTotal {
+			mm.totalBudget.Release(size)
+		}
+		return nil
+	}
+
+	mm.usedMemory.Add(size)
+	if isWriteBuffer {
+		mm.writeMemory.Add(size)
+	} else {
+		mm.readMemory.Add(size)
+	}
+
+	return make([]byte, size)
+}
+
+func (mm *MemoryManager) tryAllocate(size int64, isWriteBuffer bool) []byte {
+	if size <= 0 {
+		return make([]byte, 0)
+	}
+	if size > mm.maxMemory {
+		return nil
+	}
+	if size > mm.maxMemoryUsagePerModule {
+		return nil
+	}
+
+	if !mm.totalBudget.TryAcquire(size) {
+		return nil
+	}
+
+	var budget *semaphore.Weighted
+	if isWriteBuffer {
+		budget = mm.writeBudget
+	} else {
+		budget = mm.readBudget
+	}
+	if !budget.TryAcquire(size) {
+		mm.totalBudget.Release(size)
+		return nil
+	}
+
+	mm.usedMemory.Add(size)
+	if isWriteBuffer {
+		mm.writeMemory.Add(size)
+	} else {
+		mm.readMemory.Add(size)
 	}
 
 	return make([]byte, size)
 }
 
 func (mm *MemoryManager) release(buf []byte, isWriteBuffer bool) {
-	size := int64(len(buf))
+	// Use capacity for accounting so callers can safely slice buffers
+	// (e.g. uploading only the written prefix) without breaking memory tracking.
+	size := int64(cap(buf))
+	if size <= 0 {
+		return
+	}
+
 	// Release the buffer
 	buf = nil
-	atomic.AddInt64(&mm.usedMemory, -size)
+
+	mm.usedMemory.Add(-size)
 	if isWriteBuffer {
-		atomic.AddInt64(&mm.writeMemory, -size)
+		mm.writeMemory.Add(-size)
+		mm.writeBudget.Release(size)
 	} else {
-		atomic.AddInt64(&mm.readMemory, -size)
+		mm.readMemory.Add(-size)
+		mm.readBudget.Release(size)
 	}
+	mm.totalBudget.Release(size)
 
-	if atomic.LoadInt64(&mm.usedMemory) < 0 {
-		atomic.StoreInt64(&mm.usedMemory, 0)
-	}
-	mm.debug("Released buffer of size %d, usedMemory=%d, writeMemory=%d, readMemory=%d", size, mm.GetUsedMemory(), mm.GetUsedWriteMemory(), mm.GetUsedReadMemory())
-
-	mm.cond.Broadcast()
+	mm.debug("Released buffer of size %d, usedMemory=%d, writeMemory=%d, readMemory=%d",
+		size, mm.usedMemory.Load(), mm.writeMemory.Load(), mm.readMemory.Load())
 }
 
 func (mm *MemoryManager) GetUsedMemory() int64 {
-	return atomic.LoadInt64(&mm.usedMemory)
+	return mm.usedMemory.Load()
 }
 
 func (mm *MemoryManager) GetUsedReadMemory() int64 {
-	return atomic.LoadInt64(&mm.readMemory)
+	return mm.readMemory.Load()
 }
 
 func (mm *MemoryManager) GetUsedWriteMemory() int64 {
-	return atomic.LoadInt64(&mm.writeMemory)
-}
-
-func (mm *MemoryManager) TrimWriteBuffer(buf []byte) []byte {
-	mm.mutex.Lock()
-	defer mm.mutex.Unlock()
-	newSize := int64(len(buf))
-	sizeDiff := newSize - int64(cap(buf))
-
-	// Shrink the buffer first, then decrement memory usage
-	buf = buf[:newSize]
-	atomic.AddInt64(&mm.usedMemory, sizeDiff) // sizeDiff is negative, so this reduces usedMemory
-	atomic.AddInt64(&mm.writeMemory, sizeDiff)
-	mm.cond.Broadcast()
-	return buf
+	return mm.writeMemory.Load()
 }

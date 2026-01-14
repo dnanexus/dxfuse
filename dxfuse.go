@@ -1666,27 +1666,30 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 		return nil
 	}
 
-	// upload last part
-	fh.lastPartId++
-	partId := fh.lastPartId
-	// Resize the writeBuffer to its used capacity before uploading the final part
-	fh.writeBuffer = fsys.uploader.memoryManager.TrimWriteBuffer(fh.writeBuffer)
+	// Upload the final (possibly partial) part.
+	// If the last write ended exactly on a part boundary, there is no final buffer to upload.
+	if fh.writeBuffer != nil && fh.writeBufferOffset > 0 {
+		fh.lastPartId++
+		partId := fh.lastPartId
 
-	uploadReq := UploadRequest{
-		fh:          fh,
-		fileId:      fh.Id,
-		writeBuffer: fh.writeBuffer,
-		partId:      partId,
-	}
-	fh.wg.Add(1)
-	fsys.uploader.uploadQueue <- uploadReq
+		writeBuf := fh.writeBuffer[:fh.writeBufferOffset]
+		uploadReq := UploadRequest{
+			fh:          fh,
+			fileId:      fh.Id,
+			writeBuffer: writeBuf,
+			partId:      partId,
+		}
+		fh.wg.Add(1)
+		fsys.uploader.uploadQueue <- uploadReq
 
-	fh.writeBuffer = nil
+		fh.writeBuffer = nil
+		fh.writeBufferOffset = 0
 
-	fh.wg.Wait()
-	// Check if there was an error uploading the last part
-	if fh.writeError != nil {
-		return fsys.translateError(fh.writeError)
+		fh.wg.Wait()
+		// Check if there was an error uploading the last part
+		if fh.writeError != nil {
+			return fsys.translateError(fh.writeError)
+		}
 	}
 
 	// get project-id
