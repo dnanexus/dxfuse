@@ -296,3 +296,70 @@ func TestPrefetch_MoveCacheWindow_DoesNotBlockWhenQueueFull(t *testing.T) {
 		t.Fatalf("expected no new iovecs appended when enqueue fails, got %d", len(pfm.cache.iovecs))
 	}
 }
+
+func TestPrefetch_SequentialSmallReadsStartPrefetch(t *testing.T) {
+	mm := NewMemoryManager(0, 1024*MiB, 256*MiB)
+	pgs := &PrefetchGlobalState{
+		handlesInfo:           make(map[fuseops.HandleID]*PrefetchFileMetadata),
+		nonSequentialHandles:  make(map[fuseops.HandleID]bool),
+		ioQueue:               make(chan IoReq, 100),
+		prefetchMaxIoSize:     16 * MiB,
+		maxNumChunksReadAhead: 8,
+		maxNumEntriesInTable:  10,
+		memoryManager:         mm,
+	}
+
+	hid := fuseops.HandleID(1)
+	pfm := &PrefetchFileMetadata{mutex: sync.Mutex{}, hid: hid, inode: 1, id: "file-1", size: 100 * MiB, url: DxDownloadURL{URL: "http://example", Headers: map[string]string{}}, state: PFM_NIL, lastReadEnd: -1}
+	pgs.handlesInfo[hid] = pfm
+
+	buf := make([]byte, 4*KiB)
+
+	// Three small sequential reads should be enough to drive seqScore>=3 and start prefetch.
+	pgs.CacheLookup(hid, 0, 4095, buf)
+	if pfm.state != PFM_DETECT_SEQ {
+		t.Fatalf("expected DETECT_SEQ after first read, got %d", pfm.state)
+	}
+	pgs.CacheLookup(hid, 4096, 8191, buf)
+	pgs.CacheLookup(hid, 8192, 12287, buf)
+
+	if pfm.state != PFM_PREFETCH_IN_PROGRESS && pfm.state != PFM_EOF {
+		t.Fatalf("expected PREFETCH_IN_PROGRESS after sequential reads, got %d", pfm.state)
+	}
+	if len(pfm.cache.iovecs) < 2 {
+		t.Fatalf("expected cache initialized")
+	}
+}
+
+func TestPrefetch_NonSequentialJumpMarksHandle(t *testing.T) {
+	mm := NewMemoryManager(0, 1024*MiB, 256*MiB)
+	pgs := &PrefetchGlobalState{
+		handlesInfo:           make(map[fuseops.HandleID]*PrefetchFileMetadata),
+		nonSequentialHandles:  make(map[fuseops.HandleID]bool),
+		ioQueue:               make(chan IoReq, 100),
+		prefetchMaxIoSize:     16 * MiB,
+		maxNumChunksReadAhead: 8,
+		maxNumEntriesInTable:  10,
+		memoryManager:         mm,
+	}
+
+	hid := fuseops.HandleID(2)
+	pfm := &PrefetchFileMetadata{mutex: sync.Mutex{}, hid: hid, inode: 2, id: "file-2", size: 100 * MiB, url: DxDownloadURL{URL: "http://example", Headers: map[string]string{}}, state: PFM_NIL, lastReadEnd: -1}
+	pgs.handlesInfo[hid] = pfm
+
+	buf := make([]byte, 4*KiB)
+	pgs.CacheLookup(hid, 0, 4095, buf)
+	if pfm.state != PFM_DETECT_SEQ {
+		t.Fatalf("expected DETECT_SEQ after first read, got %d", pfm.state)
+	}
+
+	// Large jump outside the initial cache window should be treated as non-sequential.
+	pgs.CacheLookup(hid, 10*MiB, 10*MiB+4095, buf)
+
+	if pfm.state != PFM_NIL {
+		t.Fatalf("expected state reset to NIL after non-sequential access, got %d", pfm.state)
+	}
+	if !pgs.nonSequentialHandles[hid] {
+		t.Fatalf("expected handle to be marked non-sequential")
+	}
+}

@@ -124,6 +124,12 @@ type PrefetchFileMetadata struct {
 	hiUserAccessOfs int64         // highest file offset accessed by the user
 	mw              MeasureWindow // statistics for stream
 
+	// Heuristics for detecting sequential access.
+	// lastReadEnd is the end offset of the previous user read; -1 means unset.
+	lastReadEnd  int64
+	seqScore     int
+	nonSeqScore  int
+
 	// cached io vectors.
 	// The assumption is that the user is accessing the last io-vector.
 	// If this assumption isn't true, prefetch is ineffective. The algorithm
@@ -769,7 +775,38 @@ func (pgs *PrefetchGlobalState) newPrefetchFileMetadata(
 			numBytesPrefetched: 0,
 			numPrefetchIOs:     0,
 		},
+		lastReadEnd: -1,
 	}
+}
+
+func (pfm *PrefetchFileMetadata) updateSequentialScore(startOfs int64, endOfs int64) {
+	// Treat reads as sequential if they begin close to where the previous read ended.
+	// Allow a small amount of overlap/slop due to page boundaries and readahead.
+	const slack = 8 * KiB
+
+	if pfm.lastReadEnd < 0 {
+		pfm.lastReadEnd = endOfs
+		return
+	}
+
+	gap := startOfs - pfm.lastReadEnd
+	if gap >= -slack && gap <= slack {
+		if pfm.seqScore < 10 {
+			pfm.seqScore++
+		}
+		if pfm.nonSeqScore > 0 {
+			pfm.nonSeqScore--
+		}
+	} else {
+		if pfm.nonSeqScore < 10 {
+			pfm.nonSeqScore++
+		}
+		if pfm.seqScore > 0 {
+			pfm.seqScore--
+		}
+	}
+
+	pfm.lastReadEnd = endOfs
 }
 
 // setup so we can detect a sequential stream.
@@ -1077,7 +1114,12 @@ func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 		pfm.log("touch: ofs=%d  len=%d  numAccessed=%d",
 			startOfs, endOfs-startOfs, numAccessed)
 	}
-	if numAccessed < (numSlotsInChunk - 32) {
+	// Start prefetching either when a substantial portion of the current chunk was read
+	// OR when we have enough consecutive sequential reads (small reads may not touch
+	// many slots but can still be strongly sequential).
+	const touchedThreshold = numSlotsInChunk - 32
+	shouldStart := (numAccessed >= touchedThreshold) || (pfm.seqScore >= 2)
+	if !shouldStart {
 		return true
 	}
 	// A sufficient number of the slots were accessed. Start a prefetch for
@@ -1087,21 +1129,28 @@ func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 		pfm.state = PFM_PREFETCH_IN_PROGRESS
 	}
 
-	// increase io size, using a bounded exponential formula
-	if pfm.cache.prefetchIoSize < pgs.prefetchMaxIoSize {
-		pfm.cache.prefetchIoSize =
-			MinInt64(pgs.prefetchMaxIoSize, pfm.cache.prefetchIoSize*prefetchIoFactor)
+	// Increase IO size conservatively and cap it based on a per-stream share of the
+	// read-budget to avoid over-allocating on many-stream workloads.
+	nStreams := len(pgs.handlesInfo)
+	if nStreams <= 0 {
+		nStreams = 1
 	}
-	if pfm.cache.prefetchIoSize == pgs.prefetchMaxIoSize {
-		// Give each stream at least one read-ahead request. If there
-		// are only a few streams, we can give more.
-		nStreams := len(pgs.handlesInfo)
-		nReadAhead := pgs.maxNumChunksReadAhead / nStreams
-		nReadAhead = MaxInt(1, nReadAhead)
-		pfm.cache.maxNumIovecs = MinInt(nReadAhead, maxNumChunksReadAheadPerFile)
-		// log the 3 above values
-		pfm.log("maxNumIovecs=%d  maxNumChunksReadAhead=%d  nStreams=%d",
-			pfm.cache.maxNumIovecs, pgs.maxNumChunksReadAhead, nStreams)
+	perStreamBudget := pgs.memoryManager.maxMemoryUsagePerModule / int64(nStreams) / 2
+	capIo := MinInt64(pgs.prefetchMaxIoSize, perStreamBudget)
+	capIo = MaxInt64(capIo, prefetchMinIoSize)
+
+	if pfm.cache.prefetchIoSize < capIo {
+		pfm.cache.prefetchIoSize = MinInt64(capIo, pfm.cache.prefetchIoSize*2)
+	}
+
+	// Give each stream at least one read-ahead request; distribute global read-ahead
+	// by streams with a per-file cap.
+	nReadAhead := pgs.maxNumChunksReadAhead / nStreams
+	nReadAhead = MaxInt(1, nReadAhead)
+	pfm.cache.maxNumIovecs = MinInt(nReadAhead, maxNumChunksReadAheadPerFile)
+	if pgs.verboseLevel >= 2 {
+		pfm.log("maxNumIovecs=%d  maxNumChunksReadAhead=%d  nStreams=%d seqScore=%d numAccessed=%d",
+			pfm.cache.maxNumIovecs, pgs.maxNumChunksReadAhead, nStreams, pfm.seqScore, numAccessed)
 	}
 
 	if pfm.state == PFM_PREFETCH_IN_PROGRESS {
@@ -1267,6 +1316,7 @@ func (pgs *PrefetchGlobalState) CacheLookup(hid fuseops.HandleID, startOfs int64
 	pfm.lastIoTimestamp = time.Now()
 	pfm.hiUserAccessOfs = MaxInt64(pfm.hiUserAccessOfs, startOfs)
 	pfm.mw.numIOs++
+	pfm.updateSequentialScore(startOfs, endOfs)
 
 	switch pfm.state {
 	case PFM_NIL:
