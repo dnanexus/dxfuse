@@ -21,6 +21,8 @@ import (
 	"github.com/jacobsa/fuse/fuseops"
 )
 
+var errPrefetchNoMemory = errors.New("prefetch: insufficient memory budget")
+
 const (
 	maxDeltaTime = 60 * time.Second
 	periodicTime = 10 * time.Second
@@ -250,73 +252,102 @@ func (pgs *PrefetchGlobalState) debug(a string, args ...interface{}) {
 	}
 }
 
-func NewPrefetchGlobalState(verboseLevel int, dxEnv dxda.DXEnvironment, memoryManager *MemoryManager) *PrefetchGlobalState {
+type prefetchHeuristics struct {
+	numPrefetchThreads    int
+	prefetchMaxIoSize     int64
+	maxNumChunksReadAhead int
+	maxNumEntriesInTable  int
+	ioQueueDepth          int
+	// For logging/debugging.
+	totalMemoryBytes int64
+}
+
+func calcPrefetchHeuristics(numCPUs int, dxJobId string, maxMemoryUsagePerModule int64) prefetchHeuristics {
 	// We want to:
 	// 1) allow all streams to have a worker available
 	// 2) not have more than two workers per CPU
 	// 3) not go over an overall limit, regardless of machine size
-	numCPUs := runtime.NumCPU()
 	numPrefetchThreads := MinInt(MaxInt(10, numCPUs*2), maxNumPrefetchThreads)
-	log.Printf("Number of prefetch threads=%d", numPrefetchThreads)
 
 	// determine the maximal size of a prefetch IO
 	var prefetchMaxIoSize int64
-	if dxEnv.DxJobId == "" {
+	if dxJobId == "" {
 		prefetchMaxIoSize = 16 * MiB
 	} else {
 		prefetchMaxIoSize = 64 * MiB
 	}
 
-	// Use memoryManager.maxMemoryUsagePerModule as the overall memory limit for prefetch calculations
-	maxMemoryUsage := memoryManager.maxMemoryUsagePerModule
-
 	// Calculate maxNumEntriesInTable based on available memory
-	maxNumEntriesInTable := int(MinInt64(maxMemoryUsage/(4*prefetchMaxIoSize), int64(numCPUs*4)))
+	maxNumEntriesInTable := int(MinInt64(maxMemoryUsagePerModule/(4*prefetchMaxIoSize), int64(numCPUs*4)))
 	// Ensure we never go below the minimum regardless of memory constraints
 	if maxNumEntriesInTable < minNumEntriesInTable {
 		maxNumEntriesInTable = minNumEntriesInTable
 	}
 
-	maxNumChunksReadAhead := MaxInt64(1, maxMemoryUsage/(2*prefetchMaxIoSize))
+	maxNumChunksReadAhead64 := MaxInt64(1, maxMemoryUsagePerModule/(2*prefetchMaxIoSize))
+	maxNumChunksReadAhead := int(maxNumChunksReadAhead64)
+
 	// Adjust the calculation for maximum prefetch memory usage to include initial IOvecs per stream
 	totalMemoryBytes := int64(maxNumEntriesInTable)*prefetchMaxIoSize + int64(maxNumChunksReadAhead)*prefetchMaxIoSize + int64(maxNumEntriesInTable)*2*prefetchMinIoSize
+
+	// ioQueue is bounded by read-ahead; keep it at least 1.
+	ioQueueDepth := MaxInt(1, maxNumChunksReadAhead)
+
+	return prefetchHeuristics{
+		numPrefetchThreads:    numPrefetchThreads,
+		prefetchMaxIoSize:     prefetchMaxIoSize,
+		maxNumChunksReadAhead: maxNumChunksReadAhead,
+		maxNumEntriesInTable:  maxNumEntriesInTable,
+		ioQueueDepth:          ioQueueDepth,
+		totalMemoryBytes:      totalMemoryBytes,
+	}
+}
+
+func NewPrefetchGlobalState(verboseLevel int, dxEnv dxda.DXEnvironment, memoryManager *MemoryManager) *PrefetchGlobalState {
+	numCPUs := runtime.NumCPU()
+
+	// Use memoryManager.maxMemoryUsagePerModule as the overall memory limit for prefetch calculations
+	maxMemoryUsage := memoryManager.maxMemoryUsagePerModule
+
+	h := calcPrefetchHeuristics(numCPUs, dxEnv.DxJobId, maxMemoryUsage)
+	log.Printf("Number of prefetch threads=%d", h.numPrefetchThreads)
 
 	// Log all the memory calculations in detail
 	log.Printf("PREFETCH MEMORY CALCULATION DETAILS:")
 	log.Printf("  Number of CPUs: %d", numCPUs)
 	log.Printf("  Available memory per module: %d MiB", maxMemoryUsage/MiB)
-	log.Printf("  prefetchMaxIoSize: %d MiB", prefetchMaxIoSize/MiB)
+	log.Printf("  prefetchMaxIoSize: %d MiB", h.prefetchMaxIoSize/MiB)
 	log.Printf("  minNumEntriesInTable: %d", minNumEntriesInTable)
-	log.Printf("  maxNumEntriesInTable calculation: min(%d, %d) = %d", maxMemoryUsage/(4*prefetchMaxIoSize), numCPUs*4, maxNumEntriesInTable)
-	log.Printf("  maxNumEntriesInTable final value: %d", maxNumEntriesInTable)
-	log.Printf("  maxNumChunksReadAhead calculation: min(%d, %d) = %d", maxMemoryUsage/(2*prefetchMaxIoSize), maxMemoryUsage/(4*prefetchMaxIoSize)+1, maxNumChunksReadAhead)
-	log.Printf("  Total memory required: %d MiB", totalMemoryBytes/MiB)
-	log.Printf("    - File entries: %d entries * %d MiB = %d MiB", maxNumEntriesInTable, prefetchMaxIoSize/MiB, (int64(maxNumEntriesInTable)*prefetchMaxIoSize)/MiB)
-	log.Printf("    - Read-ahead chunks: %d chunks * %d MiB = %d MiB", maxNumChunksReadAhead, prefetchMaxIoSize/MiB, (int64(maxNumChunksReadAhead)*prefetchMaxIoSize)/MiB)
-	log.Printf("    - Initial IOvecs: %d entries * %d KiB * 2 = %d MiB", maxNumEntriesInTable, prefetchMinIoSize/KiB, (int64(maxNumEntriesInTable)*2*prefetchMinIoSize)/MiB)
-	log.Printf("  Memory available vs required: %d MiB vs %d MiB", maxMemoryUsage/MiB, totalMemoryBytes/MiB)
+	log.Printf("  maxNumEntriesInTable calculation: min(%d, %d) = %d", maxMemoryUsage/(4*h.prefetchMaxIoSize), numCPUs*4, h.maxNumEntriesInTable)
+	log.Printf("  maxNumEntriesInTable final value: %d", h.maxNumEntriesInTable)
+	log.Printf("  maxNumChunksReadAhead calculation: min(%d, %d) = %d", maxMemoryUsage/(2*h.prefetchMaxIoSize), maxMemoryUsage/(4*h.prefetchMaxIoSize)+1, h.maxNumChunksReadAhead)
+	log.Printf("  Total memory required: %d MiB", h.totalMemoryBytes/MiB)
+	log.Printf("    - File entries: %d entries * %d MiB = %d MiB", h.maxNumEntriesInTable, h.prefetchMaxIoSize/MiB, (int64(h.maxNumEntriesInTable)*h.prefetchMaxIoSize)/MiB)
+	log.Printf("    - Read-ahead chunks: %d chunks * %d MiB = %d MiB", h.maxNumChunksReadAhead, h.prefetchMaxIoSize/MiB, (int64(h.maxNumChunksReadAhead)*h.prefetchMaxIoSize)/MiB)
+	log.Printf("    - Initial IOvecs: %d entries * %d KiB * 2 = %d MiB", h.maxNumEntriesInTable, prefetchMinIoSize/KiB, (int64(h.maxNumEntriesInTable)*2*prefetchMinIoSize)/MiB)
+	log.Printf("  Memory available vs required: %d MiB vs %d MiB", maxMemoryUsage/MiB, h.totalMemoryBytes/MiB)
 
 	log.Printf("maxMemoryUsagePerModule=%dMiB", maxMemoryUsage/MiB)
-	log.Printf("Maximum prefetch memory usage: %dMiB", totalMemoryBytes/MiB)
-	log.Printf("Number of prefetch worker threads: %d", numPrefetchThreads)
-	log.Printf("Maximum number of read-ahead chunks: %d", maxNumChunksReadAhead)
+	log.Printf("Maximum prefetch memory usage: %dMiB", h.totalMemoryBytes/MiB)
+	log.Printf("Number of prefetch worker threads: %d", h.numPrefetchThreads)
+	log.Printf("Maximum number of read-ahead chunks: %d", h.maxNumChunksReadAhead)
 
 	pgs := &PrefetchGlobalState{
 		verbose:               verboseLevel >= 1,
 		verboseLevel:          verboseLevel,
 		handlesInfo:           make(map[fuseops.HandleID](*PrefetchFileMetadata)),
 		nonSequentialHandles:  make(map[fuseops.HandleID]bool),
-		ioQueue:               make(chan IoReq, maxNumChunksReadAhead),
-		prefetchMaxIoSize:     prefetchMaxIoSize,
-		numPrefetchThreads:    numPrefetchThreads,
-		maxNumChunksReadAhead: int(maxNumChunksReadAhead),
-		maxNumEntriesInTable:  maxNumEntriesInTable,
+		ioQueue:               make(chan IoReq, h.ioQueueDepth),
+		prefetchMaxIoSize:     h.prefetchMaxIoSize,
+		numPrefetchThreads:    h.numPrefetchThreads,
+		maxNumChunksReadAhead: h.maxNumChunksReadAhead,
+		maxNumEntriesInTable:  h.maxNumEntriesInTable,
 		memoryManager:         memoryManager,
 	}
 
 	// limit the number of prefetch IOs
-	pgs.wg.Add(numPrefetchThreads)
-	for i := 0; i < numPrefetchThreads; i++ {
+	pgs.wg.Add(h.numPrefetchThreads)
+	for i := 0; i < h.numPrefetchThreads; i++ {
 		go pgs.prefetchIoWorker()
 	}
 
@@ -396,13 +427,21 @@ func (pgs *PrefetchGlobalState) readData(client *http.Client, ioReq IoReq) ([]by
 			ioReq.hid, ioReq.inode, ioReq.id, ioReq.startByte, expectedLen)
 	}
 
-	// Allocate buffer using MemoryManager
+	// Best-effort allocation for prefetch: if we can't get memory quickly,
+	// skip prefetch rather than blocking workers.
 	pgs.debug("allocating read buffer of size %d", expectedLen)
-	data := pgs.memoryManager.AllocateReadBuffer(expectedLen)
-	pgs.debug("Allocated read buffer of size %d", expectedLen)
+	data := pgs.memoryManager.TryAllocateReadBuffer(expectedLen)
 	if data == nil {
-		return nil, fmt.Errorf("memory limit exceeded, unable to allocate buffer")
+		return nil, errPrefetchNoMemory
 	}
+	pgs.debug("Allocated read buffer of size %d", expectedLen)
+
+	ok := false
+	defer func() {
+		if !ok {
+			pgs.memoryManager.ReleaseReadBuffer(data)
+		}
+	}()
 
 	headers := make(map[string]string)
 
@@ -432,9 +471,6 @@ func (pgs *PrefetchGlobalState) readData(client *http.Client, ioReq IoReq) ([]by
 		recvLen, readErr := io.ReadFull(resp.Body, data)
 		resp.Body.Close()
 		if readErr != nil {
-			if data != nil {
-				pgs.memoryManager.ReleaseReadBuffer(data)
-			}
 			return nil, readErr
 		}
 
@@ -449,6 +485,7 @@ func (pgs *PrefetchGlobalState) readData(client *http.Client, ioReq IoReq) ([]by
 				ioReq.inode, ioReq.id, ioReq.startByte, ioReq.endByte)
 		}
 		// Prevent releasing the buffer on success
+		ok = true
 		pgs.debug("Returning readData buffer of size %d", len(data))
 		return data, nil
 	}
@@ -491,6 +528,7 @@ func (pgs *PrefetchGlobalState) DownloadEntireFile(
 			return err
 		}
 		n, err := fd.WriteAt(data, startByte)
+		pgs.memoryManager.ReleaseReadBuffer(data)
 		if err != nil {
 			return err
 		}
@@ -524,6 +562,11 @@ func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq
 	if iovIdx == -1 {
 		pfm.log("(#io=%d) Dropping prefetch IO, matching entry in cache not found, ioReq=%v len(cache.iovecs)=%d",
 			ioReq.id, ioReq, len(pfm.cache.iovecs))
+		// The cache window may have advanced and evicted the placeholder.
+		// Release any returned data to avoid leaking the prefetch budget.
+		if data != nil {
+			pgs.memoryManager.ReleaseReadBuffer(data)
+		}
 		return
 	}
 	check(pfm.cache.iovecs[iovIdx].data == nil)
@@ -536,15 +579,22 @@ func (pgs *PrefetchGlobalState) addIoReqToCache(pfm *PrefetchFileMetadata, ioReq
 		pfm.mw.numPrefetchIOs++
 		pgs.debug("IO request completed successfully: handle=%d, startByte=%d, endByte=%d", ioReq.hid, ioReq.startByte, ioReq.endByte)
 	} else {
-		pfm.log("prefetch error: handle=%d, startByte=%d, endByte=%d, error=%s", ioReq.hid, ioReq.startByte, ioReq.endByte, err.Error())
-		// Release memory in case of an error
-		if data != nil {
-			pgs.memoryManager.ReleaseReadBuffer(data)
+		if errors.Is(err, errPrefetchNoMemory) {
+			// Memory pressure is transient; treat as a cache hole (best-effort prefetch).
+			pfm.cache.iovecs[iovIdx].state = IOV_HOLE
+			pgs.debug("prefetch skipped due to memory pressure: handle=%d startByte=%d endByte=%d",
+				ioReq.hid, ioReq.startByte, ioReq.endByte)
+		} else {
+			pfm.log("prefetch error: handle=%d, startByte=%d, endByte=%d, error=%s", ioReq.hid, ioReq.startByte, ioReq.endByte, err.Error())
+			// Safety: if a buffer somehow comes back with an error, release it.
+			if data != nil {
+				pgs.memoryManager.ReleaseReadBuffer(data)
+			}
+			pfm.log("(#io=%d) prefetch io error [%d -- %d] %s",
+				ioReq.id, ioReq.startByte, ioReq.endByte, err.Error())
+			pfm.cache.iovecs[iovIdx].state = IOV_ERRORED
+			pgs.log("IO request failed: handle=%d, startByte=%d, endByte=%d, error=%s", ioReq.hid, ioReq.startByte, ioReq.endByte, err.Error())
 		}
-		pfm.log("(#io=%d) prefetch io error [%d -- %d] %s",
-			ioReq.id, ioReq.startByte, ioReq.endByte, err.Error())
-		pfm.cache.iovecs[iovIdx].state = IOV_ERRORED
-		pgs.log("IO request failed: handle=%d, startByte=%d, endByte=%d, error=%s", ioReq.hid, ioReq.startByte, ioReq.endByte, err.Error())
 	}
 
 	// wake up waiting user IOs
@@ -605,6 +655,9 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 			// File is no longer tracked, release memory and drop the request
 			pgs.log("(inode=%d) (io=%d) dropping prefetch IO [%d -- %d], file is no longer tracked",
 				ioReq.inode, ioReq.id, ioReq.startByte, ioReq.endByte)
+			if data != nil {
+				pgs.memoryManager.ReleaseReadBuffer(data)
+			}
 			continue
 		}
 
@@ -612,6 +665,9 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 		if pfm == nil {
 			pgs.log("(inode=%d) (io=%d) dropping prefetch IO [%d -- %d], could not acquire lock",
 				ioReq.inode, ioReq.id, ioReq.startByte, ioReq.endByte)
+			if data != nil {
+				pgs.memoryManager.ReleaseReadBuffer(data)
+			}
 			continue
 		}
 
