@@ -12,7 +12,6 @@ import (
 	"math/bits"
 	"net/http"
 	"os"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -327,7 +326,7 @@ func calcPrefetchHeuristics(numCPUs int, dxJobId string, maxMemoryUsagePerModule
 }
 
 func NewPrefetchGlobalState(verboseLevel int, dxEnv dxda.DXEnvironment, memoryManager *MemoryManager) *PrefetchGlobalState {
-	numCPUs := runtime.NumCPU()
+	numCPUs := EffectiveNumCPUs()
 
 	// Use memoryManager.maxMemoryUsagePerModule as the overall memory limit for prefetch calculations
 	maxMemoryUsage := memoryManager.maxMemoryUsagePerModule

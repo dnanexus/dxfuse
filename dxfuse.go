@@ -9,7 +9,6 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"path/filepath"
-	"runtime"
 	"runtime/debug"
 	"sort"
 	"strings"
@@ -149,10 +148,9 @@ func NewDxfuse(
 	// }()
 
 	// initialize a pool of http-clients.
-	HttpClientPoolSize := MinHttpClientPoolSize
-	if runtime.NumCPU()*3 > HttpClientPoolSize {
-		HttpClientPoolSize = runtime.NumCPU() * 3
-	}
+	// Use GOMAXPROCS rather than NumCPU so container/quota-limited deployments
+	// don't over-provision.
+	HttpClientPoolSize := calcHttpClientPoolSize(EffectiveNumCPUs())
 
 	httpIoPool := make(chan *http.Client, HttpClientPoolSize)
 	for i := 0; i < HttpClientPoolSize; i++ {

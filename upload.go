@@ -2,7 +2,6 @@ package dxfuse
 
 import (
 	"context"
-	"runtime"
 	"sync"
 
 	"github.com/dnanexus/dxda"
@@ -70,8 +69,7 @@ func (uploader *FileUploader) debug(a string, args ...interface{}) {
 }
 
 func NewFileUploader(verboseLevel int, options Options, dxEnv dxda.DXEnvironment, memoryManager *MemoryManager) *FileUploader {
-	concurrentWriteBufferLimit := MaxInt(runtime.NumCPU(), MinNumWriteBuffers)
-	concurrentWriteBufferLimit = MinInt(concurrentWriteBufferLimit, MaxNumWriteBuffers)
+	concurrentWriteBufferLimit := calcUploadWorkerCount(EffectiveNumCPUs())
 
 	uploader := &FileUploader{
 		verbose:       verboseLevel >= 1,
