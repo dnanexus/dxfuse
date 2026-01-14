@@ -253,3 +253,46 @@ func TestPrefetch_AddIoReqToCache_DroppedIoReleasesData(t *testing.T) {
 		t.Fatalf("expected data to be released when IO is dropped, usedRead=%d", mm.GetUsedReadMemory())
 	}
 }
+
+func TestPrefetch_MoveCacheWindow_DoesNotBlockWhenQueueFull(t *testing.T) {
+	mm := NewMemoryManager(0, 1024*MiB, 1024*MiB)
+	pgs := &PrefetchGlobalState{
+		verboseLevel: 2,
+		ioQueue:      make(chan IoReq), // unbuffered, nobody receives
+		prefetchMaxIoSize: 16 * MiB,
+		memoryManager:     mm,
+	}
+
+	pfm := &PrefetchFileMetadata{mutex: sync.Mutex{}, size: 100 * MiB}
+	// Seed cache with two iovecs so iovIndex=1 triggers read-ahead attempt.
+	pfm.cache = Cache{
+		prefetchIoSize: prefetchMinIoSize,
+		maxNumIovecs:   2,
+		iovecs: []*Iovec{
+			{startByte: 0, endByte: prefetchMinIoSize - 1, ioSize: prefetchMinIoSize, state: IOV_DONE, data: nil, cond: sync.NewCond(&pfm.mutex)},
+			{startByte: prefetchMinIoSize, endByte: 2*prefetchMinIoSize - 1, ioSize: prefetchMinIoSize, state: IOV_DONE, data: nil, cond: sync.NewCond(&pfm.mutex)},
+		},
+		startByte: 0,
+		endByte:   2*prefetchMinIoSize - 1,
+	}
+
+	done := make(chan struct{})
+	go func() {
+		pfm.mutex.Lock()
+		defer pfm.mutex.Unlock()
+		pgs.moveCacheWindow(pfm, 1)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// ok
+	case <-time.After(200 * time.Millisecond):
+		t.Fatalf("moveCacheWindow appears to have blocked on queue send")
+	}
+
+	// Since enqueue should fail, we should not have appended a placeholder.
+	if len(pfm.cache.iovecs) != 2 {
+		t.Fatalf("expected no new iovecs appended when enqueue fails, got %d", len(pfm.cache.iovecs))
+	}
+}

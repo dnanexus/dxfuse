@@ -148,6 +148,23 @@ type PrefetchGlobalState struct {
 	memoryManager         *MemoryManager // Global memory manager
 }
 
+// tryEnqueueIoReq attempts to enqueue a prefetch request without blocking.
+// It returns false if the queue is full or has been closed.
+func (pgs *PrefetchGlobalState) tryEnqueueIoReq(req IoReq) (ok bool) {
+	defer func() {
+		if recover() != nil {
+			ok = false
+		}
+	}()
+
+	select {
+	case pgs.ioQueue <- req:
+		return true
+	default:
+		return false
+	}
+}
+
 func (pgs *PrefetchGlobalState) newIovec(pfm *PrefetchFileMetadata, ioSize, startByte, endByte int64) *Iovec {
 	// data := pgs.allocateIOvecMemory(ioSize)
 	// if data == nil {
@@ -951,8 +968,9 @@ func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIn
 		// stretch the cache forward, but don't go over the file size. Add place holder
 		// io-vectors, waiting for prefetch IOs to return.
 		lastByteInFile := pfm.size - 1
+		nextStart := pfm.cache.endByte + 1
 		for i := 0; i < nReadAheadChunks; i++ {
-			startByte := (pfm.cache.endByte + 1) + (int64(i) * int64(pfm.cache.prefetchIoSize))
+			startByte := nextStart
 
 			// don't go beyond the file size
 			if startByte > lastByteInFile {
@@ -967,7 +985,7 @@ func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIn
 
 			uniqueId := atomic.AddUint64(&pgs.ioCounter, 1)
 
-			pgs.ioQueue <- IoReq{
+			req := IoReq{
 				hid:       pfm.hid,
 				inode:     pfm.inode,
 				size:      pfm.size,
@@ -977,8 +995,16 @@ func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIn
 				endByte:   iov.endByte,
 				id:        uniqueId,
 			}
+			if !pgs.tryEnqueueIoReq(req) {
+				// Avoid blocking user reads; treat as best-effort skip.
+				if pgs.verboseLevel >= 2 {
+					pfm.log("Prefetch queue full/closed, skipping IO [%d -- %d]", iov.startByte, iov.endByte)
+				}
+				break
+			}
 			check(iov.ioSize <= pgs.prefetchMaxIoSize)
 			pfm.cache.iovecs = append(pfm.cache.iovecs, iov)
+			nextStart = endByte + 1
 
 			if pgs.verbose {
 				pfm.log("Adding chunk %d [%d -- %d]",
