@@ -1038,6 +1038,7 @@ func (pgs *PrefetchGlobalState) moveCacheWindow(pfm *PrefetchFileMetadata, iovIn
 				}
 				break
 			}
+			iov.state = IOV_IN_FLIGHT
 			check(iov.ioSize <= pgs.prefetchMaxIoSize)
 			pfm.cache.iovecs = append(pfm.cache.iovecs, iov)
 			nextStart = endByte + 1

@@ -23,7 +23,6 @@ func calculatePartSize(partId int) int64 {
 	}
 }
 
-// TODO replace this with a more reasonable buffer pool for managing memory use
 func (uploader *FileUploader) AllocateWriteBuffer(partId int, block bool) []byte {
 	if partId < 1 {
 		partId = 1
