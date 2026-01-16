@@ -42,14 +42,14 @@ done
 # Create directory for timing logs
 mkdir -p /tmp/dxfuse_timing
 rm -f /tmp/dxfuse_timing/read_*.time /tmp/dxfuse_timing/write_*.time /tmp/dxfuse_timing/small_*.time
-
+mount_dir="~/MNT"
 pkill dxfuse || true
-umount /home/kjensen/MNT || true
+umount ${mount_dir} || true
 # mount dxfuse
-/home/kjensen/dxfuse --version
-/home/kjensen/dxfuse -limitedWrite /home/kjensen/MNT testing
-rm -rf /home/kjensen/MNT/testing/1GiB*
-rm -rf /home/kjensen/MNT/testing/1kib*
+${DXFUSE_BINARY} --version
+${DXFUSE_BINARY} -limitedWrite ${mount_dir} testing
+rm -rf ${mount_dir}/testing/1GiB*
+rm -rf ${mount_dir}/testing/1kib*
 
 # Function to calculate min, max, and average from a list of values
 calculate_stats() {
