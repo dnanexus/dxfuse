@@ -42,7 +42,7 @@ done
 # Create directory for timing logs
 mkdir -p /tmp/dxfuse_timing
 rm -f /tmp/dxfuse_timing/read_*.time /tmp/dxfuse_timing/write_*.time /tmp/dxfuse_timing/small_*.time
-mount_dir="~/MNT"
+mount_dir="${HOME}/MNT"
 pkill dxfuse || true
 umount ${mount_dir} || true
 # mount dxfuse
