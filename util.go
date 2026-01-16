@@ -35,7 +35,7 @@ const (
 	MaxUploadPartSize         = 700 * MiB
 	MinNumWriteBuffers        = 8
 	MaxNumWriteBuffers        = 144
-	Version                   = "v1.6.1"
+	Version                   = "v2.0.0"
 )
 
 // EffectiveNumCPUs returns the effective CPU parallelism for the process.
