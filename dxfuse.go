@@ -192,8 +192,16 @@ func NewDxfuse(
 	// Default to max 10% memory usage of system memory
 	sysMemory, _ := mem.VirtualMemory()
 	maxMemory := int64(sysMemory.Total * 10 / 100)
+	if options.MaxMemoryUsageMiB > 0 && options.MaxMemoryUsagePercent > 0 {
+		return nil, fmt.Errorf("cannot set both MaxMemoryUsageMiB and MaxMemoryUsagePercent")
+	}
 	if options.MaxMemoryUsageMiB > 0 {
 		maxMemory = int64(options.MaxMemoryUsageMiB) * MiB
+	} else if options.MaxMemoryUsagePercent != 0 {
+		if options.MaxMemoryUsagePercent < 1 || options.MaxMemoryUsagePercent > 100 {
+			return nil, fmt.Errorf("MaxMemoryUsagePercent must be in range 1-100")
+		}
+		maxMemory = int64(sysMemory.Total) * int64(options.MaxMemoryUsagePercent) / 100
 	}
 	debug.SetMemoryLimit(maxMemory)
 	maxMemoryUsagePerModule := maxMemory

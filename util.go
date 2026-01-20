@@ -135,6 +135,9 @@ type Options struct {
 	Gid               uint32
 	StateFolder       string
 	MaxMemoryUsageMiB int // Hidden flag to override default memory usage (in MiB)
+	// Hidden flag to override default memory usage as a percent of system memory (1-100).
+	// Mutually exclusive with MaxMemoryUsageMiB.
+	MaxMemoryUsagePercent int
 }
 
 // A node is a generalization over files and directories
