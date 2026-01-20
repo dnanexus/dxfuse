@@ -257,8 +257,8 @@ func TestPrefetch_AddIoReqToCache_DroppedIoReleasesData(t *testing.T) {
 func TestPrefetch_MoveCacheWindow_DoesNotBlockWhenQueueFull(t *testing.T) {
 	mm := NewMemoryManager(0, 1024*MiB, 1024*MiB)
 	pgs := &PrefetchGlobalState{
-		verboseLevel: 2,
-		ioQueue:      make(chan IoReq), // unbuffered, nobody receives
+		verboseLevel:      2,
+		ioQueue:           make(chan IoReq), // unbuffered, nobody receives
 		prefetchMaxIoSize: 16 * MiB,
 		memoryManager:     mm,
 	}
