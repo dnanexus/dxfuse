@@ -76,7 +76,7 @@ if $RUN_READ_TEST; then
   echo "Starting read operations (${READ_TESTS} files)..."
   for i in $(seq 1 $READ_TESTS); do
     (time_start=$(date +%s.%N); 
-     cat /home/kjensen/MNT/testing/1gb$i >/dev/null; 
+     cat ${mount_dir}/testing/1GiB$i >/dev/null; 
      time_end=$(date +%s.%N); 
      echo "$time_end - $time_start" | bc > /tmp/dxfuse_timing/read_$i.time) &
   done
@@ -87,7 +87,7 @@ if $RUN_WRITE_TEST; then
   echo "Starting write operations (${WRITE_TESTS} files)..."
   for i in $(seq 1 $WRITE_TESTS); do
     (time_start=$(date +%s.%N); 
-     dd if=/dev/zero of=/home/kjensen/MNT/testing/1GiB$i bs=1M count=1024 status=none; 
+     dd if=/dev/zero of=${mount_dir}/testing/1GiB$i bs=1M count=1024 status=none; 
      time_end=$(date +%s.%N); 
      echo "$time_end - $time_start" | bc > /tmp/dxfuse_timing/write_$i.time) &
   done
@@ -98,7 +98,7 @@ if $RUN_SMALL_TEST; then
   echo "Starting small file creation operations (${SMALL_TESTS} files)..."
   for i in $(seq 1 $SMALL_TESTS); do
     (time_start=$(date +%s.%N); 
-     dd if=/dev/zero of=/home/kjensen/MNT/testing/1kib$i bs=1K count=1 status=none; 
+     dd if=/dev/zero of=${mount_dir}/testing/1kib$i bs=1K count=1 status=none; 
      time_end=$(date +%s.%N); 
      echo "$time_end - $time_start" | bc > /tmp/dxfuse_timing/small_$i.time) &
   done
