@@ -311,8 +311,10 @@ func calcPrefetchHeuristics(numCPUs int, dxJobId string, maxMemoryUsagePerModule
 	// Adjust the calculation for maximum prefetch memory usage to include initial IOvecs per stream
 	totalMemoryBytes := int64(maxNumEntriesInTable)*prefetchMaxIoSize + int64(maxNumChunksReadAhead)*prefetchMaxIoSize + int64(maxNumEntriesInTable)*2*prefetchMinIoSize
 
-	// ioQueue is bounded by read-ahead; keep it at least 1.
-	ioQueueDepth := MaxInt(1, maxNumChunksReadAhead)
+	// ioQueueDepth is a bounded backlog of pending prefetch IO requests.
+	// A modest buffer helps absorb bursts and keeps workers busy without letting a
+	// large pile of stale IOs accumulate.
+	ioQueueDepth := MaxInt(1, 2*numPrefetchThreads)
 
 	return prefetchHeuristics{
 		numPrefetchThreads:    numPrefetchThreads,
@@ -331,27 +333,6 @@ func NewPrefetchGlobalState(verboseLevel int, dxEnv dxda.DXEnvironment, memoryMa
 	maxMemoryUsage := memoryManager.maxMemoryUsagePerModule
 
 	h := calcPrefetchHeuristics(numCPUs, dxEnv.DxJobId, maxMemoryUsage)
-	log.Printf("Number of prefetch threads=%d", h.numPrefetchThreads)
-
-	// Log all the memory calculations in detail
-	log.Printf("PREFETCH MEMORY CALCULATION DETAILS:")
-	log.Printf("  Number of CPUs: %d", numCPUs)
-	log.Printf("  Available memory per module: %d MiB", maxMemoryUsage/MiB)
-	log.Printf("  prefetchMaxIoSize: %d MiB", h.prefetchMaxIoSize/MiB)
-	log.Printf("  minNumEntriesInTable: %d", minNumEntriesInTable)
-	log.Printf("  maxNumEntriesInTable calculation: min(%d, %d) = %d", maxMemoryUsage/(4*h.prefetchMaxIoSize), numCPUs*4, h.maxNumEntriesInTable)
-	log.Printf("  maxNumEntriesInTable final value: %d", h.maxNumEntriesInTable)
-	log.Printf("  maxNumChunksReadAhead calculation: min(%d, %d) = %d", maxMemoryUsage/(2*h.prefetchMaxIoSize), maxMemoryUsage/(4*h.prefetchMaxIoSize)+1, h.maxNumChunksReadAhead)
-	log.Printf("  Total memory required: %d MiB", h.totalMemoryBytes/MiB)
-	log.Printf("    - File entries: %d entries * %d MiB = %d MiB", h.maxNumEntriesInTable, h.prefetchMaxIoSize/MiB, (int64(h.maxNumEntriesInTable)*h.prefetchMaxIoSize)/MiB)
-	log.Printf("    - Read-ahead chunks: %d chunks * %d MiB = %d MiB", h.maxNumChunksReadAhead, h.prefetchMaxIoSize/MiB, (int64(h.maxNumChunksReadAhead)*h.prefetchMaxIoSize)/MiB)
-	log.Printf("    - Initial IOvecs: %d entries * %d KiB * 2 = %d MiB", h.maxNumEntriesInTable, prefetchMinIoSize/KiB, (int64(h.maxNumEntriesInTable)*2*prefetchMinIoSize)/MiB)
-	log.Printf("  Memory available vs required: %d MiB vs %d MiB", maxMemoryUsage/MiB, h.totalMemoryBytes/MiB)
-
-	log.Printf("maxMemoryUsagePerModule=%dMiB", maxMemoryUsage/MiB)
-	log.Printf("Maximum prefetch memory usage: %dMiB", h.totalMemoryBytes/MiB)
-	log.Printf("Number of prefetch worker threads: %d", h.numPrefetchThreads)
-	log.Printf("Maximum number of read-ahead chunks: %d", h.maxNumChunksReadAhead)
 
 	pgs := &PrefetchGlobalState{
 		verbose:               verboseLevel >= 1,
@@ -364,6 +345,19 @@ func NewPrefetchGlobalState(verboseLevel int, dxEnv dxda.DXEnvironment, memoryMa
 		maxNumChunksReadAhead: h.maxNumChunksReadAhead,
 		maxNumEntriesInTable:  h.maxNumEntriesInTable,
 		memoryManager:         memoryManager,
+	}
+
+	if pgs.verbose {
+		pgs.log("prefetch heuristics: cpus=%d job=%t moduleMem=%dMiB threads=%d ioMax=%dMiB entries=%d readAhead=%d ioQueueDepth=%d maxMem=%dMiB",
+			numCPUs,
+			dxEnv.DxJobId != "",
+			maxMemoryUsage/MiB,
+			h.numPrefetchThreads,
+			h.prefetchMaxIoSize/MiB,
+			h.maxNumEntriesInTable,
+			h.maxNumChunksReadAhead,
+			h.ioQueueDepth,
+			h.totalMemoryBytes/MiB)
 	}
 
 	// limit the number of prefetch IOs

@@ -138,18 +138,8 @@ func NewDxfuse(
 	dxEnv dxda.DXEnvironment,
 	manifest Manifest,
 	options Options) (*Filesys, error) {
-	// Start a pprof server for profiling
-	// go func() {
-	// 	runtime.SetMutexProfileFraction(1)
-	// 	log.Println("Starting pprof server on :6060")
-	// 	if err := http.ListenAndServe("localhost:6060", nil); err != nil {
-	// 		log.Fatalf("Failed to start pprof server: %v", err)
-	// 	}
-	// }()
 
 	// initialize a pool of http-clients.
-	// Use GOMAXPROCS rather than NumCPU so container/quota-limited deployments
-	// don't over-provision.
 	HttpClientPoolSize := calcHttpClientPoolSize(EffectiveNumCPUs())
 
 	httpIoPool := make(chan *http.Client, HttpClientPoolSize)
