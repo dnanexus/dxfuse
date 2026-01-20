@@ -1,7 +1,6 @@
 package dxfuse
 
 import (
-	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -313,13 +312,11 @@ func TestMemoryManager_ZeroAndNegativeSizes(t *testing.T) {
 		t.Fatalf("expected counters unchanged for negative size, got total=%d", mm.GetUsedMemory())
 	}
 
-	// Ensure releasing nil/empty doesn't crash and doesn't perturb counters.
+	// Ensure releasing nil/empty doesn't crash
 	mm.ReleaseReadBuffer(nil)
 	mm.ReleaseWriteBuffer([]byte{})
 	if mm.GetUsedMemory() != 0 {
 		t.Fatalf("expected counters still 0 after releasing nil/empty, got total=%d", mm.GetUsedMemory())
 	}
 
-	// Encourage goroutines/timers used by other tests to run promptly on busy builders.
-	runtime.Gosched()
 }

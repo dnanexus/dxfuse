@@ -291,7 +291,6 @@ func calcPrefetchHeuristics(numCPUs int, dxJobId string, maxMemoryUsagePerModule
 	// 3) not go over an overall limit, regardless of machine size
 	numPrefetchThreads := MinInt(MaxInt(10, numCPUs*2), maxNumPrefetchThreads)
 
-	// determine the maximal size of a prefetch IO
 	var prefetchMaxIoSize int64
 	if dxJobId == "" {
 		prefetchMaxIoSize = 16 * MiB
@@ -1129,16 +1128,16 @@ func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 		pfm.state = PFM_PREFETCH_IN_PROGRESS
 	}
 
-	// Increase IO size conservatively and cap it based on a per-stream share of the
-	// read-budget to avoid over-allocating on many-stream workloads.
+	// Increase IO size conservatively.
+	//
+	// We cap growth based on a per-stream fair-share of the module prefetch budget
+	// to avoid a many-stream workload inflating each stream's chunk size.
+	// Note: this is a cap on per-IO buffer size, not a reservation/allocation.
 	nStreams := len(pgs.handlesInfo)
 	if nStreams <= 0 {
 		nStreams = 1
 	}
-	perStreamBudget := pgs.memoryManager.maxMemoryUsagePerModule / int64(nStreams) / 2
-	capIo := MinInt64(pgs.prefetchMaxIoSize, perStreamBudget)
-	capIo = MaxInt64(capIo, prefetchMinIoSize)
-
+	capIo := pgs.prefetchIoSizeCapForStreams(nStreams)
 	if pfm.cache.prefetchIoSize < capIo {
 		pfm.cache.prefetchIoSize = MinInt64(capIo, pfm.cache.prefetchIoSize*2)
 	}
@@ -1163,6 +1162,24 @@ func (pgs *PrefetchGlobalState) markAccessedAndMaybeStartPrefetch(
 		}
 	}
 	return true
+}
+
+// prefetchIoSizeCapForStreams returns an upper bound on per-stream prefetch IO size
+// based on a fair-share of the prefetch module's memory budget.
+//
+// We intentionally keep headroom (divide by 2) so that a stream cannot grow its
+// chunk size up to its entire fair-share; this leaves room for multiple in-flight
+// requests, cached data, and accounting overhead.
+func (pgs *PrefetchGlobalState) prefetchIoSizeCapForStreams(nStreams int) int64 {
+	if nStreams <= 0 {
+		nStreams = 1
+	}
+	perStreamBudget := pgs.memoryManager.maxMemoryUsagePerModule / int64(nStreams)
+	perStreamBudget /= 2
+
+	capIo := MinInt64(pgs.prefetchMaxIoSize, perStreamBudget)
+	capIo = MaxInt64(capIo, prefetchMinIoSize)
+	return capIo
 }
 
 const (
