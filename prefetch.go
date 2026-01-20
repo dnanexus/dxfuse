@@ -1221,26 +1221,16 @@ func (pgs *PrefetchGlobalState) isDataInCache(
 		iov := pfm.cache.iovecs[i]
 		switch iov.state {
 		case IOV_HOLE:
-			pfm.log("isDataInCache: HOLE")
 			return DATA_HOLE
-
 		case IOV_IN_FLIGHT:
 			// waiting for prefetch to come back with data.
 			// note: when we wake up, the IO may have come back
 			// with an error.
-			//if pgs.verboseLevel >= 2 {
-			pfm.log("isDataInCache: wait")
-			//}
 			iov.cond.Wait()
 			return DATA_WAIT
-
 		case IOV_DONE:
-			pfm.log("isDataInCache: DONE")
-			// we're good
 			continue
-
 		case IOV_ERRORED:
-			pfm.log("isDataInCache: IO errored")
 			return DATA_OUTSIDE_CACHE
 		}
 	}
