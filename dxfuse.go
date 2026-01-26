@@ -1725,7 +1725,7 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 		return syscall.ENOTSUP
 	}
 	if fh.writeBuffer == nil {
-		fh.writeBuffer = fsys.uploader.AllocateWriteBuffer(fh.lastPartId, true)
+		fh.writeBuffer = fsys.uploader.AllocateWriteBuffer(fh.lastPartId)
 		if fh.writeBuffer == nil {
 			return syscall.ENOMEM
 		}
@@ -1778,7 +1778,7 @@ func (fsys *Filesys) WriteFile(ctx context.Context, op *fuseops.WriteFileOp) err
 			}
 			fsys.opClose(oph)
 			fsys.mutex.Unlock()
-			fh.writeBuffer = fsys.uploader.AllocateWriteBuffer(partId, true)
+			fh.writeBuffer = fsys.uploader.AllocateWriteBuffer(partId)
 			if fh.writeBuffer == nil {
 				return syscall.ENOMEM
 			}

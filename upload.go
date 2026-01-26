@@ -23,7 +23,7 @@ func calculatePartSize(partId int) int64 {
 	}
 }
 
-func (uploader *FileUploader) AllocateWriteBuffer(partId int, block bool) []byte {
+func (uploader *FileUploader) AllocateWriteBuffer(partId int) []byte {
 	if partId < 1 {
 		partId = 1
 	}
@@ -34,12 +34,7 @@ func (uploader *FileUploader) AllocateWriteBuffer(partId int, block bool) []byte
 	if uploader.verbose {
 		uploader.log("Allocating %.2f MiB for write buffer", float64(writeBufferCapacity)/MiB)
 	}
-	var writeBuffer []byte
-	if block {
-		writeBuffer = uploader.memoryManager.AllocateWriteBuffer(writeBufferCapacity)
-	} else {
-		writeBuffer = uploader.memoryManager.TryAllocateWriteBuffer(writeBufferCapacity)
-	}
+	writeBuffer := uploader.memoryManager.AllocateWriteBuffer(writeBufferCapacity)
 	if writeBuffer == nil {
 		uploader.log("Failed to allocate write buffer")
 		return nil
