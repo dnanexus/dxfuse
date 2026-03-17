@@ -69,6 +69,10 @@ func (mm *MemoryManager) AllocateWriteBuffer(size int64) []byte {
 	return mm.allocate(context.Background(), size, true)
 }
 
+// TryAllocateWriteBuffer attempts to reserve write memory without blocking.
+func (mm *MemoryManager) TryAllocateWriteBuffer(size int64) []byte {
+	return mm.tryAllocate(size, true)
+}
 
 func (mm *MemoryManager) ReleaseReadBuffer(buf []byte) {
 	mm.debug("Releasing read buffer of size %d", cap(buf))
@@ -169,9 +173,6 @@ func (mm *MemoryManager) release(buf []byte, isWriteBuffer bool) {
 	if size <= 0 {
 		return
 	}
-
-	// Release the buffer
-	buf = nil
 
 	mm.usedMemory.Add(-size)
 	if isWriteBuffer {

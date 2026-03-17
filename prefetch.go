@@ -171,11 +171,6 @@ func (pgs *PrefetchGlobalState) tryEnqueueIoReq(req IoReq) (ok bool) {
 }
 
 func (pgs *PrefetchGlobalState) newIovec(pfm *PrefetchFileMetadata, ioSize, startByte, endByte int64) *Iovec {
-	// data := pgs.allocateIOvecMemory(ioSize)
-	// if data == nil {
-	// 	pgs.log("Memory limit exceeded, dropping IOvec allocation")
-	// 	return nil
-	// }
 	return &Iovec{
 		ioSize:    ioSize,
 		startByte: startByte,

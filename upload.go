@@ -108,8 +108,9 @@ func (uploader *FileUploader) uploadWorker() {
 		if err != nil {
 			// Record upload error in FileHandle
 			uploader.log("Error uploading %s, part %d, %s", uploadReq.fileId, uploadReq.partId, err.Error())
-			uploader.log("httpClient: %v", httpClient)
+			uploadReq.fh.mutex.Lock()
 			uploadReq.fh.writeError = err
+			uploadReq.fh.mutex.Unlock()
 		}
 		uploadReq.fh.wg.Done()
 	}

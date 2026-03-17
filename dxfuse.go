@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	_ "net/http/pprof"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -189,9 +188,16 @@ func NewDxfuse(
 	}
 	fsys.opClose(oph)
 
-	// Default to max 10% memory usage of system memory
-	sysMemory, _ := mem.VirtualMemory()
-	maxMemory := int64(sysMemory.Total * 10 / 100)
+	// Default to max 10% memory usage of system memory.
+	// If system memory detection fails, use a conservative fallback.
+	sysMemory, err := mem.VirtualMemory()
+	totalSystemMemory := uint64(8 * GiB)
+	if err != nil || sysMemory == nil || sysMemory.Total == 0 {
+		fsys.log("Unable to read system memory (%v); defaulting to %d MiB", err, totalSystemMemory/MiB)
+	} else {
+		totalSystemMemory = sysMemory.Total
+	}
+	maxMemory := int64(totalSystemMemory * 10 / 100)
 	if options.MaxMemoryUsageMiB > 0 && options.MaxMemoryUsagePercent > 0 {
 		return nil, fmt.Errorf("cannot set both MaxMemoryUsageMiB and MaxMemoryUsagePercent")
 	}
@@ -201,7 +207,7 @@ func NewDxfuse(
 		if options.MaxMemoryUsagePercent < 1 || options.MaxMemoryUsagePercent > 100 {
 			return nil, fmt.Errorf("MaxMemoryUsagePercent must be in range 1-100")
 		}
-		maxMemory = int64(sysMemory.Total) * int64(options.MaxMemoryUsagePercent) / 100
+		maxMemory = int64(totalSystemMemory) * int64(options.MaxMemoryUsagePercent) / 100
 	}
 	debug.SetMemoryLimit(maxMemory)
 	maxMemoryUsagePerModule := maxMemory
@@ -1833,13 +1839,18 @@ func (fsys *Filesys) FlushFile(ctx context.Context, op *fuseops.FlushFileOp) err
 	}
 
 	// Empty files are an edge case handled by ReleaseFileHandle
-	if len(fh.writeBuffer) == 0 && fh.size == 0 {
+	if fh.size == 0 && fh.writeBufferOffset == 0 {
 		fsys.debug("Ignoring FlushFile: file is empty")
 		return nil
 	}
 
 	// Upload the final (possibly partial) part.
-	// If the last write ended exactly on a part boundary, there is no final buffer to upload.
+	// If the last write ended exactly on a part boundary, the buffer was already
+	// uploaded and a fresh (empty) replacement was allocated — release it now.
+	if fh.writeBuffer != nil && fh.writeBufferOffset == 0 {
+		fsys.uploader.memoryManager.ReleaseWriteBuffer(fh.writeBuffer)
+		fh.writeBuffer = nil
+	}
 	if fh.writeBuffer != nil && fh.writeBufferOffset > 0 {
 		fh.lastPartId++
 		partId := fh.lastPartId
@@ -1939,6 +1950,11 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 		return nil
 
 	case AM_AO_Remote:
+		// Release any leftover write buffer that wasn't uploaded (e.g. empty buffer after flush).
+		if fh.writeBuffer != nil && fh.writeBufferOffset == 0 {
+			fsys.uploader.memoryManager.ReleaseWriteBuffer(fh.writeBuffer)
+			fh.writeBuffer = nil
+		}
 		// Special case for empty files which are not uploaded during FlushFile since their size is 0
 		if fh.size == 0 && len(fh.writeBuffer) == 0 && fh.lastPartId == 0 {
 			if fsys.ops.options.Verbose {
