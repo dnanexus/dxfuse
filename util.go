@@ -415,7 +415,6 @@ func GetTgid(pid uint32) (tgid int32, err error) {
 	return tgid, nil
 }
 
-
 func GetPlatformInfo() (string, error) {
 	platform, _, version, err := host.PlatformInformation()
 	if err != nil {
