@@ -144,6 +144,7 @@ type PrefetchGlobalState struct {
 	handlesInfo           map[fuseops.HandleID](*PrefetchFileMetadata) // tracking state per handle
 	nonSequentialHandles  map[fuseops.HandleID]bool                    // Handles that have shown non-sequential access
 	ioQueue               chan IoReq                                   // queue of IOs to prefetch
+	done                  chan struct{}                                // closed on Shutdown to signal workers
 	wg                    sync.WaitGroup
 	prefetchMaxIoSize     int64
 	numPrefetchThreads    int
@@ -154,13 +155,13 @@ type PrefetchGlobalState struct {
 }
 
 // tryEnqueueIoReq attempts to enqueue a prefetch request without blocking.
-// It returns false if the queue is full or has been closed.
-func (pgs *PrefetchGlobalState) tryEnqueueIoReq(req IoReq) (ok bool) {
-	defer func() {
-		if recover() != nil {
-			ok = false
-		}
-	}()
+// It returns false if the queue is full or shutdown has been signalled.
+func (pgs *PrefetchGlobalState) tryEnqueueIoReq(req IoReq) bool {
+	select {
+	case <-pgs.done:
+		return false
+	default:
+	}
 
 	select {
 	case pgs.ioQueue <- req:
@@ -335,6 +336,7 @@ func NewPrefetchGlobalState(verboseLevel int, dxEnv dxda.DXEnvironment, memoryMa
 		handlesInfo:           make(map[fuseops.HandleID](*PrefetchFileMetadata)),
 		nonSequentialHandles:  make(map[fuseops.HandleID]bool),
 		ioQueue:               make(chan IoReq, h.ioQueueDepth),
+		done:                  make(chan struct{}),
 		prefetchMaxIoSize:     h.prefetchMaxIoSize,
 		numPrefetchThreads:    h.numPrefetchThreads,
 		maxNumChunksReadAhead: h.maxNumChunksReadAhead,
@@ -386,6 +388,8 @@ func (pgs *PrefetchGlobalState) resetPfm(pfm *PrefetchFileMetadata) {
 }
 
 func (pgs *PrefetchGlobalState) Shutdown() {
+	// signal that no new IO requests should be enqueued
+	close(pgs.done)
 	// signal all prefetch threads to stop
 	close(pgs.ioQueue)
 
@@ -656,24 +660,10 @@ func (pgs *PrefetchGlobalState) prefetchIoWorker() {
 		// are doing this, because this request could take a long time.
 		data, err := pgs.readData(client, ioReq)
 
-		// Check if the file is still tracked before trying to acquire locks
-		pgs.mutex.Lock()
-		_, fileIsTracked := pgs.handlesInfo[ioReq.hid]
-		pgs.mutex.Unlock()
-
-		if !fileIsTracked {
-			// File is no longer tracked, release memory and drop the request
-			pgs.log("(inode=%d) (io=%d) dropping prefetch IO [%d -- %d], file is no longer tracked",
-				ioReq.inode, ioReq.id, ioReq.startByte, ioReq.endByte)
-			if data != nil {
-				pgs.memoryManager.ReleaseReadBuffer(data)
-			}
-			continue
-		}
-
 		pfm = pgs.getAndLockPfm(ioReq.hid)
 		if pfm == nil {
-			pgs.log("(inode=%d) (io=%d) dropping prefetch IO [%d -- %d], could not acquire lock",
+			// File is no longer tracked; release any returned data.
+			pgs.log("(inode=%d) (io=%d) dropping prefetch IO [%d -- %d], file is no longer tracked",
 				ioReq.inode, ioReq.id, ioReq.startByte, ioReq.endByte)
 			if data != nil {
 				pgs.memoryManager.ReleaseReadBuffer(data)
