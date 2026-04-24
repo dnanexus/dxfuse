@@ -41,7 +41,7 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "    %s [options] MOUNTPOINT manifest.json\n", progName)
 	fmt.Fprintf(os.Stderr, "options:\n")
 	// Hide deprecated, internal and experimental options
-	hiddenOptions := []string{"readOnly", "limitedWrite", "daemon", "allowOverwrite"}
+	hiddenOptions := []string{"readOnly", "limitedWrite", "daemon", "allowOverwrite", "maxMemoryUsageMiB", "maxMemoryUsagePercent"}
 	flag.VisitAll(func(f *flag.Flag) {
 		if slices.Contains(hiddenOptions, f.Name) {
 			return
@@ -58,15 +58,17 @@ var (
 	debugFuseFlag = flag.Bool("debugFuse", false, "Tap into FUSE debugging information")
 	daemon        = flag.Bool("daemon", false, "An internal flag, do not use it")
 	// fsSync        = flag.Bool("sync", false, "Synchronize the filesystem and exit")
-	help           = flag.Bool("help", false, "display program options")
-	readOnly       = flag.Bool("readOnly", true, "DEPRECATED, now the default behavior is True. Mount the filesystem in read-only mode")
-	limitedWrite   = flag.Bool("limitedWrite", false, "Allow removing files and folders, creating files and appending to them. (Experimental, not recommended), default is read-only")
-	allowOverwrite = flag.Bool("allowOverwrite", false, "Allow overwriting files (Experimental, not recommended). Only works with -limitedWrite, default is read-only and no overwriting allowed")
-	uid            = flag.Int("uid", -1, "User id (uid)")
-	gid            = flag.Int("gid", -1, "User group id (gid)")
-	verbose        = flag.Int("verbose", 0, "Enable verbose debugging")
-	version        = flag.Bool("version", false, "Print the version and exit")
-	stateFolder    = flag.String("stateFolder", getDefaultStateFolder(), "Directory to use for dxfuse's internal state (log file, database, etc). Created if does not exist. Defaults to "+getDefaultStateFolder())
+	help                  = flag.Bool("help", false, "display program options")
+	readOnly              = flag.Bool("readOnly", true, "DEPRECATED, now the default behavior is True. Mount the filesystem in read-only mode")
+	limitedWrite          = flag.Bool("limitedWrite", false, "Allow removing files and folders, creating files and appending to them. (Experimental, not recommended), default is read-only")
+	allowOverwrite        = flag.Bool("allowOverwrite", false, "Allow overwriting files (Experimental, not recommended). Only works with -limitedWrite, default is read-only and no overwriting allowed")
+	uid                   = flag.Int("uid", -1, "User id (uid)")
+	gid                   = flag.Int("gid", -1, "User group id (gid)")
+	verbose               = flag.Int("verbose", 0, "Enable verbose debugging")
+	version               = flag.Bool("version", false, "Print the version and exit")
+	stateFolder           = flag.String("stateFolder", getDefaultStateFolder(), "Directory to use for dxfuse's internal state (log file, database, etc). Created if does not exist. Defaults to "+getDefaultStateFolder())
+	maxMemoryUsageMiB     = flag.Int("maxMemoryUsageMiB", 0, "Soft maximum memory limit in MiB. Mutually exclusive with -maxMemoryUsagePercent. (Experimental)")
+	maxMemoryUsagePercent = flag.Int("maxMemoryUsagePercent", 0, "Soft maximum memory limit as percent of system memory (1-100). Defaults to 10%. Mutually exclusive with -maxMemoryUsageMiB. (Experimental)")
 )
 
 func initLog(logFile string) *os.File {
@@ -270,6 +272,8 @@ func parseCmdLineArgs() Config {
 	readOnlyFlagSet := false
 	limitedWriteFlagSet := false
 	allowOverwriteFlagSet := false
+	maxMemoryUsageMiBFlagSet := false
+	maxMemoryUsagePercentFlagSet := false
 	flag.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case "readOnly":
@@ -278,6 +282,10 @@ func parseCmdLineArgs() Config {
 			limitedWriteFlagSet = true
 		case "allowOverwrite":
 			allowOverwriteFlagSet = true
+		case "maxMemoryUsageMiB":
+			maxMemoryUsageMiBFlagSet = true
+		case "maxMemoryUsagePercent":
+			maxMemoryUsagePercentFlagSet = true
 		}
 	})
 	if limitedWriteFlagSet && readOnlyFlagSet {
@@ -287,6 +295,23 @@ func parseCmdLineArgs() Config {
 	}
 	if allowOverwriteFlagSet && !limitedWriteFlagSet {
 		fmt.Printf("Cannot provide -allowOverwrite without -limitedWrite\n")
+		usage()
+		os.Exit(2)
+	}
+	if maxMemoryUsageMiBFlagSet && *maxMemoryUsageMiB < 0 {
+		fmt.Printf("-maxMemoryUsageMiB must be >= 0\n")
+		usage()
+		os.Exit(2)
+	}
+	if maxMemoryUsagePercentFlagSet {
+		if *maxMemoryUsagePercent < 1 || *maxMemoryUsagePercent > 100 {
+			fmt.Printf("-maxMemoryUsagePercent must be in range 1-100\n")
+			usage()
+			os.Exit(2)
+		}
+	}
+	if maxMemoryUsageMiBFlagSet && maxMemoryUsagePercentFlagSet {
+		fmt.Printf("Cannot provide both -maxMemoryUsageMiB and -maxMemoryUsagePercent\n")
 		usage()
 		os.Exit(2)
 	}
@@ -318,12 +343,14 @@ func parseCmdLineArgs() Config {
 		mode = dxfuse.AllowOverwrite
 	}
 	options := dxfuse.Options{
-		Mode:         mode,
-		Verbose:      *verbose > 0,
-		VerboseLevel: *verbose,
-		Uid:          uid,
-		Gid:          gid,
-		StateFolder:  *stateFolder,
+		Mode:                  mode,
+		Verbose:               *verbose > 0,
+		VerboseLevel:          *verbose,
+		MaxMemoryUsageMiB:     *maxMemoryUsageMiB,
+		MaxMemoryUsagePercent: *maxMemoryUsagePercent,
+		Uid:                   uid,
+		Gid:                   gid,
+		StateFolder:           *stateFolder,
 	}
 
 	dxEnv, _, err := dxda.GetDxEnvironment()
@@ -444,7 +471,14 @@ func buildDaemonCommandLine(cfg Config, fullManifestPath string) []string {
 		args := []string{"-verbose", strconv.FormatInt(int64(*verbose), 10)}
 		daemonArgs = append(daemonArgs, args...)
 	}
-
+	if *maxMemoryUsageMiB > 0 {
+		args := []string{"-maxMemoryUsageMiB", strconv.FormatInt(int64(*maxMemoryUsageMiB), 10)}
+		daemonArgs = append(daemonArgs, args...)
+	}
+	if *maxMemoryUsagePercent > 0 {
+		args := []string{"-maxMemoryUsagePercent", strconv.FormatInt(int64(*maxMemoryUsagePercent), 10)}
+		daemonArgs = append(daemonArgs, args...)
+	}
 	positionalArgs := []string{cfg.mountpoint, fullManifestPath}
 	daemonArgs = append(daemonArgs, positionalArgs...)
 

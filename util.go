@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -30,9 +31,62 @@ const (
 	MaxNumFileHandles         = 1000 * 1000
 	NumRetriesDefault         = 10
 	InitialUploadPartSize     = 16 * MiB
+	MinUploadPartSize         = 5 * MiB
 	MaxUploadPartSize         = 700 * MiB
-	Version                   = "v1.6.1"
+	MinNumWriteBuffers        = 8
+	MaxNumWriteBuffers        = 144
+	Version                   = "v2.0.0"
 )
+
+// EffectiveNumCPUs returns the effective CPU parallelism for the process.
+// Prefer this over runtime.NumCPU() because it respects container/CPU quotas
+// and explicit GOMAXPROCS settings.
+func EffectiveNumCPUs() int {
+	n := runtime.GOMAXPROCS(0)
+	if n < 1 {
+		return 1
+	}
+	return n
+}
+
+// calcHttpClientPoolSize computes a sane default size for the shared HTTP client
+// pool. It should scale with available parallelism but stay bounded to avoid
+// connection explosions on large machines.
+func calcHttpClientPoolSize(numCPUs int) int {
+	if numCPUs < 1 {
+		numCPUs = 1
+	}
+
+	// Baseline: enough to cover common parallel read workloads.
+	// Growth: 2× CPUs + headroom.
+	// Cap: keep bounded even on 128+ core hosts.
+	const headroom = 16
+	const maxHttpClients = 128
+
+	size := 2*numCPUs + headroom
+	size = MaxInt(size, MinHttpClientPoolSize)
+	size = MinInt(size, maxHttpClients)
+	return size
+}
+
+// calcUploadWorkerCount computes a default for concurrent upload workers.
+// It should be high enough to keep uploads moving, but bounded to avoid
+// overwhelming the API/network and creating too many large buffers.
+func calcUploadWorkerCount(numCPUs int) int {
+	if numCPUs < 1 {
+		numCPUs = 1
+	}
+
+	// 2× CPUs works well for hiding latency; cap to avoid runaway parallelism.
+	const maxDefaultUploadWorkers = 64
+
+	workers := 2 * numCPUs
+	workers = MaxInt(workers, MinNumWriteBuffers)
+	workers = MinInt(workers, maxDefaultUploadWorkers)
+	workers = MinInt(workers, MaxNumWriteBuffers)
+	return workers
+}
+
 const (
 	InodeInvalid = 0
 	InodeRoot    = fuseops.RootInodeID // This is an OS constant
@@ -74,12 +128,16 @@ const (
 )
 
 type Options struct {
-	Mode         string // One of {ReadOnly, LimitedWrite, AllowOverwrite}
-	Verbose      bool
-	VerboseLevel int
-	Uid          uint32
-	Gid          uint32
-	StateFolder  string
+	Mode              string // One of {ReadOnly, LimitedWrite, AllowOverwrite}
+	Verbose           bool
+	VerboseLevel      int
+	Uid               uint32
+	Gid               uint32
+	StateFolder       string
+	MaxMemoryUsageMiB int // Hidden flag to override default memory usage (in MiB)
+	// Hidden flag to override default memory usage as a percent of system memory (1-100).
+	// Mutually exclusive with MaxMemoryUsageMiB.
+	MaxMemoryUsagePercent int
 }
 
 // A node is a generalization over files and directories
