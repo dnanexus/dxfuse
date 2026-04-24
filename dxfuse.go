@@ -1956,7 +1956,7 @@ func (fsys *Filesys) ReleaseFileHandle(ctx context.Context, op *fuseops.ReleaseF
 			fh.writeBuffer = nil
 		}
 		// Special case for empty files which are not uploaded during FlushFile since their size is 0
-		if fh.size == 0 && len(fh.writeBuffer) == 0 && fh.lastPartId == 0 {
+		if fh.size == 0 && fh.writeBuffer == nil && fh.lastPartId == 0 {
 			if fsys.ops.options.Verbose {
 				fsys.log("Upload and close empty %s", fh.Id)
 			}
